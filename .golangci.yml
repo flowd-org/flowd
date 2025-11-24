@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+run:
+  timeout: 5m
+  tests: true
+  issues-exit-code: 1
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: github-actions
+
+linters:
+  enable:
+    - govet
+    - gofmt
+    - goimports
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - revive
+    - gocyclo
+    - gocognit
+    - gocritic
+    - stylecheck
+    - typecheck
+    - unparam
+    - unconvert
+    - misspell
+    - errorlint
+    - prealloc
+    - gosec
+    - cyclop
+    - dupl
+    - forbidigo
+    - whitespace
+    - nolintlint
+    - testpackage
+  disable:
+    - wsl
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  cyclop:
+    max-complexity: 15
+    package-average: 0.0
+  misspell:
+    locale: US
+  revive:
+    rules:
+      - name: var-naming
+      - name: receiver-naming
+      - name: early-return
+      - name: errorf
+      - name: error-naming
+      - name: package-comments
+      - name: indent-error-flow
+  forbidigo:
+    forbid:
+      - 'fmt\.Print(f|ln)?\('
+    exclude-godoc-examples: true
+  gosec:
+    severity: medium
+    confidence: medium
+
+issues:
+  exclude-use-default: false
+  exclude-rules:
+    - path: _test\.go$
+      linters:
+        - gocyclo
+        - cyclop
+        - dupl
+    - path: ^third_party/|^vendor/|^docs/|^\.github/
+      linters:
+        - gosec
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+paths:
+  skip-dirs:
+    - vendor
+    - third_party
+    - docs
+    - .git
+    - .github

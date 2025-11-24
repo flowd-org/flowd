@@ -1,0 +1,7 @@
+# Sample alias mappings for tests
+aliases:
+  - from: "acme-tools/build/linux"
+    to: "build-linux"
+    description: "Lift build job to top-level alias"
+  - from: "acme-tools/deploy/staging"
+    to: "deploy-staging"

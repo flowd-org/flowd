@@ -1,0 +1,6 @@
+docs/agent-context/** linguist-documentation
+
+* text=auto eol=lf
+
+**/*_generated.go linguist-generated=true
+**/*.pb.go linguist-generated=true

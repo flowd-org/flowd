@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+interpreter: /bin/bash
+
+env:
+  STATIC_ENV: "This is always here"
+
+error_handling:
+  policy: abort
+  retries: 0
+  retry_backoff: 1
+
+
+arguments:
+  user:
+    type: string
+    default: "admin"
+    description: "User to run as"
+
+  debug:
+    type: bool
+    default: false
+    description: "Enable debug output"
+
+  retries:
+    type: int
+    default: 2
+    description: "Number of retries"

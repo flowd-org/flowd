@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+interpreter: /bin/bash
+arguments:
+  sample:
+    type: string
+    default: "demo"
+    description: "Sample argument"
+error_handling:
+  policy: abort

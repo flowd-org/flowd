@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+interpreter: /bin/bash
+
+error_handling:
+  policy: retry
+  retries: 2
+  retry_backoff: 1
+
+arguments:
+  dummy:
+    type: string
+    default: "no-op"
+    description: "Just a placeholder argument"
+

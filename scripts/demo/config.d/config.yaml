@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+interpreter: "/usr/bin/env bash"
+argspec:
+  args:
+    - name: name
+      type: string
+      description: "Name of the person to greet"
+      required: true
+    - name: loud
+      type: boolean
+      description: "Print in uppercase"
+      default: false
+    - name: tags
+      type: array
+      items_type: string
+      description: "Additional tags to echo"
+    - name: secret_token
+      type: string
+      format: secret
+      description: "Secret token (demonstrates redaction)"

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+interpreter: "container:alpine:3.20"
+executor: container
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true

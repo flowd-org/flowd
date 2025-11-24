@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later 
+interpreter: pwsh
+arguments:
+  user:
+    type: string
+    default: "admin"
+    description: "User to greet"
+error_handling:
+  policy: abort

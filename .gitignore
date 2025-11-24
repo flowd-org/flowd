@@ -1,0 +1,25 @@
+# Go
+bin/
+build/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+
+# Go Modules
+vendor/
+.gocache/
+.gopath/
+.cache
+
+# Editors/OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+

@@ -1,0 +1,13 @@
+version: v1
+job:
+  id: demo-dag-container
+  name: Demo DAG container job
+composition: steps
+executor: container
+container:
+  image: docker.io/library/alpine:3.19
+steps:
+  - id: init
+    script: scripts/init.sh
+  - id: run
+    script: scripts/run.sh
