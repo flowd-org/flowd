@@ -7,15 +7,12 @@ weight: 1
 The documentation may not be fully up to date. Please refer to the [disclaimer]({{< ref "_index.md" >}}) for important information about the project's active development status, documentation accuracy, and ongoing efforts to stabilize the codebase.
 {{% /callout %}}
 
-Welcome to flowd. This guide walks you through the first steps: cloning the
+Welcome to FLOWD. This guide walks you through the first steps: cloning the
 repository, building the binary, and running a simple job.
 
-## What is flowd?
+## What is FLOWD?
 
-flowd (canonical binary `flwd`) turns ad‑hoc operational scripts into secure,
-auditable jobs with typed inputs and a unified runtime. Instead of wiring the
-same scripts differently for laptops, CI and servers, you describe a job once
-and run it anywhere: locally, in CI, or behind a small HTTP/REST API.
+FLOWD (**Framework for Language-agnostic Orchestration of Workflows Distributed**) is the framework implemented by the `flwd` engine. `flwd` (pronounced "flowed") turns ad-hoc operational scripts into secure, auditable jobs with typed inputs and a unified runtime. Instead of wiring the same scripts differently for laptops, CI and servers, you describe a job once and run it anywhere: locally, in CI, or behind a small HTTP/REST API.
 
 If you just want to see it in action, start with the [Quick Start]({{< ref "quick_start.md" >}}).
 
@@ -54,14 +51,14 @@ $ which flwd
 
 ## Initialise a workspace
 
-flowd discovers jobs from local trees, git sources and add‑ons. A common pattern
+flwd discovers jobs from local trees, git sources and add‑ons. A common pattern
 is to keep your jobs under a dedicated directory in a repository.
 
 Create a simple workspace and a “hello world” job:
 
 ```bash
-$ mkdir -p ~/flowd-workspace
-$ cd ~/flowd-workspace
+$ mkdir -p ~/flwd-workspace
+$ cd ~/flwd-workspace
 $ flwd :init tools/hello-world
 ```
 

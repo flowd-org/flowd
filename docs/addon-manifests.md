@@ -442,10 +442,10 @@ Validate your manifest before building:
 
 ```bash
 # Validate manifest structure
-flowd addons validate /path/to/manifest.yaml
+flwd addons validate /path/to/manifest.yaml
 
 # Test add-on locally
-flowd addons test /path/to/image
+flwd addons test /path/to/image
 ```
 
 ## Next Steps

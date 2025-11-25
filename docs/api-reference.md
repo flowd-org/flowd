@@ -9,7 +9,7 @@ The documentation may not be fully up to date. Please refer to the [disclaimer](
 
 # API Reference
 
-flowd exposes a REST API for programmatic access to jobs, runs, artifacts, and system information. All endpoints return JSON unless otherwise specified.
+flwd exposes a REST API for programmatic access to jobs, runs, artifacts, and system information. All endpoints return JSON unless otherwise specified.
 
 ## Base URL
 
@@ -276,7 +276,7 @@ Binary content with appropriate `Content-Type` header.
 GET /api/v1/health
 ```
 
-Returns the health status of the flowd instance.
+Returns the health status of the flwd instance.
 
 **Response:**
 ```json
@@ -303,7 +303,7 @@ Returns system information and configuration.
     {
       "name": "local-fs",
       "type": "fs",
-      "path": "/opt/flowd/jobs"
+      "path": "/opt/flwd/jobs"
     }
   ],
   "extensions": ["tui", "mcp"]
@@ -312,7 +312,7 @@ Returns system information and configuration.
 
 ## Server-Sent Events (SSE)
 
-flowd supports real-time event streaming via Server-Sent Events for monitoring runs and system events.
+flwd supports real-time event streaming via Server-Sent Events for monitoring runs and system events.
 
 ### Run Events Stream
 

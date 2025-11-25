@@ -11,7 +11,7 @@ Package jobs inside a container image so code and dependencies are reproducible
 and easy to distribute.
 
 An OCI add-on is a container image that contains a job tree following the same
-layout as local sources. The image is pulled and unpacked by flowd and exposed
+layout as local sources. The image is pulled and unpacked by flwd and exposed
 as a source.
 
 ## API workflow
@@ -55,7 +55,7 @@ Run it as usual via `/runs` or the CLI, using the add-on prefix.
 
 ## Security profiles for add-ons
 
-When extracting add-ons, flowd applies the same security profiles as for other
+When extracting add-ons, flwd applies the same security profiles as for other
 operations:
 
 - `secure`: only images from allowed registries are accepted; signature

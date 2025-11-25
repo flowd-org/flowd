@@ -64,7 +64,7 @@ Common problems and how to fix them.
 
 - CORS problems in browsers  
   In development you can use `--dev` on `:serve`. In production configure
-  explicit CORS policies on your reverse proxy or in flowd’s configuration.
+  explicit CORS policies on your reverse proxy or in flwd’s configuration.
 
 ## Getting more information
 

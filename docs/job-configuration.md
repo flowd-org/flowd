@@ -9,7 +9,7 @@ The documentation may not be fully up to date. Please refer to the [disclaimer](
 
 # Job Configuration (config.yaml)
 
-Every flowd job requires a `config.yaml` file that defines its metadata, execution settings, arguments, and behavior.
+Every flwd job requires a `config.yaml` file that defines its metadata, execution settings, arguments, and behavior.
 
 ## File Location
 
@@ -473,7 +473,7 @@ Write-Host "Count: $Count"
 Validate your job configuration:
 
 ```bash
-flowd jobs validate /path/to/job
+flwd jobs validate /path/to/job
 ```
 
 ## Next Steps

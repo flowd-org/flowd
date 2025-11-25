@@ -11,7 +11,7 @@ Add additional job trees and run tools from them just like local ones.
 
 ## Concepts
 
-flowd can load jobs from:
+flwd can load jobs from:
 
 - the local filesystem (relative or absolute paths),
 - git repositories (checked out into a local cache),
@@ -58,7 +58,7 @@ $ curl -s -X POST http://127.0.0.1:8080/sources \
         }'
 ```
 
-flowd will clone or fetch the repository into a local cache and discover jobs
+flwd will clone or fetch the repository into a local cache and discover jobs
 inside the configured job tree. After that:
 
 ```bash

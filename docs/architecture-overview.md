@@ -7,12 +7,12 @@ weight: 2
 The documentation may not be fully up to date. Please refer to the [disclaimer]({{< ref "_index.md" >}}) for important information about the project's active development status, documentation accuracy, and ongoing efforts to stabilize the codebase.
 {{% /callout %}}
 
-This page describes the main components of flowd and how they interact. It is
+This page describes the main components of flwd and how they interact. It is
 intended as an accessible front door to the design, not a formal specification.
 
 ## High-level picture
 
-flowd is a small, statically linked engine that turns job definitions into
+flwd is a small, statically linked engine that turns job definitions into
 planned and supervised runs. It can be used directly from the CLI, or as a
 long-running server exposing a small HTTP/REST API.
 
@@ -25,7 +25,7 @@ flowchart LR
       Client["HTTP clients and tools"]
     end
 
-    subgraph Engine["flowd Engine"]
+    subgraph Engine["flwd Engine"]
       Planner["Planner and Policy"]
       Scheduler["WFQ Scheduler"]
       ExecProc["Process Executor"]
@@ -132,7 +132,7 @@ Jobs can specify which execution profile they expect:
 
 The planner checks whether the requested profile can actually be honoured on the
 current host and runtime. If not, planning fails with a capability-mismatch
-error; flowd does not silently downgrade to weaker guarantees.
+error; flwd does not silently downgrade to weaker guarantees.
 
 Executors implement profiles by:
 
@@ -155,7 +155,7 @@ can implement the same contract over time.
 
 ## Extensions and integrations
 
-On top of the core engine, flowd exposes several extension points:
+On top of the core engine, flwd exposes several extension points:
 
 - metrics endpoint compatible with Prometheus/OpenMetrics;
 - NDJSON export streams for runs, jobs, sources and events;

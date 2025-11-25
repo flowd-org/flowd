@@ -79,7 +79,7 @@ authorisation. Examples of scopes:
 - `export:read`
 
 The development mode uses a fixed token (`dev-token`) with broad scopes. In a
-real deployment you generate and sign tokens yourself, then configure flowd to
+real deployment you generate and sign tokens yourself, then configure flwd to
 verify them.
 
 ## Working with sources
@@ -103,17 +103,17 @@ For full details see [Sources (Local, Git)]({{< ref "sources.md" >}}) and
 ## Server configuration
 
 Configuration is typically provided via a file (for example
-`/etc/flowd/server.yaml`). A simplified example:
+`/etc/flwd/server.yaml`). A simplified example:
 
 ```yaml
 bind: 0.0.0.0:8080
 default_profile: secure
-db_path: /var/lib/flowd/flowd.db
+db_path: /var/lib/flwd/flwd.db
 
 auth:
   issuer: "https://auth.example.org/"
-  audience: "flowd"
-  jwk_file: /etc/flowd/jwks.json
+  audience: "flwd"
+  jwk_file: /etc/flwd/jwks.json
 
 container:
   runtime: auto

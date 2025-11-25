@@ -9,20 +9,20 @@ The documentation may not be fully up to date. Please refer to the [disclaimer](
 
 # Configuration (flwd.yaml)
 
-flowd uses a YAML configuration file (`flwd.yaml`) to define instance-level settings, sources, security profiles, and remote connections.
+flwd uses a YAML configuration file (`flwd.yaml`) to define instance-level settings, sources, security profiles, and remote connections.
 
 ## Configuration File Location
 
-By default, flowd looks for configuration in the following locations (in order):
+By default, flwd looks for configuration in the following locations (in order):
 
 1. `./flwd.yaml` (current directory)
-2. `~/.config/flowd/flwd.yaml` (user config)
-3. `/etc/flowd/flwd.yaml` (system config)
+2. `~/.config/flwd/flwd.yaml` (user config)
+3. `/etc/flwd/flwd.yaml` (system config)
 
 You can override this with the `--config` flag:
 
 ```bash
-flowd serve --config /path/to/custom-config.yaml
+flwd serve --config /path/to/custom-config.yaml
 ```
 
 ## Basic Configuration
@@ -33,13 +33,13 @@ Here's a minimal `flwd.yaml` example:
 # Instance metadata
 instance:
   name: "production"
-  data_dir: "/var/lib/flowd"
+  data_dir: "/var/lib/flwd"
 
 # Job sources
 sources:
   - name: "local-ops"
     type: "fs"
-    path: "/opt/flowd/jobs"
+    path: "/opt/flwd/jobs"
 
 # API server settings
 server:
@@ -58,7 +58,7 @@ instance:
   name: "production"
   
   # Data directory for persistence (SQLite DB, artifacts)
-  data_dir: "/var/lib/flowd"
+  data_dir: "/var/lib/flwd"
   
   # Default tenant (if not specified in requests)
   default_tenant: "default"
@@ -66,27 +66,27 @@ instance:
 
 ### Sources
 
-Sources define where flowd discovers jobs. See [Sources & Tree-v1 Structure]({{< ref "sources-structure" >}}) for details.
+Sources define where flwd discovers jobs. See [Sources & Tree-v1 Structure]({{< ref "sources-structure" >}}) for details.
 
 ```yaml
 sources:
   # Local filesystem source
   - name: "local-ops"
     type: "fs"
-    path: "/opt/flowd/jobs"
+    path: "/opt/flwd/jobs"
     watch: true  # Auto-reload on changes
   
   # Git repository source
   - name: "shared-tools"
     type: "git"
-    url: "https://github.com/org/flowd-jobs.git"
+    url: "https://github.com/org/flwd-jobs.git"
     ref: "main"
     poll_interval: "5m"
   
   # OCI add-on source
   - name: "backup-addon"
     type: "oci"
-    image: "ghcr.io/org/flowd-backup:v1.0.0@sha256:..."
+    image: "ghcr.io/org/flwd-backup:v1.0.0@sha256:..."
 ```
 
 ### Server Settings
@@ -104,8 +104,8 @@ server:
   # TLS configuration (optional)
   tls:
     enabled: true
-    cert_file: "/etc/flowd/tls/cert.pem"
-    key_file: "/etc/flowd/tls/key.pem"
+    cert_file: "/etc/flwd/tls/cert.pem"
+    key_file: "/etc/flwd/tls/key.pem"
 ```
 
 ### Security Profiles
@@ -154,7 +154,7 @@ logging:
 ```yaml
 persistence:
   # SQLite database path (relative to data_dir)
-  db_path: "flowd.db"
+  db_path: "flwd.db"
   
   # Artifact storage settings
   artifacts:
@@ -201,19 +201,19 @@ extensions:
 
 ### Remotes
 
-Configure connections to remote flowd instances:
+Configure connections to remote flwd instances:
 
 ```yaml
 remotes:
   production:
-    base_url: "https://flowd.example.com"
+    base_url: "https://flwd.example.com"
     
     # Authentication
     auth:
       type: "private_key_jwt"
-      token_path: "/etc/flowd/auth/token.json"
-      private_key_path: "/etc/flowd/auth/key.pem"
-      audience: "https://flowd.example.com"
+      token_path: "/etc/flwd/auth/token.json"
+      private_key_path: "/etc/flwd/auth/key.pem"
+      audience: "https://flwd.example.com"
       
       # Additional JWT claims
       claims:
@@ -315,13 +315,13 @@ Environment variables use the format: `FLOWD_<SECTION>_<KEY>` (uppercase, unders
 Validate your configuration file:
 
 ```bash
-flowd config validate
+flwd config validate
 ```
 
 View the effective configuration (after env var overrides):
 
 ```bash
-flowd config show
+flwd config show
 ```
 
 ## Example: Complete Configuration
@@ -329,18 +329,18 @@ flowd config show
 ```yaml
 instance:
   name: "production"
-  data_dir: "/var/lib/flowd"
+  data_dir: "/var/lib/flwd"
   default_tenant: "default"
 
 sources:
   - name: "ops-tools"
     type: "fs"
-    path: "/opt/flowd/jobs"
+    path: "/opt/flwd/jobs"
     watch: true
   
   - name: "shared-library"
     type: "git"
-    url: "https://github.com/org/flowd-jobs.git"
+    url: "https://github.com/org/flwd-jobs.git"
     ref: "main"
     poll_interval: "5m"
 
@@ -350,8 +350,8 @@ server:
   write_timeout: "30s"
   tls:
     enabled: true
-    cert_file: "/etc/flowd/tls/cert.pem"
-    key_file: "/etc/flowd/tls/key.pem"
+    cert_file: "/etc/flwd/tls/cert.pem"
+    key_file: "/etc/flwd/tls/key.pem"
 
 security:
   default_profile: "secure"
@@ -373,7 +373,7 @@ logging:
     environment: "production"
 
 persistence:
-  db_path: "flowd.db"
+  db_path: "flwd.db"
   artifacts:
     max_size: "256MiB"
     quota_soft: "5GiB"
@@ -392,11 +392,11 @@ extensions:
 
 remotes:
   staging:
-    base_url: "https://staging.flowd.example.com"
+    base_url: "https://staging.flwd.example.com"
     auth:
       type: "private_key_jwt"
-      token_path: "/etc/flowd/auth/staging-token.json"
-      private_key_path: "/etc/flowd/auth/staging-key.pem"
+      token_path: "/etc/flwd/auth/staging-token.json"
+      private_key_path: "/etc/flwd/auth/staging-key.pem"
 ```
 
 ## Next Steps

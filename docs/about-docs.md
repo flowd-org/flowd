@@ -8,7 +8,7 @@ The documentation may not be fully up to date. Please refer to the [disclaimer](
 {{% /callout %}}
 
 
-This page serves as a style guide and reference for writing documentation for flowd. It outlines the conventions, formatting rules, and available components to ensure consistency across the documentation site.
+This page serves as a style guide and reference for writing documentation for flwd. It outlines the conventions, formatting rules, and available components to ensure consistency across the documentation site.
 
 ## Conventions
 
@@ -71,12 +71,12 @@ Use standard language identifiers like `yaml`, `json`, `bash`, `go`, etc.
 apiVersion: v1
 kind: Pod
 metadata:
-  name: flowd-pod
+  name: flwd-pod
 ```
 
 ```bash
 # Example Bash
-flowd run job.yaml
+flwd run job.yaml
 ```
 
 ### HTTP / API Examples

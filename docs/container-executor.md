@@ -10,7 +10,7 @@ The documentation may not be fully up to date. Please refer to the [disclaimer](
 Run jobs inside rootless containers with secure defaults where possible.
 
 The container executor lets you package the logic of a job inside a container
-image, while flowd handles planning, arguments, profiles and policies.
+image, while flwd handles planning, arguments, profiles and policies.
 
 ## Configure a container-backed job
 
@@ -27,7 +27,7 @@ args:
     required: true
 ```
 
-At runtime, flowd will:
+At runtime, flwd will:
 
 - ensure a container runtime is available (Podman preferred, Docker supported),
 - pull and cache the image if needed,

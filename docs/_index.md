@@ -3,12 +3,26 @@ title: "Documentation"
 ---
 
 {{% callout type="warning" %}}
-**Disclaimer:** <br>The flowd project is evolving rapidly and <strong><i>is currently in active and heavy development phase</i></strong>. As a result, the documentation may not match the current behavior of the codebase. We are actively working to stabilize the project and appreciate your patience as we strive to reach a stable release as soon as possible.
+**Disclaimer:**<br>
+The flowd project is evolving rapidly and <strong><i>is currently in an active and heavy development phase</i></strong>. As a result, the documentation may not always match the current behavior of the codebase. We are actively working to stabilize the project and aim to reach a stable release as soon as possible.
 {{% /callout %}}
 
-Welcome to the flowd.org documentation.
+# flwd Documentation
 
-This section collects user-facing guides for installing flowd, running your
+`flwd` (pronounced "flowed") is the reference implementation of **FLOWD — Framework for Language-agnostic Orchestration of Workflows Distributed**. It is a small job engine that discovers scripts, enforces typed inputs, and runs them via CLI and HTTP with unified logs.
+
+## Naming & compatibility
+
+This project is **not related to “flowd”, the NetFlow collector by Damien Miller**.
+
+To avoid binary name collisions and respect that existing ecosystem, the runtime and CLI are called **`flwd`** in all commands, config files and packages. The `flowd.org` domain is simply the short, acronym-based URL for FLOWD.
+
+All documentation and packaging keep `flwd` clearly distinct from the existing `flowd` NetFlow daemon, so both can safely coexist on the same machines.
+
+
+## What you’ll find here
+
+This section collects user-facing guides for installing flwd, running your
 first jobs, and understanding the architecture and main components.
 
 ## Where to start

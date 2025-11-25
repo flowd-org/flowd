@@ -1,6 +1,11 @@
-# flowd (Serve Mode + CLI)
+# flwd – FLOWD job engine (flowd.org)
 
-This repository hosts the flwd daemon and CLI.
+`flwd` (pronounced "flowed") is the reference implementation of **FLOWD — Framework for Language-agnostic Orchestration of Workflows Distributed**: a small, embeddable runtime that discovers scripts, enforces typed inputs, and runs them via CLI and HTTP with unified logs.
+
+Project website and full documentation: https://flowd.org
+
+> **Naming note**  
+> This project is **not related to “flowd”, the NetFlow collector by Damien Miller**. To avoid binary name collisions and respect that existing ecosystem, the canonical name of this implementation and binary is `flwd`. The `flowd.org` domain and the `flowd-org/flowd` repository name are used as convenient acronym-based URLs; documentation and packaging clearly distinguish `flwd` from the existing `flowd` NetFlow daemon so operators can install both on the same systems.
 
 ## Licenses
 

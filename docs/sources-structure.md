@@ -9,11 +9,11 @@ The documentation may not be fully up to date. Please refer to the [disclaimer](
 
 # Sources & Tree-v1 Structure
 
-Sources define where flowd discovers jobs. Each source uses the **tree-v1** directory layout to organize jobs in a hierarchical structure.
+Sources define where flwd discovers jobs. Each source uses the **tree-v1** directory layout to organize jobs in a hierarchical structure.
 
 ## What are Sources?
 
-Sources are providers of jobs that flowd can discover and execute. They can be:
+Sources are providers of jobs that flwd can discover and execute. They can be:
 - **Local filesystem** directories
 - **Git repositories** (local or remote)
 - **OCI images** (add-ons)
@@ -28,7 +28,7 @@ Points to a local directory containing jobs:
 sources:
   - name: "local-ops"
     type: "fs"
-    path: "/opt/flowd/jobs"
+    path: "/opt/flwd/jobs"
     mountPath: "ops"
     watch: true  # Auto-reload on changes
 ```
@@ -48,7 +48,7 @@ Clones and syncs jobs from a Git repository:
 sources:
   - name: "shared-tools"
     type: "git"
-    url: "https://github.com/org/flowd-jobs.git"
+    url: "https://github.com/org/flwd-jobs.git"
     ref: "main"
     mountPath: "shared"
     pull_policy: "on-run"
@@ -143,7 +143,7 @@ This creates a job with ID equal to the `mountPath` (or empty string if `mountPa
 
 ## Discovery Process
 
-flowd discovers jobs using the following process:
+flwd discovers jobs using the following process:
 
 1. **Mount sources**: Each source is mounted at its `mountPath` under the tenant's scripts root
 2. **Walk directories**: Recursively walk the directory tree
@@ -159,7 +159,7 @@ flowd discovers jobs using the following process:
 sources:
   - name: "local-ops"
     type: "fs"
-    path: "/opt/flowd/jobs"
+    path: "/opt/flwd/jobs"
     mountPath: "ops"
   
   - name: "shared-tools"
@@ -172,12 +172,12 @@ sources:
 **Directory Structure:**
 
 ```
-/opt/flowd/jobs/          # local-ops source
+/opt/flwd/jobs/          # local-ops source
 ├── backup/
 │   └── daily/
 │       └── config.yaml
 
-/tmp/flowd/git/tools/     # shared-tools source (cloned)
+/tmp/flwd/git/tools/     # shared-tools source (cloned)
 ├── deploy/
 │   └── app/
 │       └── config.yaml
@@ -300,27 +300,27 @@ sources:
 Reload configuration:
 
 ```bash
-flowd sources reload
+flwd sources reload
 ```
 
 ### Listing Sources
 
 ```bash
 # List all sources
-flowd sources list
+flwd sources list
 
 # Show source details
-flowd sources get my-jobs
+flwd sources get my-jobs
 ```
 
 ### Pulling Updates (Git Sources)
 
 ```bash
 # Manual pull
-flowd sources pull shared-tools
+flwd sources pull shared-tools
 
 # Pull all sources
-flowd sources pull --all
+flwd sources pull --all
 ```
 
 ### Watching for Changes (Filesystem)
@@ -379,13 +379,13 @@ Auto-sync only works with branch references (not tags or commit SHAs).
 ```yaml
 instance:
   name: "production"
-  data_dir: "/var/lib/flowd"
+  data_dir: "/var/lib/flwd"
 
 sources:
   # Local development jobs
   - name: "local-dev"
     type: "fs"
-    path: "/opt/flowd/dev-jobs"
+    path: "/opt/flwd/dev-jobs"
     mountPath: "dev"
     watch: true
   
@@ -417,19 +417,19 @@ sources:
 **Directory Structure:**
 
 ```
-/opt/flowd/dev-jobs/      # local-dev
+/opt/flwd/dev-jobs/      # local-dev
 ├── test/
 │   └── hello/
 │       ├── config.yaml
 │       └── run.sh
 
-/var/lib/flowd/git/platform-tools/  # platform-tools (cloned)
+/var/lib/flwd/git/platform-tools/  # platform-tools (cloned)
 ├── deploy/
 │   └── app/
 │       ├── config.yaml
 │       └── deploy.sh
 
-/var/lib/flowd/git/prod-ops/  # prod-ops (cloned)
+/var/lib/flwd/git/prod-ops/  # prod-ops (cloned)
 ├── backup/
 │   └── database/
 │       ├── config.yaml
@@ -450,10 +450,10 @@ Validate source configuration:
 
 ```bash
 # Validate sources in config
-flowd config validate
+flwd config validate
 
 # Test source discovery
-flowd sources discover my-jobs
+flwd sources discover my-jobs
 ```
 
 ## Next Steps
