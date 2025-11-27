@@ -8,13 +8,14 @@ The flowd project is evolving rapidly and <strong><i>is currently in an active a
 {{% /callout %}}
 
 
-`flwd` (pronounced "flowed") is the reference implementation of **FLOWD — Framework for Language-agnostic Orchestration of Workflows Distributed**. It is a small job engine that discovers scripts, enforces typed inputs, and runs them via CLI and HTTP with unified logs.
+`flwd` (pronounced "flowed") is a small job engine that discovers scripts, enforces typed inputs, and runs them via CLI and HTTP with unified logs.
+
+It is the reference implementation of **FLOWD — Framework for Language-agnostic Orchestration of Workflows Distributed**.  
 
 {{% callout type="note" %}}
-**Naming & compatibility**<br>
-This project is **not related** to “flowd”, the NetFlow collector by Damien Miller.
-- To avoid binary name collisions and respect that existing ecosystem, the runtime and CLI are called **`flwd`** in all commands, config files and packages. The `flowd.org` domain is simply the short, acronym-based URL for FLOWD.
-- All documentation and packaging keep `flwd` clearly distinct from the existing `flowd` NetFlow daemon, so both can safely coexist on the same machines.
+**Naming & compatibility:**<br>
+This project is **not related** to the NetFlow collector (flowd) by Damien Miller.<br>
+To avoid binary name collisions and respect that existing ecosystem, the runtime and CLI are called **flwd** in all commands, config files and packages. All documentation and packaging keep **flwd** clearly distinct, so both can safely coexist on the same machines.
 {{% /callout %}}
 
 ## What you’ll find here
