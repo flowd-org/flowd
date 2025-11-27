@@ -1,6 +1,6 @@
 ---
 title: "Quick Start"
-weight: 3
+weight: 4
 ---
 
 {{% callout type="info" %}}

@@ -1,6 +1,6 @@
 ---
 title: "Architecture Overview"
-weight: 2
+weight: 3
 ---
 
 {{% callout type="info" %}}

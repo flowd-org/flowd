@@ -27,14 +27,17 @@ first jobs, and understanding the architecture and main components.
 
 ## Where to start
 
+- **[Why Not “Just Bash or PowerShell”?]({{< ref "why-not-bash.md" >}})**  
+  Why flwd exists on top of shells, and when to use the engine instead of raw scripts.
+
+- **[Getting Started]({{< ref "getting-started.md" >}})**  
+  Clone, build `flwd`, initialise a workspace and run a “hello world” job.
+
 - **[Architecture Overview]({{< ref "architecture-overview.md" >}})**  
   High-level view of the engine, components and execution flow.
 
 - **[Quick Start]({{< ref "quick_start.md" >}})**  
   Fast path: list → plan → run a job, enable completion, try the TUI.
-
-- **[Getting Started]({{< ref "getting-started.md" >}})**  
-  Clone, build `flwd`, initialise a workspace and run a “hello world” job.
 
 - **[Quickstart (CLI)]({{< ref "quickstart-cli.md" >}})**  
   Slightly deeper CLI tour: planning, runs, JSON output, inspecting history.
