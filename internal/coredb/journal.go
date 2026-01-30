@@ -36,14 +36,17 @@ type Journal struct {
 }
 
 // NewJournal returns a Journal backed by the provided DB with the supplied
-// maximum size budget. When maxBytes is zero or negative the default (64 MiB)
-// is used.
+// maximum size budget. When maxBytes is zero or negative the configured CoreDB
+// journal budget (or the default 64 MiB) is used.
 func NewJournal(db *DB, maxBytes int64) *Journal {
 	if db == nil {
 		return nil
 	}
 	if maxBytes <= 0 {
-		maxBytes = defaultJournalMaxBytes
+		maxBytes = db.opts.JournalMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = defaultJournalMaxBytes
+		}
 	}
 	return &Journal{
 		db:       db.sql,
