@@ -21,6 +21,19 @@ var baseMigrations = [...]string{
 		PRIMARY KEY (key, endpoint)
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_core_idemp_ttl ON core_idempotency(ttl_expires_at);`,
+	`CREATE TABLE IF NOT EXISTS core_runs (
+		run_id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		started_at INTEGER NOT NULL,
+		finished_at INTEGER,
+		result BLOB,
+		executor TEXT,
+		runtime TEXT,
+		security_profile TEXT,
+		provenance BLOB
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_core_runs_started_at ON core_runs(started_at);`,
 	`CREATE TABLE IF NOT EXISTS core_run_journal (
 		seq INTEGER PRIMARY KEY AUTOINCREMENT,
 		run_id TEXT NOT NULL,

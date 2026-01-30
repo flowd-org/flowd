@@ -194,7 +194,7 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 		}
 		return sourcetoProvenance(src), true
 	}
-	runGet := handlers.NewRunGetHandler(runStore)
+	runGet := handlers.NewRunGetHandler(handlers.RunGetConfig{Store: runStore, DB: cfg.CoreDB})
 	runEvents := handlers.NewRunEventsHandler(runStore, hub, journal)
 	runEventsExport := handlers.NewRunEventsExportHandler(runStore, journal, cfg.ExtensionEnabled("export"))
 	storageHealth := handlers.NewStorageHealthHandler(cfg.CoreDB)

@@ -89,6 +89,7 @@ type RunsHandler struct {
 	idempotency    idempotencyStore
 	idempotencyTTL time.Duration
 	store          *runstore.Store
+	dbRuns         *coredb.RunStore
 	events         EventSink
 	resolveSrc     func(jobID string, ref *RunSourceRef) (map[string]any, bool)
 	sources        *sourcestore.Store
@@ -142,6 +143,11 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 		idemStore = newMemoryIdempotencyCache(ttl)
 	}
 
+	var dbRuns *coredb.RunStore
+	if cfg.DB != nil {
+		dbRuns = coredb.NewRunStore(cfg.DB)
+	}
+
 	return &RunsHandler{
 		root:           root,
 		discover:       discoverFn,
@@ -150,6 +156,7 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 		idempotency:    idemStore,
 		idempotencyTTL: ttl,
 		store:          store,
+		dbRuns:         dbRuns,
 		events:         cfg.Events,
 		resolveSrc:     cfg.ResolveSource,
 		sources:        cfg.Sources,
@@ -563,15 +570,30 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.dbRuns != nil {
+		if err := h.dbRuns.Create(ctx, runRecordFromPayload(resp)); err != nil {
+			if logger != nil {
+				logger.Error("run store failed", slog.String("error", err.Error()))
+			}
+			if coredb.IsQuotaExceeded(err) {
+				response.Write(w, storageQuotaExceededProblem())
+			} else {
+				response.Write(w, response.New(http.StatusInternalServerError, "run store failed", response.WithDetail(err.Error())))
+			}
+			return
+		}
+	}
+
 	h.store.Create(runstore.Run{
-		ID:         resp.ID,
-		JobID:      resp.JobID,
-		Status:     resp.Status,
-		StartedAt:  resp.StartedAt,
-		Result:     resp.Result,
-		Executor:   resp.Executor,
-		Runtime:    resp.Runtime,
-		Provenance: resp.Provenance,
+		ID:              resp.ID,
+		JobID:           resp.JobID,
+		Status:          resp.Status,
+		StartedAt:       resp.StartedAt,
+		Result:          resp.Result,
+		Executor:        resp.Executor,
+		Runtime:         resp.Runtime,
+		SecurityProfile: resp.SecurityProfile,
+		Provenance:      resp.Provenance,
 	})
 
 	if len(decisions) > 0 {
@@ -742,6 +764,27 @@ func (h *RunsHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runs := h.store.List()
+	if h.dbRuns != nil {
+		records, err := h.dbRuns.List(r.Context())
+		if err != nil {
+			response.Write(w, response.New(http.StatusInternalServerError, "list runs failed", response.WithDetail(err.Error())))
+			return
+		}
+		payloads := make([]RunPayload, len(records))
+		for i, record := range records {
+			payloads[i] = payloadFromRecord(record)
+		}
+		pageRuns := paginateRunPayloads(payloads, page, perPage)
+		data, err := json.Marshal(pageRuns)
+		if err != nil {
+			response.Write(w, response.New(http.StatusInternalServerError, "encode runs failed", response.WithDetail(err.Error())))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
 	start := (page - 1) * perPage
 	if start >= len(runs) {
 		runs = []runstore.Run{}
@@ -834,6 +877,48 @@ func parseRunsPagination(r *http.Request) (int, int, error) {
 	}
 
 	return page, perPage, nil
+}
+
+func paginateRunPayloads(payloads []RunPayload, page, perPage int) []RunPayload {
+	start := (page - 1) * perPage
+	if start >= len(payloads) {
+		return []RunPayload{}
+	}
+	end := start + perPage
+	if end > len(payloads) {
+		end = len(payloads)
+	}
+	return payloads[start:end]
+}
+
+func runRecordFromPayload(payload RunPayload) coredb.RunRecord {
+	return coredb.RunRecord{
+		ID:              payload.ID,
+		JobID:           payload.JobID,
+		Status:          payload.Status,
+		StartedAt:       payload.StartedAt,
+		FinishedAt:      payload.FinishedAt,
+		Result:          payload.Result,
+		Executor:        payload.Executor,
+		Runtime:         payload.Runtime,
+		SecurityProfile: payload.SecurityProfile,
+		Provenance:      payload.Provenance,
+	}
+}
+
+func runRecordFromStore(run runstore.Run) coredb.RunRecord {
+	return coredb.RunRecord{
+		ID:              run.ID,
+		JobID:           run.JobID,
+		Status:          run.Status,
+		StartedAt:       run.StartedAt,
+		FinishedAt:      run.FinishedAt,
+		Result:          run.Result,
+		Executor:        run.Executor,
+		Runtime:         run.Runtime,
+		SecurityProfile: run.SecurityProfile,
+		Provenance:      run.Provenance,
+	}
 }
 
 func encodeData(payload any) string {
@@ -1159,6 +1244,9 @@ func (h *RunsHandler) updateRunStatus(runID, status string, finished *time.Time)
 		current.FinishedAt = finished
 	}
 	h.store.Update(current)
+	if h.dbRuns != nil {
+		_ = h.dbRuns.Update(context.Background(), runRecordFromStore(current))
+	}
 }
 
 func (h *RunsHandler) failRun(runID string, status string, err error) {

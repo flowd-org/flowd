@@ -8,15 +8,16 @@ import (
 
 // Run represents the persisted metadata for a run.
 type Run struct {
-	ID         string         `json:"id"`
-	JobID      string         `json:"job_id"`
-	Status     string         `json:"status"`
-	StartedAt  time.Time      `json:"started_at"`
-	FinishedAt *time.Time     `json:"finished_at,omitempty"`
-	Result     map[string]any `json:"result,omitempty"`
-	Executor   string         `json:"executor,omitempty"`
-	Runtime    string         `json:"runtime,omitempty"`
-	Provenance map[string]any `json:"provenance,omitempty"`
+	ID              string         `json:"id"`
+	JobID           string         `json:"job_id"`
+	Status          string         `json:"status"`
+	StartedAt       time.Time      `json:"started_at"`
+	FinishedAt      *time.Time     `json:"finished_at,omitempty"`
+	Result          map[string]any `json:"result,omitempty"`
+	Executor        string         `json:"executor,omitempty"`
+	Runtime         string         `json:"runtime,omitempty"`
+	SecurityProfile string         `json:"security_profile,omitempty"`
+	Provenance      map[string]any `json:"provenance,omitempty"`
 }
 
 // Store keeps runs in memory for serve mode.

@@ -127,7 +127,7 @@ argspec:
 	if source["resolved_ref"] == "" {
 		t.Fatalf("expected resolved_ref in provenance")
 	}
-	getHandler := NewRunGetHandler(store)
+	getHandler := NewRunGetHandler(RunGetConfig{Store: store})
 	getReq := httptest.NewRequest(http.MethodGet, "/runs/"+payload["id"].(string), nil)
 	getResp := httptest.NewRecorder()
 	getHandler.ServeHTTP(getResp, getReq)
@@ -435,7 +435,7 @@ func TestRunsHandlerUnknownJob(t *testing.T) {
 		t.Fatalf("expected 404, got %d", resp.Code)
 	}
 
-	getHandler := NewRunGetHandler(store)
+	getHandler := NewRunGetHandler(RunGetConfig{Store: store})
 	getReq := httptest.NewRequest(http.MethodGet, "/runs/does-not-exist", nil)
 	getResp := httptest.NewRecorder()
 	getHandler.ServeHTTP(getResp, getReq)

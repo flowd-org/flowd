@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/runstore"
 )
@@ -33,15 +34,31 @@ func newRunPayload(id, jobID, status string, startedAt time.Time) RunPayload {
 
 func payloadFromStore(run runstore.Run) RunPayload {
 	return RunPayload{
-		ID:         run.ID,
-		JobID:      run.JobID,
-		Status:     run.Status,
-		StartedAt:  run.StartedAt,
-		FinishedAt: run.FinishedAt,
-		Result:     run.Result,
-		Executor:   run.Executor,
-		Runtime:    run.Runtime,
-		Provenance: run.Provenance,
+		ID:              run.ID,
+		JobID:           run.JobID,
+		Status:          run.Status,
+		StartedAt:       run.StartedAt,
+		FinishedAt:      run.FinishedAt,
+		Result:          run.Result,
+		Executor:        run.Executor,
+		Runtime:         run.Runtime,
+		SecurityProfile: run.SecurityProfile,
+		Provenance:      run.Provenance,
+	}
+}
+
+func payloadFromRecord(record coredb.RunRecord) RunPayload {
+	return RunPayload{
+		ID:              record.ID,
+		JobID:           record.JobID,
+		Status:          record.Status,
+		StartedAt:       record.StartedAt,
+		FinishedAt:      record.FinishedAt,
+		Result:          record.Result,
+		Executor:        record.Executor,
+		Runtime:         record.Runtime,
+		SecurityProfile: record.SecurityProfile,
+		Provenance:      record.Provenance,
 	}
 }
 
