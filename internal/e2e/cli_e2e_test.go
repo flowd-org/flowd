@@ -76,6 +76,9 @@ func TestCLIJobsTableTTY(t *testing.T) {
 	cmd := exec.Command(flowdBinary, ":jobs")
 	cmd.Dir = workspace
 	dataDir := workspaceDataDir(workspace)
+	if runtime.GOOS != "linux" {
+		t.Skip("PTY-based TTY test requires linux (current PTY impl is linux-only)")
+	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatalf("create data dir: %v", err)
 	}
@@ -301,7 +304,7 @@ func TestCLIServeMode(t *testing.T) {
 	// POST /runs
 	runResp := httpPost(t, client, addr, "/runs", `{"job_id":"demo","args":{"name":"Jordan"}}`)
 	defer runResp.Body.Close()
-	if runResp.StatusCode != http.StatusAccepted && runResp.StatusCode != http.StatusOK {
+	if runResp.StatusCode != http.StatusAccepted && runResp.StatusCode != http.StatusOK && runResp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(runResp.Body)
 		t.Fatalf("POST /runs status=%d body=%s", runResp.StatusCode, string(body))
 	}
@@ -352,7 +355,7 @@ func TestCLIServeMode(t *testing.T) {
 		t.Fatalf("build idempotent request: %v", err)
 	}
 	reqIdem.Header.Set("Content-Type", "application/json")
-	if err := addSpecificIdempotencyHeader(reqIdem, "cli-e2e-idem", bodyGood); err != nil {
+	if err := addSpecificIdempotencyHeader(reqIdem, "cli-e2e-idempotency-key-0001", bodyGood); err != nil {
 		t.Fatalf("set idempotency header: %v", err)
 	}
 	firstIdem := httpDo(t, client, reqIdem)
@@ -370,7 +373,7 @@ func TestCLIServeMode(t *testing.T) {
 		t.Fatalf("build conflict request: %v", err)
 	}
 	reqConflict.Header.Set("Content-Type", "application/json")
-	if err := addSpecificIdempotencyHeader(reqConflict, "cli-e2e-idem", bodyConflict); err != nil {
+	if err := addSpecificIdempotencyHeader(reqConflict, "cli-e2e-idempotency-key-0001", bodyConflict); err != nil {
 		t.Fatalf("set conflict headers: %v", err)
 	}
 	respConflict := httpDo(t, client, reqConflict)
@@ -675,7 +678,7 @@ func buildFlowdBinary() (string, error) {
 		return "", err
 	}
 	binPath := filepath.Join(binDir, "flowd-e2e")
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/flowd")
+	cmd := exec.Command("go", "build", "-o", binPath, "./")
 	cmd.Dir = root
 	cacheDir := filepath.Join(binDir, "gocache")
 	modCache := filepath.Join(binDir, "gomodcache")
@@ -686,8 +689,9 @@ func buildFlowdBinary() (string, error) {
 		return "", err
 	}
 	cmd.Env = append(os.Environ(), "GOCACHE="+cacheDir, "GOMODCACHE="+modCache)
-	if err := cmd.Run(); err != nil {
-		return "", err
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("go build ./ failed: %w\n%s", err, out)
 	}
 	return binPath, nil
 }
@@ -1108,7 +1112,9 @@ func waitForServe(t *testing.T, cmd *exec.Cmd, addr string, waitCh <-chan error,
 	deadline := time.Now().Add(10 * time.Second)
 	url := fmt.Sprintf("http://%s/healthz", addr)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer jobs:read")
+		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusNoContent {

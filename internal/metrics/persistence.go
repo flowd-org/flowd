@@ -5,8 +5,6 @@ package metrics
 import (
 	"strings"
 	"time"
-
-	servermetrics "github.com/flowd-org/flowd/internal/server/metrics"
 )
 
 const (
@@ -53,11 +51,7 @@ var latencyDefaults = map[string][]string{
 }
 
 func init() {
-	for operation, outcomes := range latencyDefaults {
-		for _, outcome := range outcomes {
-			servermetrics.Default.EnsurePersistenceLatency(operation, outcome)
-		}
-	}
+	seedPersistenceDefaults(getSink())
 }
 
 // PersistenceTimer records elapsed time for a persistence operation and
@@ -90,7 +84,7 @@ func (t *PersistenceTimer) Observe(outcome string) {
 	if o == "" {
 		o = PersistenceOutcomeOK
 	}
-	servermetrics.Default.RecordPersistenceLatency(t.operation, o, time.Since(t.start))
+	getSink().RecordPersistenceLatency(t.operation, o, time.Since(t.start))
 }
 
 // RecordPersistenceEviction increments counters for persistence evictions.
@@ -99,7 +93,18 @@ func RecordPersistenceEviction(kind string, bytes int64) {
 	if k == "" {
 		k = persistenceKindUnknown
 	}
-	servermetrics.Default.RecordPersistenceEviction(k, bytes)
+	getSink().RecordPersistenceEviction(k, bytes)
+}
+
+func seedPersistenceDefaults(s Sink) {
+	if s == nil {
+		return
+	}
+	for operation, outcomes := range latencyDefaults {
+		for _, outcome := range outcomes {
+			s.EnsurePersistenceLatency(operation, outcome)
+		}
+	}
 }
 
 func sanitize(v string) string {

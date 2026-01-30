@@ -75,7 +75,11 @@ func (h *Hub) Publish(runID string, ev Event) {
 // Subscribe registers a subscriber for a run and replays buffered events after the provided lastEventID.
 func (h *Hub) Subscribe(ctx context.Context, runID, lastEventID string) *Subscription {
 	stream := h.getOrCreateStream(runID)
-	ch := make(chan []byte, 32)
+	bufSize := 32
+	if h.cfg.MaxBufferSize > bufSize {
+		bufSize = h.cfg.MaxBufferSize
+	}
+	ch := make(chan []byte, bufSize)
 	subCtx, cancel := context.WithCancel(ctx)
 	stream.addSubscriber(subCtx, ch, h.cfg.KeepAliveInterval)
 	stream.replay(ch, lastEventID)
@@ -181,11 +185,16 @@ func (rs *runStream) replay(ch chan<- []byte, lastID string) {
 		return
 	}
 	start := 0
+	found := false
 	for i, ev := range rs.events {
 		if ev.ID == lastID {
 			start = i + 1
+			found = true
 			break
 		}
+	}
+	if !found {
+		return
 	}
 	for _, ev := range rs.events[start:] {
 		ch <- formatEvent(ev)

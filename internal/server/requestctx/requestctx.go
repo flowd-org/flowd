@@ -3,15 +3,15 @@ package requestctx
 import (
 	"context"
 	"log/slog"
+
+	"github.com/flowd-org/flowd/internal/observability/logctx"
 )
 
-type loggerKey struct{}
 type profileKey struct{}
 type metadataKey struct{}
 type principalKey struct{}
 
 var (
-	ctxLoggerKey    = &loggerKey{}
 	ctxProfileKey   = &profileKey{}
 	ctxMetadataKey  = &metadataKey{}
 	ctxPrincipalKey = &principalKey{}
@@ -25,19 +25,12 @@ type Metadata struct {
 
 // WithLogger stores the request-scoped logger in the context.
 func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
-	if logger == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, ctxLoggerKey, logger)
+	return logctx.WithLogger(ctx, logger)
 }
 
 // Logger extracts the request-scoped logger from context, if present.
 func Logger(ctx context.Context) *slog.Logger {
-	if ctx == nil {
-		return nil
-	}
-	logger, _ := ctx.Value(ctxLoggerKey).(*slog.Logger)
-	return logger
+	return logctx.Logger(ctx)
 }
 
 // WithEffectiveProfile annotates the context with the effective security profile.

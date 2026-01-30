@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	coremetrics "github.com/flowd-org/flowd/internal/metrics"
 )
 
 // Registry collects counters, gauges, and histograms for Prometheus exposition.
@@ -68,6 +70,10 @@ func NewRegistry() *Registry {
 
 // Default global registry used by the server.
 var Default = NewRegistry()
+
+func init() {
+	coremetrics.SetSink(Default)
+}
 
 // SetBuildInfo configures the build info labels exposed by flwd_build_info.
 func (r *Registry) SetBuildInfo(labels map[string]string) {

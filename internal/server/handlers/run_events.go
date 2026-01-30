@@ -65,13 +65,14 @@ func NewRunEventsHandler(store *runstore.Store, hub EventFeed, journal *coredb.J
 			response.Write(w, response.New(http.StatusBadRequest, "invalid Last-Event-ID", response.WithDetail(err.Error())))
 			return
 		}
+		resumeRequested := strings.TrimSpace(lastEventID) != ""
 
 		ctx := r.Context()
-		if lastSeq > 0 {
+		if resumeRequested {
 			metrics.RecordSSEResumeAttempt()
 		}
 
-		if journal != nil && lastSeq > 0 {
+		if journal != nil && resumeRequested {
 			var resumeErr error
 			resumeOutcome := "ok"
 			ctx, resumeSpan := tracing.Start(ctx, "server.sse.resume",
@@ -95,17 +96,25 @@ func NewRunEventsHandler(store *runstore.Store, hub EventFeed, journal *coredb.J
 				response.Write(w, response.New(http.StatusInternalServerError, "journal lookup failed"))
 				return
 			}
-			if earliest > 0 {
-				if lastSeq < earliest || (latest > 0 && lastSeq > latest) {
-					resumeOutcome = "expired"
-					resumeErr = fmt.Errorf("cursor %d expired", lastSeq)
-					metrics.RecordSSECursorExpired()
-					response.Write(w, response.New(http.StatusGone, "cursor expired",
-						response.WithType("https://flowd.dev/problems/cursor-expired"),
-						response.WithDetail(fmt.Sprintf("cursor %d no longer retained", lastSeq)),
-					))
-					return
-				}
+			if earliest == 0 {
+				resumeOutcome = "expired"
+				resumeErr = fmt.Errorf("cursor %d expired", lastSeq)
+				metrics.RecordSSECursorExpired()
+				response.Write(w, response.New(http.StatusGone, "cursor expired",
+					response.WithType("https://flowd.dev/problems/cursor-expired"),
+					response.WithDetail("run events are no longer retained"),
+				))
+				return
+			}
+			if lastSeq < earliest || (latest > 0 && lastSeq > latest) {
+				resumeOutcome = "expired"
+				resumeErr = fmt.Errorf("cursor %d expired", lastSeq)
+				metrics.RecordSSECursorExpired()
+				response.Write(w, response.New(http.StatusGone, "cursor expired",
+					response.WithType("https://flowd.dev/problems/cursor-expired"),
+					response.WithDetail(fmt.Sprintf("cursor %d no longer retained", lastSeq)),
+				))
+				return
 			}
 		}
 
