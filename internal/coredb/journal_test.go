@@ -3,6 +3,7 @@ package coredb
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -124,6 +125,88 @@ func TestJournalRejectsPayloadAboveLimit(t *testing.T) {
 	_, err = journal.Append(ctx, "run-1", "step.log", []byte(`{"msg":"too big"}`), time.Now().UTC())
 	if !errors.Is(err, ErrJournalQuotaExceeded) {
 		t.Fatalf("expected ErrJournalQuotaExceeded, got %v", err)
+	}
+}
+
+func TestJournalEvictionAppendAtomicity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(ctx, Options{DataDir: dir})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	journal := NewJournal(db, 30)
+	if journal == nil {
+		t.Fatal("expected journal")
+	}
+
+	if _, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
+		t.Fatalf("append seed: %v", err)
+	}
+
+	earliest, latest, err := journal.Bounds(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("bounds seed: %v", err)
+	}
+	if earliest == 0 || latest == 0 {
+		t.Fatalf("expected seeded bounds to be non-zero, got earliest=%d latest=%d", earliest, latest)
+	}
+
+	stop := make(chan struct{})
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			if _, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"bravo"}`), time.Now().UTC()); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		close(stop)
+	}()
+
+	for {
+		select {
+		case err := <-errCh:
+			wg.Wait()
+			t.Fatalf("append loop error: %v", err)
+		case <-stop:
+			wg.Wait()
+			goto Done
+		default:
+			currentEarliest, currentLatest, err := journal.Bounds(ctx, "run-1")
+			if err != nil {
+				wg.Wait()
+				t.Fatalf("bounds read: %v", err)
+			}
+			if currentEarliest == 0 || currentLatest == 0 {
+				wg.Wait()
+				t.Fatalf("observed empty bounds during append, earliest=%d latest=%d", currentEarliest, currentLatest)
+			}
+			if currentEarliest > currentLatest {
+				wg.Wait()
+				t.Fatalf("observed inverted bounds during append, earliest=%d latest=%d", currentEarliest, currentLatest)
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+	}
+
+Done:
+	finalEarliest, finalLatest, err := journal.Bounds(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("bounds final: %v", err)
+	}
+	if finalEarliest == 0 || finalLatest == 0 {
+		t.Fatalf("expected final bounds to be non-zero, got earliest=%d latest=%d", finalEarliest, finalLatest)
 	}
 }
 
