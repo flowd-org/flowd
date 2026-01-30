@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/flowd-org/flowd/internal/argsloader"
+	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/engine"
 	"github.com/flowd-org/flowd/internal/events"
 	"github.com/flowd-org/flowd/internal/executor"
@@ -261,7 +262,23 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 		if verbosity > 0 {
 			consoleEmitter = events.NewEmitter(os.Stdout, jsonEvents)
 		}
-		emitter := events.NewCompositeSink(consoleEmitter)
+		var journalSink events.Sink
+		var journalDB *coredb.DB
+		if dataDir := paths.DataDir(); dataDir != "" {
+			db, dbErr := coredb.Open(context.Background(), coredb.Options{DataDir: dataDir})
+			if dbErr == nil {
+				journalDB = db
+				journalSink = events.NewJournalSink(coredb.NewJournal(db, 0))
+			} else if verbosity > 0 {
+				fmt.Fprintf(os.Stderr, "[warn] coredb unavailable; run journal disabled: %v\n", dbErr)
+			}
+		}
+		if journalDB != nil {
+			defer func() {
+				_ = journalDB.Close()
+			}()
+		}
+		emitter := events.NewCompositeSink(consoleEmitter, journalSink)
 		if emitter != nil {
 			emitter.EmitRunStart(runID, jobID)
 		}
