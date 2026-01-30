@@ -99,6 +99,14 @@ type RunsHandler struct {
 	running        sync.Map // runID -> *runExecutionContext
 }
 
+type staticConfigLoader struct {
+	cfg *types.Config
+}
+
+func (s staticConfigLoader) LoadConfig(scriptDir string) (*types.Config, error) {
+	return s.cfg, nil
+}
+
 // NewRunsHandler returns an HTTP handler for POST /runs.
 func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 	root := cfg.Root
@@ -360,24 +368,32 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := cfg.ArgSpec
-	var binding *engine.Binding
-	if spec != nil && len(spec.Args) > 0 {
-		bind, bindErr := validatePlanArgs(*spec, req.Args)
-		if bindErr != nil {
-			var argErr *engine.ArgError
-			if errors.As(bindErr, &argErr) {
-				response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
-					response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
-				return
-			}
-			response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(bindErr.Error())))
-			return
-		}
-		binding = bind
-	} else if len(req.Args) > 0 {
+	if (spec == nil || len(spec.Args) == 0) && len(req.Args) > 0 {
 		response.Write(w, response.New(http.StatusBadRequest, "job does not accept arguments"))
 		return
 	}
+	orchestrator := engine.NewOrchestrator(engine.OrchestratorDeps{
+		ConfigLoader: staticConfigLoader{cfg: cfg},
+	})
+	startRes, err := orchestrator.StartRun(ctx, types.StartRunRequest{
+		JobID:     effectiveID,
+		ScriptDir: execScriptDir,
+		Args:      req.Args,
+	})
+	if err != nil {
+		var argErr *engine.ArgError
+		if errors.As(err, &argErr) {
+			response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
+				response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
+			return
+		}
+		response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(err.Error())))
+		return
+	}
+	effectiveID = startRes.EffectiveJobID
+	execScriptDir = startRes.ScriptDir
+	binding := startRes.Binding
+	plan := startRes.Plan
 
 	executorMode := strings.ToLower(cfg.Executor)
 	if strings.HasPrefix(cfg.Interpreter, "container:") && executorMode == "" {
@@ -505,7 +521,6 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		findings = append(findings, overrideFindings...)
 	}
 
-	plan := engine.BuildPlan(effectiveID, cfg, spec, binding)
 	plan.SecurityProfile = effProfile
 	if len(findings) > 0 {
 		plan.PolicyFindings = findings
@@ -513,7 +528,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if trustPreview != nil {
 		plan.ImageTrust = trustPreview
 	}
-	runID := events.GenerateRunID()
+	runID := startRes.RunID
 	if executorMode == "container" && runtime != "" {
 		if err := container.RemoveContainer(context.Background(), runtime, runID); err != nil {
 			response.Write(w, containerNameConflictProblem(err))
