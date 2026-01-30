@@ -508,8 +508,16 @@ func (quotaFailingIdempotencyStore) Lookup(context.Context, string, string, time
 	return RunPayload{}, 0, "", false, nil
 }
 
+func (quotaFailingIdempotencyStore) Reserve(context.Context, string, string, string, time.Time, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (quotaFailingIdempotencyStore) Store(context.Context, string, string, string, RunPayload, int, time.Time) error {
 	return coredb.ErrJournalQuotaExceeded
+}
+
+func (quotaFailingIdempotencyStore) Release(context.Context, string, string) error {
+	return nil
 }
 
 func TestRunsHandlerStorageQuotaExceeded(t *testing.T) {

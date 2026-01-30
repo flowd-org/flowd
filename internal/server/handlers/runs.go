@@ -40,12 +40,14 @@ import (
 
 const (
 	defaultRunStatus          = "queued"
-	defaultIdempotencyTTL     = 10 * time.Minute
+	defaultIdempotencyTTL     = 24 * time.Hour
+	maxIdempotencyTTL         = 72 * time.Hour
 	defaultRunsPage           = 1
 	defaultRunsPerPage        = 50
 	maxRunsPerPage            = 200
 	storageQuotaProblemType   = "https://flowd.dev/problems/storage-quota-exceeded"
 	storageQuotaProblemDetail = "Core storage quota exceeded; free up space or increase the configured quota before retrying."
+	idempotencyInFlightType   = "https://flowd.dev/problems/idempotency-key-in-use"
 )
 
 var (
@@ -129,6 +131,9 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 	ttl := cfg.IdempotencyTTL
 	if ttl <= 0 {
 		ttl = defaultIdempotencyTTL
+	}
+	if ttl > maxIdempotencyTTL {
+		ttl = maxIdempotencyTTL
 	}
 
 	store := cfg.Store
@@ -229,6 +234,9 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	scopedKey := scopedIdempotencyKey(principal, idemKey)
 	endpoint := r.Method + " " + r.URL.Path
 	now := h.now()
+	reserved := false
+	idempotencyStored := false
+	var idempotencyExpiresAt time.Time
 	if h.idempotency != nil {
 		cached, status, storedHash, found, err := h.idempotency.Lookup(ctx, scopedKey, endpoint, now)
 		if err != nil {
@@ -244,10 +252,59 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				))
 				return
 			}
+			if status == idempotencyStatusInFlight {
+				response.Write(w, idempotencyInFlightProblem())
+				return
+			}
 			w.Header().Set("Idempotent-Replay", "true")
 			writeRunPayload(w, cached, status)
 			return
 		}
+		idempotencyExpiresAt = now.Add(h.idempotencyTTL)
+		reserved, err = h.idempotency.Reserve(ctx, scopedKey, endpoint, bodyHashHex, now, idempotencyExpiresAt)
+		if err != nil {
+			if coredb.IsQuotaExceeded(err) {
+				response.Write(w, storageQuotaExceededProblem())
+			} else {
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency reserve failed", response.WithDetail(err.Error())))
+			}
+			return
+		}
+		if !reserved {
+			cached, status, storedHash, found, err = h.idempotency.Lookup(ctx, scopedKey, endpoint, now)
+			if err != nil {
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(err.Error())))
+				return
+			}
+			if found {
+				if storedHash != bodyHashHex {
+					response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
+						response.WithType("https://flowd.dev/problems/idempotency-key-conflict"),
+						response.WithExtension("stored_sha256", storedHash),
+						response.WithExtension("incoming_sha256", bodyHashHex),
+					))
+					return
+				}
+				if status == idempotencyStatusInFlight {
+					response.Write(w, idempotencyInFlightProblem())
+					return
+				}
+				w.Header().Set("Idempotent-Replay", "true")
+				writeRunPayload(w, cached, status)
+				return
+			}
+		}
+	}
+	if h.idempotency != nil && reserved {
+		defer func() {
+			if idempotencyStored {
+				return
+			}
+			releaseErr := h.idempotency.Release(context.Background(), scopedKey, endpoint)
+			if releaseErr != nil && logger != nil {
+				logger.Error("idempotency release failed", slog.String("error", releaseErr.Error()))
+			}
+		}()
 	}
 
 	runRoot := h.root
@@ -556,8 +613,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	resp.Provenance = provenance
 
 	if h.idempotency != nil {
-		expiresAt := now.Add(h.idempotencyTTL)
-		if err := h.idempotency.Store(ctx, scopedKey, endpoint, bodyHashHex, resp, http.StatusCreated, expiresAt); err != nil {
+		if idempotencyExpiresAt.IsZero() {
+			idempotencyExpiresAt = now.Add(h.idempotencyTTL)
+		}
+		if err := h.idempotency.Store(ctx, scopedKey, endpoint, bodyHashHex, resp, http.StatusCreated, idempotencyExpiresAt); err != nil {
 			if logger != nil {
 				logger.Error("idempotency store failed", slog.String("error", err.Error()))
 			}
@@ -567,6 +626,9 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				response.Write(w, response.New(http.StatusInternalServerError, "idempotency store failed", response.WithDetail(err.Error())))
 			}
 			return
+		}
+		if reserved {
+			idempotencyStored = true
 		}
 	}
 
@@ -1306,6 +1368,13 @@ func storageQuotaExceededProblem() response.Problem {
 	return response.New(http.StatusTooManyRequests, "storage quota exceeded",
 		response.WithType(storageQuotaProblemType),
 		response.WithDetail(storageQuotaProblemDetail),
+	)
+}
+
+func idempotencyInFlightProblem() response.Problem {
+	return response.New(http.StatusConflict, "idempotency key in use",
+		response.WithType(idempotencyInFlightType),
+		response.WithDetail("a request with the same Idempotency-Key is still processing"),
 	)
 }
 
