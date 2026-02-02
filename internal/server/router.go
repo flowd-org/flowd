@@ -242,11 +242,14 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 		runGet.ServeHTTP(w, r)
 	}))
 	mux.Handle("/health/storage", storageHealth)
-	mux.Handle("/events", handlers.NewEventsHandler(handlers.EventsConfig{
+	eventsHandler := handlers.NewEventsHandler(handlers.EventsConfig{
 		RunStore:  runStore,
 		RunHub:    hub,
 		GlobalHub: globalHub,
-	}))
+		Journal:   journal,
+	})
+	mux.Handle("/events", eventsHandler)
+	mux.Handle("/events/stream", eventsHandler)
 
 	return chainMiddleware(mux,
 		metricsMiddleware(cfg),

@@ -166,7 +166,7 @@ argspec:
 	}
 	waitFor(func() bool { return sink.count() >= 1 }, 200*time.Millisecond, t)
 	e := sink.snapshot()[0]
-	if e.runID == "" || e.event.Event != "run.start" {
+	if e.runID == "" || e.event.Event != "run.started" {
 		t.Fatalf("unexpected event payload: %+v", e)
 	}
 	var payload map[string]any
@@ -185,7 +185,7 @@ argspec:
 	if _, ok := payload["provenance"].(map[string]any); !ok {
 		t.Fatalf("expected provenance in event payload, got %T", payload["provenance"])
 	}
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 500*time.Millisecond, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 500*time.Millisecond, t)
 }
 
 func TestRunsHandlerProvenanceFromResolver(t *testing.T) {
@@ -304,7 +304,7 @@ func TestRunsHandlerGitSource(t *testing.T) {
 		t.Fatalf("expected resolved_ref to be populated")
 	}
 
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 2*time.Second, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 2*time.Second, t)
 }
 
 func TestRunsHandlerUsesLocalSource(t *testing.T) {
@@ -495,10 +495,10 @@ argspec:
 	if secondBody["id"] != firstID {
 		t.Fatalf("expected idempotent response id %s, got %v", firstID, secondBody["id"])
 	}
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 500*time.Millisecond, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 500*time.Millisecond, t)
 	t.Logf("events: %+v", sink.snapshot())
-	if sink.countBy("run.start") != 1 {
-		t.Fatalf("expected single run.start emission under idempotency, got %d", sink.countBy("run.start"))
+	if sink.countBy("run.started") != 1 {
+		t.Fatalf("expected single run.started emission under idempotency, got %d", sink.countBy("run.started"))
 	}
 }
 
@@ -891,7 +891,7 @@ argspec:
 		t.Fatalf("expected run id in response")
 	}
 
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 2*time.Second, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 2*time.Second, t)
 
 	saved, ok := runStore.Get(runID)
 	if !ok {

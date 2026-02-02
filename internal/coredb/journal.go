@@ -210,6 +210,21 @@ FROM core_run_journal WHERE run_id = ?
 	return earliest, latest, nil
 }
 
+// BoundsAll returns the earliest and latest sequence currently retained across
+// all runs. A zero earliest indicates no events are stored.
+func (j *Journal) BoundsAll(ctx context.Context) (earliest, latest int64, err error) {
+	if j == nil {
+		return 0, 0, nil
+	}
+	if err = j.db.QueryRowContext(ctx, `
+SELECT COALESCE(MIN(seq), 0), COALESCE(MAX(seq), 0)
+FROM core_run_journal
+`).Scan(&earliest, &latest); err != nil {
+		return 0, 0, fmt.Errorf("journal bounds: %w", err)
+	}
+	return earliest, latest, nil
+}
+
 // ForEach streams events for the supplied run strictly after the provided
 // sequence (i.e. seq > afterSeq) in ascending order. Iteration halts if the
 // callback returns an error.
@@ -260,6 +275,82 @@ ORDER BY seq ASC
 		var payload []byte
 		var tsMillis int64
 		if scanErr := rows.Scan(&seq, &eventType, &payload, &tsMillis); scanErr != nil {
+			err = fmt.Errorf("journal scan: %w", scanErr)
+			return err
+		}
+		entry := JournalEntry{
+			Seq:       seq,
+			RunID:     runID,
+			EventType: eventType,
+			Payload:   append([]byte(nil), payload...),
+			Timestamp: time.UnixMilli(tsMillis).UTC(),
+		}
+		entries++
+		if span != nil {
+			span.SetAttributes(tracing.Int64("journal.last_seq", entry.Seq))
+		}
+		if fnErr := fn(entry); fnErr != nil {
+			err = fnErr
+			return err
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		err = fmt.Errorf("journal rows: %w", rowsErr)
+		return err
+	}
+	outcome = metrics.PersistenceOutcomeOK
+	return nil
+}
+
+// ForEachAll streams events across all runs strictly after the provided
+// sequence (i.e. seq > afterSeq) in ascending order.
+func (j *Journal) ForEachAll(ctx context.Context, afterSeq int64, fn func(JournalEntry) error) (err error) {
+	if j == nil || fn == nil {
+		return nil
+	}
+	ctx, span := tracing.Start(ctx, "coredb.journal.read",
+		tracing.PersistDriver(sqliteDriverName),
+		tracing.PersistOp("read"),
+		tracing.PersistKeyspace("core_run_journal"),
+		tracing.Int64("journal.after_seq", afterSeq),
+	)
+	defer tracing.End(span, &err)
+
+	timer := metrics.StartPersistenceTimer(metrics.PersistenceOperationJournalRead)
+	outcome := metrics.PersistenceOutcomeError
+	entries := 0
+	defer func() {
+		if timer != nil {
+			timer.Observe(outcome)
+		}
+		if span != nil {
+			span.SetAttributes(
+				tracing.String("journal.outcome", outcome),
+				tracing.Int("journal.entries", entries),
+			)
+		}
+	}()
+
+	var rows *sql.Rows
+	rows, err = j.db.QueryContext(ctx, `
+SELECT seq, run_id, event_type, payload, ts
+FROM core_run_journal
+WHERE seq > ?
+ORDER BY seq ASC
+`, afterSeq)
+	if err != nil {
+		err = fmt.Errorf("journal query: %w", err)
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var seq int64
+		var runID string
+		var eventType string
+		var payload []byte
+		var tsMillis int64
+		if scanErr := rows.Scan(&seq, &runID, &eventType, &payload, &tsMillis); scanErr != nil {
 			err = fmt.Errorf("journal scan: %w", scanErr)
 			return err
 		}

@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	TypeRunStart   = "run.start"
-	TypeRunFinish  = "run.finish"
-	TypeStepStart  = "step.start"
-	TypeStepLog    = "step.log"
-	TypeStepFinish = "step.finish"
+	TypeRunStart   = "run.started"
+	TypeRunFinish  = "run.finished"
+	TypeStepStart  = "step.started"
+	TypeStepLog    = "step.output"
+	TypeStepFinish = "step.finished"
 )
 
 type RunEvent struct {

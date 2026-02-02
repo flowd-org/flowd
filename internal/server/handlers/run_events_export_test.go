@@ -17,8 +17,8 @@ func TestRunEventsExportHandlerStreamsNDJSON(t *testing.T) {
 	journal := newTestJournal(t)
 	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {}))
 
-	sink.Publish("run-export", sse.Event{Event: "run.start", Data: "{}"})
-	sink.Publish("run-export", sse.Event{Event: "step.log", Data: "{\"msg\":\"hello\"}"})
+	sink.Publish("run-export", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-export", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
 
 	handler := NewRunEventsExportHandler(store, journal, true)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-export/events.ndjson", nil)
@@ -36,11 +36,11 @@ func TestRunEventsExportHandlerStreamsNDJSON(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 NDJSON lines, got %d (%s)", len(lines), rec.Body.String())
 	}
-	if !strings.Contains(lines[0], "\"event\":\"run.start\"") {
-		t.Fatalf("expected run.start event, got %s", lines[0])
+	if !strings.Contains(lines[0], "\"event\":\"run.started\"") {
+		t.Fatalf("expected run.started event, got %s", lines[0])
 	}
-	if !strings.Contains(lines[1], "\"event\":\"step.log\"") {
-		t.Fatalf("expected step.log event, got %s", lines[1])
+	if !strings.Contains(lines[1], "\"event\":\"step.output\"") {
+		t.Fatalf("expected step.output event, got %s", lines[1])
 	}
 }
 

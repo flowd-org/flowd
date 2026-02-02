@@ -1320,7 +1320,7 @@ func (h *RunsHandler) failRun(runID string, status string, err error) {
 			payload["error"] = err.Error()
 		}
 		h.events.Publish(runID, sse.Event{
-			Event: "run.finish",
+			Event: "run.finished",
 			Data:  encodeData(payload),
 		})
 	}

@@ -170,6 +170,8 @@ func templateRoute(path string) string {
 		return "/sources/{name}"
 	case path == "/events":
 		return "/events"
+	case path == "/events/stream":
+		return "/events/stream"
 	default:
 		return path
 	}

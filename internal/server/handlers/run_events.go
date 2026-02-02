@@ -101,17 +101,25 @@ func NewRunEventsHandler(store *runstore.Store, hub EventFeed, journal *coredb.J
 				resumeErr = fmt.Errorf("cursor %d expired", lastSeq)
 				metrics.RecordSSECursorExpired()
 				response.Write(w, response.New(http.StatusGone, "cursor expired",
-					response.WithType("https://flowd.dev/problems/cursor-expired"),
+					response.WithType("https://flowd.org/problems/sse/stale-cursor"),
 					response.WithDetail("run events are no longer retained"),
 				))
 				return
 			}
-			if lastSeq < earliest || (latest > 0 && lastSeq > latest) {
+			if latest > 0 && lastSeq > latest {
+				resumeOutcome = "invalid"
+				resumeErr = fmt.Errorf("cursor %d beyond latest %d", lastSeq, latest)
+				response.Write(w, response.New(http.StatusBadRequest, "invalid Last-Event-ID",
+					response.WithDetail(fmt.Sprintf("cursor %d beyond latest %d", lastSeq, latest)),
+				))
+				return
+			}
+			if lastSeq < earliest {
 				resumeOutcome = "expired"
 				resumeErr = fmt.Errorf("cursor %d expired", lastSeq)
 				metrics.RecordSSECursorExpired()
 				response.Write(w, response.New(http.StatusGone, "cursor expired",
-					response.WithType("https://flowd.dev/problems/cursor-expired"),
+					response.WithType("https://flowd.org/problems/sse/stale-cursor"),
 					response.WithDetail(fmt.Sprintf("cursor %d no longer retained", lastSeq)),
 				))
 				return
@@ -133,10 +141,10 @@ func NewRunEventsHandler(store *runstore.Store, hub EventFeed, journal *coredb.J
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
 
-		if _, err := w.Write([]byte("retry: 2000\n")); err != nil {
+		if _, err := w.Write([]byte("retry: 3000\n")); err != nil {
 			return
 		}
-		if _, err := w.Write([]byte(":connected\n\n")); err != nil {
+		if _, err := w.Write(sse.FormatHeartbeat(time.Now().UTC())); err != nil {
 			return
 		}
 		flush(w)
@@ -147,13 +155,17 @@ func NewRunEventsHandler(store *runstore.Store, hub EventFeed, journal *coredb.J
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				event := sse.Event{
+				payload, err := sse.EncodeEvent(sse.Event{
 					ID:        fmt.Sprintf("%d", entry.Seq),
 					Event:     entry.EventType,
 					Data:      string(entry.Payload),
 					Timestamp: entry.Timestamp,
+					RunID:     runID,
+				})
+				if err != nil {
+					return err
 				}
-				if err := writeSSE(ctx, w, runID, event); err != nil {
+				if err := writeSSEPayload(ctx, w, runID, payload, entry.Seq); err != nil {
 					return err
 				}
 				lastSentSeq = entry.Seq
@@ -202,28 +214,14 @@ func writeSSE(ctx context.Context, w http.ResponseWriter, runID string, ev sse.E
 			span.SetAttributes(tracing.Int64("sse.event_seq", seq))
 		}
 	}
-
-	var builder strings.Builder
-	if ev.ID != "" {
-		builder.WriteString("id: ")
-		builder.WriteString(ev.ID)
-		builder.WriteByte('\n')
-	}
-	if ev.Event != "" {
-		builder.WriteString("event: ")
-		builder.WriteString(ev.Event)
-		builder.WriteByte('\n')
-	}
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now().UTC()
 	}
-	for _, line := range strings.Split(ev.Data, "\n") {
-		builder.WriteString("data: ")
-		builder.WriteString(line)
-		builder.WriteByte('\n')
+	payload, err := sse.EncodeEvent(ev)
+	if err != nil {
+		return err
 	}
-	builder.WriteByte('\n')
-	if _, err = w.Write([]byte(builder.String())); err != nil {
+	if _, err = w.Write(payload); err != nil {
 		return err
 	}
 	flush(w)

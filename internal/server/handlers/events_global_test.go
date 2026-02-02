@@ -21,7 +21,7 @@ func TestEventsHandlerGlobalStream(t *testing.T) {
 	handler := NewEventsHandler(EventsConfig{RunStore: store, RunHub: runHub, GlobalHub: globalHub})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})
@@ -31,7 +31,7 @@ func TestEventsHandlerGlobalStream(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	globalHub.Publish("global", WrapGlobalEvent("run-1", sse.Event{ID: "1", Event: "run.start", Data: "{}"}))
+	globalHub.Publish("global", WrapGlobalEvent("run-1", sse.Event{ID: "1", Event: "run.started", Data: "{}"}))
 	time.Sleep(10 * time.Millisecond)
 	cancel()
 	<-done
@@ -40,8 +40,8 @@ func TestEventsHandlerGlobalStream(t *testing.T) {
 	if len(body) == 0 {
 		t.Fatalf("expected SSE payload")
 	}
-	if !bytes.Contains(body, []byte("run.start")) {
-		t.Fatalf("expected run.start in stream, got %q", body)
+	if !bytes.Contains(body, []byte("\"type\":\"run.started\"")) {
+		t.Fatalf("expected run.started in stream, got %q", body)
 	}
 	if !bytes.Contains(body, []byte("run-1")) {
 		t.Fatalf("expected run_id in stream")
@@ -56,7 +56,7 @@ func TestEventsHandlerRunScopedQuery(t *testing.T) {
 	handler := NewEventsHandler(EventsConfig{RunStore: store, RunHub: runHub, GlobalHub: globalHub})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/events?run_id=run-2", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/events/stream?run_id=run-2", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -65,12 +65,12 @@ func TestEventsHandlerRunScopedQuery(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	runHub.Publish("run-2", sse.Event{ID: "1", Event: "run.start", Data: "{}"})
+	runHub.Publish("run-2", sse.Event{ID: "1", Event: "run.started", Data: "{}"})
 	time.Sleep(10 * time.Millisecond)
 	cancel()
 	<-done
 
-	if !bytes.Contains(rec.Body.Bytes(), []byte("run.start")) {
-		t.Fatalf("expected run.start event for run_id filter")
+	if !bytes.Contains(rec.Body.Bytes(), []byte("\"type\":\"run.started\"")) {
+		t.Fatalf("expected run.started event for run_id filter")
 	}
 }

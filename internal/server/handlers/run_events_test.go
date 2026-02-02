@@ -35,17 +35,20 @@ func TestRunEventsHandlerStreamsEvents(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	sink.Publish("run-123", sse.Event{Event: "run.start", Data: "{}"})
+	sink.Publish("run-123", sse.Event{Event: "run.started", Data: "{}"})
 	time.Sleep(10 * time.Millisecond)
 	cancel()
 
 	<-done
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: run.start") {
-		t.Fatalf("expected run.start event in body, got %q", body)
+	if !strings.Contains(body, "\"type\":\"run.started\"") {
+		t.Fatalf("expected run.started event in body, got %q", body)
 	}
-	if !strings.Contains(body, "retry: 2000") {
+	if !strings.Contains(body, "retry: 3000") {
 		t.Fatalf("expected retry directive in body, got %q", body)
+	}
+	if !strings.Contains(body, "event: flowd") {
+		t.Fatalf("expected flowd event envelope, got %q", body)
 	}
 }
 
@@ -58,8 +61,8 @@ func TestRunEventsHandlerReplayFromHeader(t *testing.T) {
 		hub.Publish(runID, ev)
 	}))
 
-	sink.Publish("run-456", sse.Event{Event: "run.start", Data: "{}"})
-	sink.Publish("run-456", sse.Event{Event: "step.log", Data: "{\"msg\":\"hello\"}"})
+	sink.Publish("run-456", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-456", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
 
 	h := NewRunEventsHandler(store, hub, journal)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-456/events", nil)
@@ -96,8 +99,8 @@ func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 		hub.Publish(runID, ev)
 	}))
 
-	sink.Publish("run-789", sse.Event{Event: "run.start", Data: "{}"})
-	sink.Publish("run-789", sse.Event{Event: "step.log", Data: "{\"msg\":\"world\"}"})
+	sink.Publish("run-789", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-789", sse.Event{Event: "step.output", Data: "{\"msg\":\"world\"}"})
 
 	h := NewRunEventsHandler(store, hub, journal)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-789/events", nil)
@@ -116,7 +119,7 @@ func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 	<-done
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "run.start") || !strings.Contains(body, "step.log") {
+	if !strings.Contains(body, "\"type\":\"run.started\"") || !strings.Contains(body, "\"type\":\"step.output\"") {
 		t.Fatalf("expected replayed events, got %q", body)
 	}
 }
@@ -155,8 +158,8 @@ func TestRunEventsHandlerReturns410ForExpiredCursor(t *testing.T) {
 		hub.Publish(runID, ev)
 	}))
 
-	sink.Publish("run-expired", sse.Event{Event: "step.log", Data: "{\"msg\":\"old\"}"})
-	sink.Publish("run-expired", sse.Event{Event: "step.log", Data: "{\"msg\":\"new\"}"})
+	sink.Publish("run-expired", sse.Event{Event: "step.output", Data: "{\"msg\":\"old\"}"})
+	sink.Publish("run-expired", sse.Event{Event: "step.output", Data: "{\"msg\":\"new\"}"})
 
 	h := NewRunEventsHandler(store, hub, dirJournal)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-expired/events", nil)
@@ -172,6 +175,9 @@ func TestRunEventsHandlerReturns410ForExpiredCursor(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "cursor expired") {
 		t.Fatalf("expected cursor expired problem, got %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "https://flowd.org/problems/sse/stale-cursor") {
+		t.Fatalf("expected stale-cursor problem type, got %q", rec.Body.String())
 	}
 }
 

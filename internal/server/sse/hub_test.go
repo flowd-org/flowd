@@ -22,12 +22,18 @@ func TestHubPublishSubscribeReplay(t *testing.T) {
 	sub := h.Subscribe(ctx, "run-1", "")
 	defer sub.Close()
 
-	h.Publish("run-1", Event{Event: "run.start", Data: `{"status":"queued"}`})
+	h.Publish("run-1", Event{Event: "run.started", Data: `{"status":"queued"}`})
 
 	select {
 	case payload := <-sub.C:
 		if got := string(payload); got == "" || !strings.HasPrefix(got, "id: 1\n") {
 			t.Fatalf("expected payload with id 1, got %q", got)
+		}
+		if !strings.Contains(string(payload), "event: flowd") {
+			t.Fatalf("expected flowd envelope, got %q", payload)
+		}
+		if !strings.Contains(string(payload), "retry: 3000") {
+			t.Fatalf("expected retry directive, got %q", payload)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for event")
@@ -38,8 +44,8 @@ func TestHubReplayFromLastEventID(t *testing.T) {
 	h := New(Config{KeepAliveInterval: 0})
 	h.nowFn = func() time.Time { return time.Unix(0, 0) }
 
-	h.Publish("run-2", Event{ID: "1", Event: "run.start", Data: "{}"})
-	h.Publish("run-2", Event{ID: "2", Event: "step.log", Data: `{"msg":"hello"}`})
+	h.Publish("run-2", Event{ID: "1", Event: "run.started", Data: "{}"})
+	h.Publish("run-2", Event{ID: "2", Event: "step.output", Data: `{"msg":"hello"}`})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -50,6 +56,9 @@ func TestHubReplayFromLastEventID(t *testing.T) {
 	case payload := <-sub.C:
 		if want := "id: 2\n"; string(payload)[:len(want)] != want {
 			t.Fatalf("expected replay starting at id 2, got %q", payload)
+		}
+		if !strings.Contains(string(payload), "\"type\":\"step.output\"") {
+			t.Fatalf("expected step.output type in payload, got %q", payload)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for replay")
@@ -66,8 +75,8 @@ func TestHubKeepAlive(t *testing.T) {
 
 	select {
 	case payload := <-sub.C:
-		if string(payload) != ":keep-alive\n\n" {
-			t.Fatalf("expected keep-alive payload, got %q", payload)
+		if !strings.HasPrefix(string(payload), ":hb ") {
+			t.Fatalf("expected heartbeat payload, got %q", payload)
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("timeout waiting for keep-alive")

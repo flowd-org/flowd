@@ -24,7 +24,7 @@ func TestJournalAppendAndIterate(t *testing.T) {
 	journal := NewJournal(db, 0)
 
 	ts := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
-	first, err := journal.Append(ctx, "run-1", "run.start", []byte(`{"status":"running"}`), ts)
+	first, err := journal.Append(ctx, "run-1", "run.started", []byte(`{"status":"running"}`), ts)
 	if err != nil {
 		t.Fatalf("append first: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestJournalAppendAndIterate(t *testing.T) {
 		t.Fatalf("expected sequence > 0")
 	}
 
-	second, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"hello"}`), ts.Add(time.Second))
+	second, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"hello"}`), ts.Add(time.Second))
 	if err != nil {
 		t.Fatalf("append second: %v", err)
 	}
@@ -56,8 +56,8 @@ func TestJournalAppendAndIterate(t *testing.T) {
 	if !entries[0].Timestamp.Equal(ts) {
 		t.Fatalf("expected first timestamp %v, got %v", ts, entries[0].Timestamp)
 	}
-	if entries[1].EventType != "step.log" {
-		t.Fatalf("expected event type step.log, got %s", entries[1].EventType)
+	if entries[1].EventType != "step.output" {
+		t.Fatalf("expected event type step.output, got %s", entries[1].EventType)
 	}
 }
 
@@ -77,10 +77,10 @@ func TestJournalEvictsOldestWhenOverLimit(t *testing.T) {
 	// Limit well below two payloads to force eviction of the first.
 	journal := NewJournal(db, 30)
 
-	if _, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
+	if _, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
 		t.Fatalf("append alpha: %v", err)
 	}
-	second, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"bravo"}`), time.Now().UTC())
+	second, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"bravo"}`), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("append bravo: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestJournalRejectsPayloadAboveLimit(t *testing.T) {
 	})
 
 	journal := NewJournal(db, 8) // eight bytes max
-	_, err = journal.Append(ctx, "run-1", "step.log", []byte(`{"msg":"too big"}`), time.Now().UTC())
+	_, err = journal.Append(ctx, "run-1", "step.output", []byte(`{"msg":"too big"}`), time.Now().UTC())
 	if !errors.Is(err, ErrJournalQuotaExceeded) {
 		t.Fatalf("expected ErrJournalQuotaExceeded, got %v", err)
 	}
@@ -146,7 +146,7 @@ func TestJournalEvictionAppendAtomicity(t *testing.T) {
 		t.Fatal("expected journal")
 	}
 
-	if _, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
+	if _, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
 		t.Fatalf("append seed: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestJournalEvictionAppendAtomicity(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			if _, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"bravo"}`), time.Now().UTC()); err != nil {
+			if _, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"bravo"}`), time.Now().UTC()); err != nil {
 				errCh <- err
 				return
 			}

@@ -343,8 +343,8 @@ func TestCLIServeMode(t *testing.T) {
 	if err := json.NewDecoder(resp410.Body).Decode(&problem410); err != nil {
 		t.Fatalf("decode 410 problem: %v", err)
 	}
-	if problem410["type"] != "https://flowd.dev/problems/cursor-expired" {
-		t.Fatalf("expected cursor-expired type, got %v", problem410["type"])
+	if problem410["type"] != "https://flowd.org/problems/sse/stale-cursor" {
+		t.Fatalf("expected stale-cursor type, got %v", problem410["type"])
 	}
 
 	// Idempotency replay should succeed; conflict on body mismatch should return 409
@@ -623,8 +623,8 @@ func TestCLIServeConformanceErrors(t *testing.T) {
 		t.Fatalf("expected 410 cursor expired, got %d (%s)", resp410.StatusCode, string(body))
 	}
 	prob410 := readProblem(resp410)
-	if typ, _ := prob410["type"].(string); typ != "https://flowd.dev/problems/cursor-expired" {
-		t.Fatalf("expected cursor-expired type, got %q", typ)
+	if typ, _ := prob410["type"].(string); typ != "https://flowd.org/problems/sse/stale-cursor" {
+		t.Fatalf("expected stale-cursor type, got %q", typ)
 	}
 }
 

@@ -30,7 +30,7 @@ func (s *sseSink) EmitRunStart(runID, jobID string) {
 	if !s.run.StartedAt.IsZero() {
 		data["started_at"] = s.run.StartedAt
 	}
-	s.publish("run.start", data)
+	s.publish("run.started", data)
 }
 
 func (s *sseSink) EmitRunFinish(runID, status string, err error) {
@@ -44,13 +44,13 @@ func (s *sseSink) EmitRunFinish(runID, status string, err error) {
 	if err != nil {
 		data["error"] = err.Error()
 	}
-	s.publish("run.finish", data)
+	s.publish("run.finished", data)
 }
 
 func (s *sseSink) EmitStepStart(runID, step string) {
 	data := s.basePayload()
 	data["step"] = step
-	s.publish("step.start", data)
+	s.publish("step.started", data)
 }
 
 func (s *sseSink) EmitStepLog(runID, step, channel, message string) {
@@ -58,7 +58,7 @@ func (s *sseSink) EmitStepLog(runID, step, channel, message string) {
 	data["step"] = step
 	data["channel"] = channel
 	data["message"] = message
-	s.publish("step.log", data)
+	s.publish("step.output", data)
 }
 
 func (s *sseSink) EmitStepFinish(runID, step string, exitCode int, err error) {
@@ -71,7 +71,7 @@ func (s *sseSink) EmitStepFinish(runID, step string, exitCode int, err error) {
 	} else {
 		data["status"] = "completed"
 	}
-	s.publish("step.finish", data)
+	s.publish("step.finished", data)
 }
 
 func (s *sseSink) basePayload() map[string]any {
