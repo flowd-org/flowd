@@ -30,6 +30,7 @@ import (
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
+	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/runstore"
@@ -1076,20 +1077,15 @@ func writePlanArtifact(plan types.Plan, runDir string) error {
 	return nil
 }
 
-func prepareSecrets(runDir string, binding *engine.Binding) (string, error) {
+func prepareSecrets(runID string, binding *engine.Binding) (string, error) {
 	if binding == nil || len(binding.SecretNames) == 0 {
 		return "", nil
 	}
-	secretDir := filepath.Join(runDir, "secrets")
-	if err := os.MkdirAll(secretDir, 0o700); err != nil {
-		return "", fmt.Errorf("create secrets dir: %w", err)
+	secretDir, err := secrets.RunDir(runID)
+	if err != nil {
+		return "", err
 	}
 	for name := range binding.SecretNames {
-		safeName := sanitizeSecretName(name)
-		if safeName == "" {
-			safeName = "secret"
-		}
-		path := filepath.Join(secretDir, safeName)
 		value := ""
 		if raw, ok := binding.Values[name]; ok && raw != nil {
 			if s, ok := raw.(string); ok {
@@ -1098,26 +1094,11 @@ func prepareSecrets(runDir string, binding *engine.Binding) (string, error) {
 				value = fmt.Sprint(raw)
 			}
 		}
-		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
-			return "", fmt.Errorf("write secret %s: %w", name, err)
+		if _, err := secrets.CreateFile(secretDir, name, []byte(value)); err != nil {
+			return "", err
 		}
 	}
 	return secretDir, nil
-}
-
-func sanitizeSecretName(name string) string {
-	if name == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
 }
 
 func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []policyDecision) {
@@ -1252,7 +1233,7 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 		return
 	}
 
-	secretDir, err := prepareSecrets(runDir, execCtx.binding)
+	secretDir, err := prepareSecrets(runID, execCtx.binding)
 	if err != nil {
 		h.failRun(runID, "failed", err)
 		return

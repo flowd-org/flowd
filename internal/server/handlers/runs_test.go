@@ -1565,17 +1565,23 @@ func TestSourceToProvenanceIncludesDigest(t *testing.T) {
 }
 
 func TestPrepareSecretsWritesFiles(t *testing.T) {
-	runDir := t.TempDir()
+	baseDir := t.TempDir()
+	prev := paths.DataDir()
+	paths.SetDataDirOverride(baseDir)
+	t.Cleanup(func() { paths.SetDataDirOverride(prev) })
 	binding := &engine.Binding{
 		Values:      map[string]interface{}{"api-key": "supersecret"},
 		SecretNames: map[string]struct{}{"api-key": {}},
 	}
-	secretDir, err := prepareSecrets(runDir, binding)
+	secretDir, err := prepareSecrets("run-123", binding)
 	if err != nil {
 		t.Fatalf("prepare secrets: %v", err)
 	}
 	if secretDir == "" {
 		t.Fatal("expected secrets directory path")
+	}
+	if !strings.Contains(secretDir, baseDir) {
+		t.Fatalf("expected secret dir under data dir, got %s", secretDir)
 	}
 	content, err := os.ReadFile(filepath.Join(secretDir, "api-key"))
 	if err != nil {
