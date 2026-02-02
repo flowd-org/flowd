@@ -67,6 +67,10 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
 			return
 		}
+		ctx = requestctx.WithScrubbedLogger(ctx, func(msg string) string {
+			return scrubProblemDetail(msg, nil, nil, nil, req.Args)
+		})
+		r = r.WithContext(ctx)
 
 		discoverRoot := cfg.Root
 		if discoverRoot == "" {

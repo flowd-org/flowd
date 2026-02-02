@@ -469,6 +469,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	runID := startRes.RunID
 	secretHandles := startRes.SecretHandles
 	secretCleanup := startRes.SecretCleanup
+	logScrubber := newPersistenceScrubber(binding, secretHandles)
+	if logger != nil {
+		ctx = requestctx.WithScrubbedLogger(ctx, func(msg string) string {
+			return scrubProblemDetail(msg, logScrubber, binding, spec, req.Args)
+		})
+		logger = requestctx.Logger(ctx)
+		r = r.WithContext(ctx)
+	}
 	cleanupSecrets := true
 	defer func() {
 		if cleanupSecrets && secretCleanup != nil {

@@ -33,6 +33,22 @@ func Logger(ctx context.Context) *slog.Logger {
 	return logctx.Logger(ctx)
 }
 
+// WithScrubbedLogger wraps the request logger with a scrubber to redact sensitive data.
+func WithScrubbedLogger(ctx context.Context, scrub func(string) string) context.Context {
+	if scrub == nil {
+		return ctx
+	}
+	logger := logctx.Logger(ctx)
+	if logger == nil {
+		return ctx
+	}
+	wrapped := logctx.WrapLogger(logger, scrub)
+	if wrapped == logger {
+		return ctx
+	}
+	return logctx.WithLogger(ctx, wrapped)
+}
+
 // WithEffectiveProfile annotates the context with the effective security profile.
 func WithEffectiveProfile(ctx context.Context, profile string) context.Context {
 	if profile == "" {
