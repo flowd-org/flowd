@@ -20,7 +20,7 @@ func TestNewLineRedactor(t *testing.T) {
 		t.Fatalf("expected redactor")
 	}
 	line := redactor("value token here")
-	if line != "value [secret] here" {
+	if line != "value $$REDACTED$$ here" {
 		t.Fatalf("expected redaction, got %s", line)
 	}
 	if NewLineRedactor(nil) != nil {

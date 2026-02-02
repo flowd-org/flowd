@@ -9,7 +9,7 @@ import (
 )
 
 // BuildPlan produces a minimal Plan object for previews and artifacts.
-// Secrets are redacted (replaced with "[secret]").
+// Secrets are redacted (replaced with "$$REDACTED$$").
 func BuildPlan(jobID string, cfg *types.Config, spec *types.ArgSpec, bind *Binding) types.Plan {
 	plan := types.Plan{JobID: jobID}
 	if spec != nil {

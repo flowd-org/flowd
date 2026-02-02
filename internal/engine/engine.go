@@ -9,12 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/flowd-org/flowd/internal/events"
 	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/types"
 	"github.com/spf13/pflag"
 )
-
-const argsJSONSecretToken = "$$REDACTED$$"
 
 type Binding struct {
 	Values        map[string]interface{}
@@ -182,7 +181,7 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 		}
 	}
 
-	argsJSON, err := marshalCanonicalJSON(redactedArgs(vals, secretNames))
+	argsJSON, err := marshalCanonicalJSON(events.RedactSecrets(vals, secretNames))
 	if err != nil {
 		return nil, fmt.Errorf("encode args json: %w", err)
 	}
@@ -207,21 +206,6 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func redactedArgs(vals map[string]interface{}, secretNames map[string]struct{}) map[string]interface{} {
-	if len(secretNames) == 0 || len(vals) == 0 {
-		return vals
-	}
-	copy := make(map[string]interface{}, len(vals))
-	for k, v := range vals {
-		if _, ok := secretNames[k]; ok {
-			copy[k] = argsJSONSecretToken
-		} else {
-			copy[k] = v
-		}
-	}
-	return copy
 }
 
 func marshalCanonicalJSON(vals map[string]interface{}) ([]byte, error) {
