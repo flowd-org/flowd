@@ -30,7 +30,6 @@ import (
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
-	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/runstore"
@@ -453,6 +452,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
 			return
 		}
+		if errors.Is(err, engine.ErrSecretContainerUnsupported) {
+			response.Write(w, response.New(http.StatusUnprocessableEntity, "container execution does not support secret args",
+				response.WithExtension("code", "E_SECRET")))
+			return
+		}
 		response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(err.Error())))
 		return
 	}
@@ -461,6 +465,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	binding := startRes.Binding
 	plan := startRes.Plan
 	runID := startRes.RunID
+	secretHandles := startRes.SecretHandles
+	secretCleanup := startRes.SecretCleanup
+	cleanupSecrets := true
+	defer func() {
+		if cleanupSecrets && secretCleanup != nil {
+			_ = secretCleanup()
+		}
+	}()
 
 	executorMode := strings.ToLower(cfg.Executor)
 	if strings.HasPrefix(cfg.Interpreter, "container:") && executorMode == "" {
@@ -606,6 +618,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if executorMode == "container" && binding != nil && len(binding.SecretNames) > 0 {
+		response.Write(w, response.New(http.StatusUnprocessableEntity, "container execution does not support secret args",
+			response.WithExtension("code", "E_SECRET")))
+		return
+	}
 	resp := newRunPayload(runID, effectiveID, defaultRunStatus, now)
 	resp.Executor = executorMode
 	resp.SecurityProfile = effProfile
@@ -674,16 +691,18 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		publishPolicyDecisions(h.events, &resp, decisions)
 	}
 	runCtx := &runExecutionContext{
-		ctx:        nil,
-		cancel:     nil,
-		runPayload: resp,
-		scriptDir:  execScriptDir,
-		config:     cfg,
-		spec:       spec,
-		binding:    binding,
-		plan:       plan,
-		executor:   executorMode,
-		runtime:    runtime,
+		ctx:           nil,
+		cancel:        nil,
+		runPayload:    resp,
+		scriptDir:     execScriptDir,
+		config:        cfg,
+		spec:          spec,
+		binding:       binding,
+		plan:          plan,
+		executor:      executorMode,
+		runtime:       runtime,
+		secretHandles: secretHandles,
+		secretCleanup: secretCleanup,
 	}
 	ctxWithCancel, cancel := context.WithCancel(context.Background())
 	runCtx.ctx = ctxWithCancel
@@ -709,6 +728,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		logger.Info("run.accepted", attrs...)
 	}
+	cleanupSecrets = false
 	go h.executeRun(runCtx)
 }
 
@@ -1077,72 +1097,10 @@ func writePlanArtifact(plan types.Plan, runDir string) error {
 	return nil
 }
 
+// prepareSecrets kept for tests; prefer orchestrator-managed secret preparation.
 func prepareSecrets(runID string, binding *engine.Binding) (map[string]string, func() error, error) {
-	if binding == nil || len(binding.SecretNames) == 0 {
-		return nil, nil, nil
-	}
-	defer func() {
-		for name, buf := range binding.SecretBuffers {
-			if _, ok := binding.SecretNames[name]; ok {
-				buf.Close()
-			}
-		}
-	}()
-	secretDir, err := secrets.RunDir(runID)
-	if err != nil {
-		return nil, nil, err
-	}
-	paths := make(map[string]string, len(binding.SecretNames))
-	for name := range binding.SecretNames {
-		value := ""
-		if raw, ok := binding.Values[name]; ok && raw != nil {
-			if s, ok := raw.(string); ok {
-				value = s
-			} else {
-				value = fmt.Sprint(raw)
-			}
-		}
-		if buf, ok := binding.SecretBuffers[name]; ok {
-			path, err := secrets.CreateFile(secretDir, name, buf.Bytes())
-			if err != nil {
-				return nil, nil, err
-			}
-			paths[name] = path
-			continue
-		}
-		path, err := secrets.CreateFile(secretDir, name, []byte(value))
-		if err != nil {
-			return nil, nil, err
-		}
-		paths[name] = path
-	}
-
-	handles := make(map[string]string, len(paths))
-	var closers []func() error
-	for name, path := range paths {
-		handlePath, closeFn, err := secrets.ReadHandle(path)
-		if err != nil {
-			for _, closeFn := range closers {
-				_ = closeFn()
-			}
-			return nil, nil, err
-		}
-		handles[name] = handlePath
-		if closeFn != nil {
-			closers = append(closers, closeFn)
-		}
-	}
-
-	cleanup := func() error {
-		var firstErr error
-		for _, closeFn := range closers {
-			if err := closeFn(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-		return firstErr
-	}
-	return handles, cleanup, nil
+	provider := engine.DefaultSecretProvider{}
+	return provider.Prepare(runID, binding)
 }
 
 func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []policyDecision) {
@@ -1236,17 +1194,19 @@ func policyProblemDetail(prob *response.Problem) string {
 }
 
 type runExecutionContext struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	runPayload RunPayload
-	scriptDir  string
-	config     *types.Config
-	spec       *types.ArgSpec
-	binding    *engine.Binding
-	plan       types.Plan
-	executor   string
-	runtime    container.Runtime
-	sink       events.Sink
+	ctx           context.Context
+	cancel        context.CancelFunc
+	runPayload    RunPayload
+	scriptDir     string
+	config        *types.Config
+	spec          *types.ArgSpec
+	binding       *engine.Binding
+	plan          types.Plan
+	executor      string
+	runtime       container.Runtime
+	sink          events.Sink
+	secretHandles map[string]string
+	secretCleanup func() error
 }
 
 func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
@@ -1277,14 +1237,10 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 		return
 	}
 
-	secretHandles, secretCleanup, err := prepareSecrets(runID, execCtx.binding)
-	if err != nil {
-		h.failRun(runID, "failed", err)
-		return
-	}
-	if secretCleanup != nil {
+	secretHandles := execCtx.secretHandles
+	if execCtx.secretCleanup != nil {
 		defer func() {
-			_ = secretCleanup()
+			_ = execCtx.secretCleanup()
 		}()
 	}
 

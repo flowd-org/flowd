@@ -15,21 +15,26 @@ type Orchestrator struct {
 	jobResolver JobResolver
 	loader      ConfigLoader
 	runIDGen    RunIDGenerator
+	secrets     SecretProvider
 }
 
 type OrchestratorDeps struct {
 	JobResolver  JobResolver
 	ConfigLoader ConfigLoader
 	RunIDGen     RunIDGenerator
+	Secrets      SecretProvider
 }
 
 func NewOrchestrator(deps OrchestratorDeps) *Orchestrator {
-	o := &Orchestrator{jobResolver: deps.JobResolver, loader: deps.ConfigLoader, runIDGen: deps.RunIDGen}
+	o := &Orchestrator{jobResolver: deps.JobResolver, loader: deps.ConfigLoader, runIDGen: deps.RunIDGen, secrets: deps.Secrets}
 	if o.loader == nil {
 		o.loader = defaultConfigLoader{}
 	}
 	if o.runIDGen == nil {
 		o.runIDGen = defaultRunIDGen{}
+	}
+	if o.secrets == nil {
+		o.secrets = DefaultSecretProvider{}
 	}
 	return o
 }
@@ -42,7 +47,11 @@ type StartRunResult struct {
 	Config         *types.Config
 	Binding        *Binding
 	Plan           types.Plan
+	SecretHandles  map[string]string
+	SecretCleanup  func() error
 }
+
+var ErrSecretContainerUnsupported = errors.New("container execution does not support secret args")
 
 func (o *Orchestrator) StartRun(ctx context.Context, req types.StartRunRequest) (StartRunResult, error) {
 	_ = ctx
@@ -84,6 +93,11 @@ func (o *Orchestrator) StartRun(ctx context.Context, req types.StartRunRequest) 
 
 	plan := BuildPlan(effectiveJobID, cfg, &spec, bind)
 
+	executorMode := ExecutorMode(cfg)
+	if executorMode == "container" && bind != nil && len(bind.SecretNames) > 0 {
+		return res, ErrSecretContainerUnsupported
+	}
+
 	res.RunID = o.runIDGen.NewRunID()
 	res.JobID = req.JobID
 	res.EffectiveJobID = effectiveJobID
@@ -91,6 +105,14 @@ func (o *Orchestrator) StartRun(ctx context.Context, req types.StartRunRequest) 
 	res.Config = cfg
 	res.Binding = bind
 	res.Plan = plan
+	if bind != nil && len(bind.SecretNames) > 0 {
+		handles, cleanup, err := o.secrets.Prepare(res.RunID, bind)
+		if err != nil {
+			return res, err
+		}
+		res.SecretHandles = handles
+		res.SecretCleanup = cleanup
+	}
 	return res, nil
 }
 

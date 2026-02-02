@@ -224,6 +224,13 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 		jobID := startRes.JobID
 		bind := startRes.Binding
 		plan := startRes.Plan
+		secretHandles := startRes.SecretHandles
+		secretCleanup := startRes.SecretCleanup
+		if secretCleanup != nil {
+			defer func() {
+				_ = secretCleanup()
+			}()
+		}
 		// Resolve profile precedence for CLI run: flag > env > default
 		prof, _ := cmd.Flags().GetString("profile")
 		if prof == "" {
@@ -307,6 +314,9 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 			ecfg.ArgsJSON = bind.ArgsJSON
 			ecfg.ArgValues = bind.Values
 			ecfg.LineRedactor = events.NewLineRedactor(bind.SecretValues)
+		}
+		if len(secretHandles) > 0 {
+			ecfg.SecretHandles = secretHandles
 		}
 
 		ctx := cmd.Context()

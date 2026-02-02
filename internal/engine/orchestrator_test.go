@@ -63,6 +63,15 @@ argspec:
 	if decoded["token"] != "$$REDACTED$$" {
 		t.Fatalf("unexpected ArgsJSON values: %+v", decoded)
 	}
+	if len(res.SecretHandles) == 0 {
+		t.Fatalf("expected secret handles")
+	}
+	if res.SecretCleanup == nil {
+		t.Fatalf("expected secret cleanup")
+	}
+	if err := res.SecretCleanup(); err != nil {
+		t.Fatalf("cleanup secret handles: %v", err)
+	}
 }
 
 type staticRunIDGen string

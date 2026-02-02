@@ -31,9 +31,8 @@ type PolicyEvaluator interface {
 }
 
 type SecretProvider interface {
-	// Placeholder for later secret-handle tasks.
-	// T-002 does not create or persist secret handles.
-	IsConfigured() bool
+	// Prepare handles for secret args and returns handle paths plus cleanup.
+	Prepare(runID string, binding *Binding) (handles map[string]string, cleanup func() error, err error)
 }
 
 type Executor interface {
