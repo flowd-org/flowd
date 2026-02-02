@@ -502,6 +502,130 @@ argspec:
 	}
 }
 
+func TestRunsHandlerIdempotencyCoreDBReplayAndConflict(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store := runstore.New()
+	sink := &recordingSink{}
+	blocked := make(chan struct{})
+	unblock := make(chan struct{})
+	var discoverCalls int32
+	discover := func(root string) (indexer.Result, error) {
+		if atomic.AddInt32(&discoverCalls, 1) == 1 {
+			close(blocked)
+			<-unblock
+		}
+		return indexer.Discover(root)
+	}
+	h := NewRunsHandler(RunsConfig{
+		Root:     root,
+		Store:    store,
+		Events:   sink,
+		DB:       db,
+		Discover: discover,
+	})
+	key := "dddddddddddddddddddd"
+	payload := `{"job_id":"demo","args":{"name":"Alice"}}`
+
+	first := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req1.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req1, key)
+	firstDone := make(chan struct{})
+	go func() {
+		h.ServeHTTP(first, req1)
+		close(firstDone)
+	}()
+
+	waitFor(func() bool {
+		select {
+		case <-blocked:
+			return true
+		default:
+			return false
+		}
+	}, 500*time.Millisecond, t)
+
+	second := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req2.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req2, key)
+	h.ServeHTTP(second, req2)
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for in-flight idempotency, got %d", second.Code)
+	}
+	var problem map[string]any
+	if err := json.NewDecoder(second.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode in-flight problem: %v", err)
+	}
+	if problem["type"] != idempotencyInFlightType {
+		t.Fatalf("expected in-flight type %s, got %+v", idempotencyInFlightType, problem)
+	}
+
+	close(unblock)
+	<-firstDone
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request 201, got %d", first.Code)
+	}
+	var firstBody map[string]any
+	if err := json.NewDecoder(first.Body).Decode(&firstBody); err != nil {
+		t.Fatalf("decode first body: %v", err)
+	}
+	firstID, _ := firstBody["id"].(string)
+
+	third := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req3.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req3, key)
+	h.ServeHTTP(third, req3)
+	if third.Code != http.StatusCreated {
+		t.Fatalf("expected replay 201, got %d", third.Code)
+	}
+	if replay := third.Header().Get("Idempotent-Replay"); replay != "true" {
+		t.Fatalf("expected Idempotent-Replay header true, got %q", replay)
+	}
+	var thirdBody map[string]any
+	if err := json.NewDecoder(third.Body).Decode(&thirdBody); err != nil {
+		t.Fatalf("decode replay body: %v", err)
+	}
+	if thirdBody["id"] != firstID {
+		t.Fatalf("expected replay id %s, got %v", firstID, thirdBody["id"])
+	}
+
+	conflict := httptest.NewRecorder()
+	req4 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"demo","args":{"name":"Bob"}}`))
+	req4.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req4, key)
+	h.ServeHTTP(conflict, req4)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for idempotency conflict, got %d", conflict.Code)
+	}
+	problem = map[string]any{}
+	if err := json.NewDecoder(conflict.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode conflict problem: %v", err)
+	}
+	if problem["type"] != idempotencyMismatchType {
+		t.Fatalf("expected conflict type %s, got %+v", idempotencyMismatchType, problem)
+	}
+}
+
 type quotaFailingIdempotencyStore struct{}
 
 func (quotaFailingIdempotencyStore) Lookup(context.Context, string, string, time.Time) (RunPayload, int, string, bool, error) {
