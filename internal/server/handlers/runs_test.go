@@ -1573,29 +1573,29 @@ func TestPrepareSecretsWritesFiles(t *testing.T) {
 		Values:      map[string]interface{}{"api-key": "supersecret"},
 		SecretNames: map[string]struct{}{"api-key": {}},
 	}
-	secretDir, err := prepareSecrets("run-123", binding)
+	secretHandles, cleanup, err := prepareSecrets("run-123", binding)
 	if err != nil {
 		t.Fatalf("prepare secrets: %v", err)
 	}
-	if secretDir == "" {
-		t.Fatal("expected secrets directory path")
+	if cleanup == nil {
+		t.Fatal("expected secret cleanup")
 	}
-	if !strings.Contains(secretDir, baseDir) {
-		t.Fatalf("expected secret dir under data dir, got %s", secretDir)
+	defer func() {
+		_ = cleanup()
+	}()
+	if len(secretHandles) == 0 {
+		t.Fatal("expected secret handles")
 	}
-	content, err := os.ReadFile(filepath.Join(secretDir, "api-key"))
+	handlePath, ok := secretHandles["api-key"]
+	if !ok || handlePath == "" {
+		t.Fatal("expected handle for api-key")
+	}
+	content, err := os.ReadFile(handlePath)
 	if err != nil {
-		t.Fatalf("read secret file: %v", err)
+		t.Fatalf("read handle: %v", err)
 	}
 	if string(content) != "supersecret" {
 		t.Fatalf("expected secret content preserved, got %q", string(content))
-	}
-	info, err := os.Stat(filepath.Join(secretDir, "api-key"))
-	if err != nil {
-		t.Fatalf("stat secret file: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("expected secret file perms 0600, got %v", info.Mode().Perm())
 	}
 }
 

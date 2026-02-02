@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/types"
 	"github.com/spf13/pflag"
 )
@@ -16,11 +17,12 @@ import (
 const argsJSONSecretToken = "$$REDACTED$$"
 
 type Binding struct {
-	Values       map[string]interface{}
-	ArgsJSON     string
-	ScalarEnv    map[string]string // ARG_<UPPER> for scalar types only
-	SecretNames  map[string]struct{}
-	SecretValues []string
+	Values        map[string]interface{}
+	ArgsJSON      string
+	ScalarEnv     map[string]string // ARG_<UPPER> for scalar types only
+	SecretNames   map[string]struct{}
+	SecretValues  []string
+	SecretBuffers map[string]*secrets.Buffer
 }
 
 type ArgError struct {
@@ -36,6 +38,7 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 	scalars := make(map[string]string)
 	secretNames := make(map[string]struct{})
 	var secretValues []string
+	secretBuffers := map[string]*secrets.Buffer{}
 
 	for _, a := range spec.Args {
 		if err := types.ValidateArgName(a.Name); err != nil {
@@ -70,6 +73,7 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 				secretNames[name] = struct{}{}
 				if v != "" {
 					secretValues = append(secretValues, v)
+					secretBuffers[name] = secrets.NewBufferFromString(v)
 				}
 			} else {
 				scalars[argEnvName(name)] = v
@@ -185,6 +189,9 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 	}
 	if len(secretValues) > 0 {
 		b.SecretValues = secretValues
+	}
+	if len(secretBuffers) > 0 {
+		b.SecretBuffers = secretBuffers
 	}
 	return b, nil
 }

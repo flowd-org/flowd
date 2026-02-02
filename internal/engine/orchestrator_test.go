@@ -50,6 +50,12 @@ argspec:
 	if res.Binding == nil {
 		t.Fatalf("expected binding")
 	}
+	if res.Binding.SecretBuffers == nil || len(res.Binding.SecretBuffers) == 0 {
+		t.Fatalf("expected secret buffers populated")
+	}
+	if buf := res.Binding.SecretBuffers["token"]; buf == nil || buf.Len() == 0 {
+		t.Fatalf("expected token buffer populated")
+	}
 	var decoded map[string]string
 	if err := json.Unmarshal([]byte(res.Binding.ArgsJSON), &decoded); err != nil {
 		t.Fatalf("decode ArgsJSON: %v", err)

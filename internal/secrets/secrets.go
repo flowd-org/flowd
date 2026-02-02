@@ -79,6 +79,20 @@ func CreateFile(runDir string, name string, value []byte) (string, error) {
 	return path, nil
 }
 
+// ReadHandle opens a secret file for read, unlinks it immediately, and returns
+// an fd-backed handle path plus a close function. The caller must keep the handle
+// open for the duration of use and invoke close when done.
+func ReadHandle(path string) (string, func() error, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", nil, opError("open secret handle")
+	}
+	h, err := OpenHandle(path)
+	if err != nil {
+		return "", nil, err
+	}
+	return h.Path, h.Close, nil
+}
+
 // Janitor removes secret run directories older than the janitor TTL.
 // It only operates within the base secrets directory.
 func Janitor(now time.Time) (removed int, err error) {

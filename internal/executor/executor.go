@@ -44,6 +44,7 @@ type ExecutorConfig struct {
 	ContainerRootfsWritable bool
 	ContainerCapabilities   []string
 	SecretsDir              string
+	SecretHandles           map[string]string
 }
 
 // ScriptResult holds per-script run outcome.
@@ -350,9 +351,10 @@ func executeProcessStep(ctx context.Context, cfg *types.Config, ecfg ExecutorCon
 		env = upsertEnv(env, "RUN_DIR", runDir)
 		env = upsertEnv(env, "FLWD_RUN_DIR", runDir)
 		if strings.Contains(interpreter, "bash") {
+			env = injectSecretHandles(env, ecfg)
 			cmd.Env = append(env, fmt.Sprintf("BASH_ENV=%s", profilePath))
 		} else {
-			cmd.Env = env
+			cmd.Env = injectSecretHandles(env, ecfg)
 		}
 
 		restoreUmask := applySecureUmask()
@@ -526,6 +528,20 @@ func buildSecureEnv(cfg *types.Config, argEnv map[string]string, argsJSON string
 	env := make([]string, 0, len(ordered))
 	for _, e := range ordered {
 		env = append(env, fmt.Sprintf("%s=%s", e.key, envSet[e.key]))
+	}
+	return env
+}
+
+func injectSecretHandles(env []string, ecfg ExecutorConfig) []string {
+	if len(ecfg.SecretHandles) == 0 {
+		return env
+	}
+	for name, handlePath := range ecfg.SecretHandles {
+		varName := "FLOWD_SECRET_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+		if ecfg.Verbosity >= 2 {
+			fmt.Fprintf(os.Stderr, "[DEBUG] injecting secret handle for %s\n", name)
+		}
+		env = upsertEnv(env, varName, handlePath)
 	}
 	return env
 }

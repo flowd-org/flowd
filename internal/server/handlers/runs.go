@@ -1077,14 +1077,22 @@ func writePlanArtifact(plan types.Plan, runDir string) error {
 	return nil
 }
 
-func prepareSecrets(runID string, binding *engine.Binding) (string, error) {
+func prepareSecrets(runID string, binding *engine.Binding) (map[string]string, func() error, error) {
 	if binding == nil || len(binding.SecretNames) == 0 {
-		return "", nil
+		return nil, nil, nil
 	}
+	defer func() {
+		for name, buf := range binding.SecretBuffers {
+			if _, ok := binding.SecretNames[name]; ok {
+				buf.Close()
+			}
+		}
+	}()
 	secretDir, err := secrets.RunDir(runID)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
+	paths := make(map[string]string, len(binding.SecretNames))
 	for name := range binding.SecretNames {
 		value := ""
 		if raw, ok := binding.Values[name]; ok && raw != nil {
@@ -1094,11 +1102,47 @@ func prepareSecrets(runID string, binding *engine.Binding) (string, error) {
 				value = fmt.Sprint(raw)
 			}
 		}
-		if _, err := secrets.CreateFile(secretDir, name, []byte(value)); err != nil {
-			return "", err
+		if buf, ok := binding.SecretBuffers[name]; ok {
+			path, err := secrets.CreateFile(secretDir, name, buf.Bytes())
+			if err != nil {
+				return nil, nil, err
+			}
+			paths[name] = path
+			continue
+		}
+		path, err := secrets.CreateFile(secretDir, name, []byte(value))
+		if err != nil {
+			return nil, nil, err
+		}
+		paths[name] = path
+	}
+
+	handles := make(map[string]string, len(paths))
+	var closers []func() error
+	for name, path := range paths {
+		handlePath, closeFn, err := secrets.ReadHandle(path)
+		if err != nil {
+			for _, closeFn := range closers {
+				_ = closeFn()
+			}
+			return nil, nil, err
+		}
+		handles[name] = handlePath
+		if closeFn != nil {
+			closers = append(closers, closeFn)
 		}
 	}
-	return secretDir, nil
+
+	cleanup := func() error {
+		var firstErr error
+		for _, closeFn := range closers {
+			if err := closeFn(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
+	return handles, cleanup, nil
 }
 
 func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []policyDecision) {
@@ -1233,10 +1277,15 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 		return
 	}
 
-	secretDir, err := prepareSecrets(runID, execCtx.binding)
+	secretHandles, secretCleanup, err := prepareSecrets(runID, execCtx.binding)
 	if err != nil {
 		h.failRun(runID, "failed", err)
 		return
+	}
+	if secretCleanup != nil {
+		defer func() {
+			_ = secretCleanup()
+		}()
 	}
 
 	stdoutFile, err := os.OpenFile(filepath.Join(runDir, "stdout"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -1293,8 +1342,8 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 			}
 		}
 	}
-	if secretDir != "" {
-		execCfg.SecretsDir = secretDir
+	if len(secretHandles) > 0 {
+		execCfg.SecretHandles = secretHandles
 	}
 
 	runCtx := execCtx.ctx
