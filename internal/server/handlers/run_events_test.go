@@ -90,6 +90,49 @@ func TestRunEventsHandlerReplayFromHeader(t *testing.T) {
 	}
 }
 
+func TestRunEventsHandlerResumeFromLastEventID(t *testing.T) {
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-resume", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+	to := time.Hour
+	hub := sse.New(sse.Config{KeepAliveInterval: to})
+	journal := newTestJournal(t)
+	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {
+		hub.Publish(runID, ev)
+	}))
+
+	sink.Publish("run-resume", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-resume", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
+	sink.Publish("run-resume", sse.Event{Event: "step.finished", Data: "{\"status\":\"ok\"}"})
+
+	h := NewRunEventsHandler(store, hub, journal)
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-resume/events", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req = req.WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	if strings.Contains(body, "id: 1") {
+		t.Fatalf("expected resume to skip id 1, got %q", body)
+	}
+	if !strings.Contains(body, "id: 2") || !strings.Contains(body, "id: 3") {
+		t.Fatalf("expected replay of ids 2 and 3, got %q", body)
+	}
+	if strings.Count(body, "id: 2") != 1 || strings.Count(body, "id: 3") != 1 {
+		t.Fatalf("expected single replay of ids 2 and 3, got %q", body)
+	}
+}
+
 func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 	store := runstore.New()
 	store.Create(runstore.Run{ID: "run-789", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
