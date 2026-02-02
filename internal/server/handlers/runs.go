@@ -45,9 +45,10 @@ const (
 	defaultRunsPage           = 1
 	defaultRunsPerPage        = 50
 	maxRunsPerPage            = 200
-	storageQuotaProblemType   = "https://flowd.dev/problems/storage-quota-exceeded"
+	storageQuotaProblemType   = "https://flowd.org/problems/storage-quota-exceeded"
 	storageQuotaProblemDetail = "Core storage quota exceeded; free up space or increase the configured quota before retrying."
-	idempotencyInFlightType   = "https://flowd.dev/problems/idempotency-key-in-use"
+	idempotencyMismatchType   = "https://flowd.org/problems/idempotency/mismatch"
+	idempotencyInFlightType   = "https://flowd.org/problems/scheduler/rejected"
 )
 
 var (
@@ -210,7 +211,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if !strings.EqualFold(headerHash, bodyHashHex) {
 			response.Write(w, response.New(http.StatusConflict, "idempotency hash mismatch",
-				response.WithType("https://flowd.dev/problems/idempotency-key-conflict"),
+				response.WithType(idempotencyMismatchType),
 				response.WithDetail("request hash does not match stored hash"),
 				response.WithExtension("incoming_sha256", strings.ToLower(headerHash)),
 				response.WithExtension("computed_sha256", bodyHashHex),
@@ -246,7 +247,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		if found {
 			if storedHash != bodyHashHex {
 				response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
-					response.WithType("https://flowd.dev/problems/idempotency-key-conflict"),
+					response.WithType(idempotencyMismatchType),
 					response.WithExtension("stored_sha256", storedHash),
 					response.WithExtension("incoming_sha256", bodyHashHex),
 				))
@@ -279,7 +280,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if found {
 				if storedHash != bodyHashHex {
 					response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
-						response.WithType("https://flowd.dev/problems/idempotency-key-conflict"),
+						response.WithType(idempotencyMismatchType),
 						response.WithExtension("stored_sha256", storedHash),
 						response.WithExtension("incoming_sha256", bodyHashHex),
 					))
@@ -1372,7 +1373,7 @@ func storageQuotaExceededProblem() response.Problem {
 }
 
 func idempotencyInFlightProblem() response.Problem {
-	return response.New(http.StatusConflict, "idempotency key in use",
+	return response.New(http.StatusTooManyRequests, "idempotency key in use",
 		response.WithType(idempotencyInFlightType),
 		response.WithDetail("a request with the same Idempotency-Key is still processing"),
 	)

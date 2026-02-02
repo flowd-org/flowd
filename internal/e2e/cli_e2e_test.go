@@ -386,7 +386,7 @@ func TestCLIServeMode(t *testing.T) {
 	if err := json.NewDecoder(respConflict.Body).Decode(&prob409); err != nil {
 		t.Fatalf("decode conflict problem: %v", err)
 	}
-	if prob409["type"] != "https://flowd.dev/problems/idempotency-key-conflict" {
+	if prob409["type"] != "https://flowd.org/problems/idempotency/mismatch" {
 		t.Fatalf("expected idempotency conflict type, got %v", prob409["type"])
 	}
 }
@@ -579,7 +579,7 @@ func TestCLIServeConformanceErrors(t *testing.T) {
 		t.Fatalf("expected 409 conflict, got %d (%s)", respConflict.StatusCode, string(body))
 	}
 	prob409 := readProblem(respConflict)
-	if typ, _ := prob409["type"].(string); typ != "https://flowd.dev/problems/idempotency-key-conflict" {
+	if typ, _ := prob409["type"].(string); typ != "https://flowd.org/problems/idempotency/mismatch" {
 		t.Fatalf("expected idempotency conflict type, got %q", typ)
 	}
 

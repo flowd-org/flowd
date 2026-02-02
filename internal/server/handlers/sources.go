@@ -64,7 +64,7 @@ var (
 	addonManifestMountPath = "/flwd-addon/" + addonManifestFileName
 )
 
-const problemTypeSignatureInvalid = "https://flowd.dev/problems/source-signature-invalid"
+const problemTypeSignatureInvalid = "https://flowd.org/problems/source-signature-invalid"
 
 func normalizeExpose(value string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(value))

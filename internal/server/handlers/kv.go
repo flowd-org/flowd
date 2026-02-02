@@ -14,7 +14,7 @@ import (
 	"github.com/flowd-org/flowd/internal/server/response"
 )
 
-const namespaceForbiddenProblemType = "https://flowd.dev/problems/namespace-forbidden"
+const namespaceForbiddenProblemType = "https://flowd.org/problems/namespace-forbidden"
 
 // KVNamespaceConfig controls namespace-specific Rule-Y behaviour.
 type KVNamespaceConfig struct {

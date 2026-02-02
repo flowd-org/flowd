@@ -188,7 +188,7 @@ func TestRuleYKVHandlerIntegration(t *testing.T) {
 	if err := json.Unmarshal(disallowed.Body.Bytes(), &problem); err != nil {
 		t.Fatalf("decode forbidden problem: %v", err)
 	}
-	if problem["type"] != "https://flowd.dev/problems/namespace-forbidden" {
+	if problem["type"] != "https://flowd.org/problems/namespace-forbidden" {
 		t.Fatalf("expected namespace-forbidden problem, got %v", problem["type"])
 	}
 
