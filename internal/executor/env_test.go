@@ -84,3 +84,23 @@ func TestBuildSecureEnvInheritHost(t *testing.T) {
 		t.Fatalf("expected inherited env %s in %v", key, env)
 	}
 }
+
+func TestBuildSecureEnvArgsJSONAliases(t *testing.T) {
+	argsJSON := `{"name":"alice"}`
+	env := buildSecureEnv(nil, nil, argsJSON, false)
+	var flowdValue, flwdValue string
+	for _, e := range env {
+		switch e {
+		case "FLOWD_ARGS_JSON=" + argsJSON:
+			flowdValue = argsJSON
+		case "FLWD_ARGS_JSON=" + argsJSON:
+			flwdValue = argsJSON
+		}
+	}
+	if flowdValue == "" {
+		t.Fatalf("expected FLOWD_ARGS_JSON to be set in env: %v", env)
+	}
+	if flwdValue == "" {
+		t.Fatalf("expected FLWD_ARGS_JSON alias to be set in env: %v", env)
+	}
+}
