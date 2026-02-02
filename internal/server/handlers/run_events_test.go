@@ -181,6 +181,46 @@ func TestRunEventsHandlerReturns410ForExpiredCursor(t *testing.T) {
 	}
 }
 
+func TestRunEventsHandlerInvalidLastEventID(t *testing.T) {
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-invalid", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+
+	t.Run("non-integer", func(t *testing.T) {
+		hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+		journal := newTestJournal(t)
+		h := NewRunEventsHandler(store, hub, journal)
+
+		req := httptest.NewRequest(http.MethodGet, "/runs/run-invalid/events", nil)
+		req.Header.Set("Last-Event-ID", "not-a-number")
+		rec := httptest.NewRecorder()
+
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+		}
+	})
+
+	t.Run("beyond-latest", func(t *testing.T) {
+		hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+		journal := newTestJournal(t)
+		sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {
+			hub.Publish(runID, ev)
+		}))
+
+		sink.Publish("run-invalid", sse.Event{Event: "run.started", Data: "{}"})
+
+		h := NewRunEventsHandler(store, hub, journal)
+		req := httptest.NewRequest(http.MethodGet, "/runs/run-invalid/events", nil)
+		req.Header.Set("Last-Event-ID", "2")
+		rec := httptest.NewRecorder()
+
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+		}
+	})
+}
+
 func newTestJournal(t *testing.T) *coredb.Journal {
 	t.Helper()
 	return newTestJournalWithLimit(t, 0)
