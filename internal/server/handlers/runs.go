@@ -641,11 +641,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Provenance = provenance
 
+	scrubber := newPersistenceScrubber(binding, secretHandles)
+	respForPersistence := scrubRunPayload(resp, scrubber)
+
 	if h.idempotency != nil {
 		if idempotencyExpiresAt.IsZero() {
 			idempotencyExpiresAt = now.Add(h.idempotencyTTL)
 		}
-		if err := h.idempotency.Store(ctx, scopedKey, endpoint, bodyHashHex, resp, http.StatusCreated, idempotencyExpiresAt); err != nil {
+		if err := h.idempotency.Store(ctx, scopedKey, endpoint, bodyHashHex, respForPersistence, http.StatusCreated, idempotencyExpiresAt); err != nil {
 			if logger != nil {
 				logger.Error("idempotency store failed", slog.String("error", err.Error()))
 			}
@@ -662,7 +665,9 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.dbRuns != nil {
-		if err := h.dbRuns.Create(ctx, runRecordFromPayload(resp)); err != nil {
+		record := runRecordFromPayload(resp)
+		record = scrubRunRecord(record, scrubber)
+		if err := h.dbRuns.Create(ctx, record); err != nil {
 			if logger != nil {
 				logger.Error("run store failed", slog.String("error", err.Error()))
 			}
@@ -676,19 +681,20 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.store.Create(runstore.Run{
-		ID:              resp.ID,
-		JobID:           resp.JobID,
-		Status:          resp.Status,
-		StartedAt:       resp.StartedAt,
-		Result:          resp.Result,
-		Executor:        resp.Executor,
-		Runtime:         resp.Runtime,
-		SecurityProfile: resp.SecurityProfile,
-		Provenance:      resp.Provenance,
+		ID:              respForPersistence.ID,
+		JobID:           respForPersistence.JobID,
+		Status:          respForPersistence.Status,
+		StartedAt:       respForPersistence.StartedAt,
+		Result:          respForPersistence.Result,
+		Executor:        respForPersistence.Executor,
+		Runtime:         respForPersistence.Runtime,
+		SecurityProfile: respForPersistence.SecurityProfile,
+		Provenance:      respForPersistence.Provenance,
 	})
 
+	eventSink := newScrubbedEventSink(h.events, scrubber)
 	if len(decisions) > 0 {
-		publishPolicyDecisions(h.events, &resp, decisions)
+		publishPolicyDecisions(eventSink, &resp, decisions)
 	}
 	runCtx := &runExecutionContext{
 		ctx:           nil,
@@ -703,6 +709,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		runtime:       runtime,
 		secretHandles: secretHandles,
 		secretCleanup: secretCleanup,
+		scrubber:      scrubber,
 	}
 	ctxWithCancel, cancel := context.WithCancel(context.Background())
 	runCtx.ctx = ctxWithCancel
@@ -1207,6 +1214,7 @@ type runExecutionContext struct {
 	sink          events.Sink
 	secretHandles map[string]string
 	secretCleanup func() error
+	scrubber      *persistenceScrubber
 }
 
 func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
@@ -1258,8 +1266,9 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	}
 	defer stderrFile.Close()
 
+	serverSink := newScrubbedEventSink(h.events, execCtx.scrubber)
 	sink := events.NewCompositeSink(
-		newSSESink(h.events, &execCtx.runPayload),
+		newSSESink(serverSink, &execCtx.runPayload),
 	)
 	execCtx.sink = sink
 
@@ -1360,7 +1369,9 @@ func (h *RunsHandler) updateRunStatus(runID, status string, finished *time.Time)
 	}
 	h.store.Update(current)
 	if h.dbRuns != nil {
-		_ = h.dbRuns.Update(context.Background(), runRecordFromStore(current))
+		record := runRecordFromStore(current)
+		record = scrubRunRecord(record, newPersistenceScrubber(nil, nil))
+		_ = h.dbRuns.Update(context.Background(), record)
 	}
 }
 
