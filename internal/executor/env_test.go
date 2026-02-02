@@ -1,9 +1,12 @@
 package executor
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/flowd-org/flowd/internal/events"
 	"github.com/flowd-org/flowd/internal/types"
 )
 
@@ -102,5 +105,70 @@ func TestBuildSecureEnvArgsJSONAliases(t *testing.T) {
 	}
 	if flwdValue == "" {
 		t.Fatalf("expected FLWD_ARGS_JSON alias to be set in env: %v", env)
+	}
+}
+
+func TestExecutorEnvDoesNotExposeSecrets(t *testing.T) {
+	secretValue := "supersecret"
+	argsPayload := map[string]string{
+		"token": events.SecretToken(),
+		"name":  "alice",
+	}
+	argsBytes, err := json.Marshal(argsPayload)
+	if err != nil {
+		t.Fatalf("marshal args payload: %v", err)
+	}
+	argsJSON := string(argsBytes)
+
+	env := buildSecureEnv(nil, map[string]string{"ARG_NAME": "alice"}, argsJSON, false)
+	env = injectSecretHandles(env, ExecutorConfig{SecretHandles: map[string]string{
+		"token": "/run/secrets/token",
+	}})
+
+	envMap := make(map[string]string, len(env))
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	if envMap["FLOWD_ARGS_JSON"] != argsJSON {
+		t.Fatalf("expected FLOWD_ARGS_JSON to be set to redacted args JSON")
+	}
+	if envMap["FLWD_ARGS_JSON"] != argsJSON {
+		t.Fatalf("expected FLWD_ARGS_JSON alias to be set to redacted args JSON")
+	}
+
+	handlesJSON := envMap[secretHandlesEnv]
+	if handlesJSON == "" {
+		t.Fatalf("expected %s to be set", secretHandlesEnv)
+	}
+	if strings.Contains(handlesJSON, secretValue) {
+		t.Fatalf("secret value leaked into %s", secretHandlesEnv)
+	}
+
+	var handles map[string]map[string]string
+	if err := json.Unmarshal([]byte(handlesJSON), &handles); err != nil {
+		t.Fatalf("decode %s: %v", secretHandlesEnv, err)
+	}
+	h, ok := handles["token"]
+	if !ok {
+		t.Fatalf("expected token handle in %s payload", secretHandlesEnv)
+	}
+	if h["type"] != "file" {
+		t.Fatalf("expected handle type 'file', got %q", h["type"])
+	}
+	if h["path"] != "/run/secrets/token" {
+		t.Fatalf("expected handle path, got %q", h["path"])
+	}
+	if len(h) != 2 {
+		t.Fatalf("expected handle payload to contain only type/path, got %v", h)
+	}
+
+	for key, val := range envMap {
+		if strings.Contains(val, secretValue) {
+			t.Fatalf("secret value leaked into env var %s", key)
+		}
 	}
 }
