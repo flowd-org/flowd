@@ -128,6 +128,79 @@ func TestJournalRejectsPayloadAboveLimit(t *testing.T) {
 	}
 }
 
+func TestJournalBoundsAfterEvictionAcrossRuns(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(ctx, Options{DataDir: dir})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	// Limit forces eviction after the third append (10 + 10 + 10 > 20).
+	journal := NewJournal(db, 20)
+	if journal == nil {
+		t.Fatal("expected journal")
+	}
+
+	payload := []byte("1234567890")
+	first, err := journal.Append(ctx, "run-1", "step.output", payload, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("append first: %v", err)
+	}
+	second, err := journal.Append(ctx, "run-2", "step.output", payload, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("append second: %v", err)
+	}
+	third, err := journal.Append(ctx, "run-1", "step.output", payload, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("append third: %v", err)
+	}
+
+	if first.Seq == 0 || second.Seq == 0 || third.Seq == 0 {
+		t.Fatalf("expected non-zero sequences, got first=%d second=%d third=%d", first.Seq, second.Seq, third.Seq)
+	}
+
+	earliestAll, latestAll, err := journal.BoundsAll(ctx)
+	if err != nil {
+		t.Fatalf("bounds all: %v", err)
+	}
+	if earliestAll != second.Seq || latestAll != third.Seq {
+		t.Fatalf("expected bounds all earliest=%d latest=%d, got earliest=%d latest=%d", second.Seq, third.Seq, earliestAll, latestAll)
+	}
+
+	earliestRun1, latestRun1, err := journal.Bounds(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("bounds run-1: %v", err)
+	}
+	if earliestRun1 != third.Seq || latestRun1 != third.Seq {
+		t.Fatalf("expected run-1 bounds to equal third seq %d, got earliest=%d latest=%d", third.Seq, earliestRun1, latestRun1)
+	}
+
+	earliestRun2, latestRun2, err := journal.Bounds(ctx, "run-2")
+	if err != nil {
+		t.Fatalf("bounds run-2: %v", err)
+	}
+	if earliestRun2 != second.Seq || latestRun2 != second.Seq {
+		t.Fatalf("expected run-2 bounds to equal second seq %d, got earliest=%d latest=%d", second.Seq, earliestRun2, latestRun2)
+	}
+
+	var run1Entries []int64
+	if err := journal.ForEach(ctx, "run-1", 0, func(entry JournalEntry) error {
+		run1Entries = append(run1Entries, entry.Seq)
+		return nil
+	}); err != nil {
+		t.Fatalf("iterate run-1: %v", err)
+	}
+	if len(run1Entries) != 1 || run1Entries[0] != third.Seq {
+		t.Fatalf("expected only third seq retained for run-1, got %v", run1Entries)
+	}
+}
+
 func TestJournalEvictionAppendAtomicity(t *testing.T) {
 	t.Parallel()
 

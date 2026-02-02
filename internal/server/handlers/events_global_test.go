@@ -244,3 +244,50 @@ func TestEventsHandlerGlobalStreamInvalidLastEventID(t *testing.T) {
 		})
 	}
 }
+
+func TestEventsHandlerGlobalStreamStaleCursorAfterEviction(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "stream", path: "/events/stream"},
+		{name: "alias", path: "/events"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := runstore.New()
+			runHub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+			globalHub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+			journal := newTestJournalWithLimit(t, 20)
+			sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {
+				globalHub.Publish("global", WrapGlobalEvent(runID, ev))
+			}))
+
+			sink.Publish("run-old", sse.Event{Event: "step.output", Data: "{\"msg\":\"old\"}"})
+			sink.Publish("run-new", sse.Event{Event: "step.output", Data: "{\"msg\":\"new\"}"})
+
+			handler := NewEventsHandler(EventsConfig{
+				RunStore:  store,
+				RunHub:    runHub,
+				GlobalHub: globalHub,
+				Journal:   journal,
+			})
+
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			req.Header.Set("Last-Event-ID", "1")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusGone {
+				t.Fatalf("expected 410 Gone, got %d", rec.Code)
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+				t.Fatalf("expected problem+json content type, got %q", ct)
+			}
+			if !strings.Contains(rec.Body.String(), "https://flowd.org/problems/sse/stale-cursor") {
+				t.Fatalf("expected stale-cursor problem type, got %q", rec.Body.String())
+			}
+		})
+	}
+}

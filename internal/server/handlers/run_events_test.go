@@ -264,6 +264,36 @@ func TestRunEventsHandlerInvalidLastEventID(t *testing.T) {
 	})
 }
 
+func TestRunEventsHandlerStaleCursorAfterEviction(t *testing.T) {
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-evict", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+	// Keepalive disabled to avoid background heartbeats in the response body.
+	hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	journal := newTestJournalWithLimit(t, 20)
+	// Only persist to journal; live hub is unused for this stale-cursor path.
+	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {}))
+
+	sink.Publish("run-evict", sse.Event{Event: "step.output", Data: "{\"msg\":\"old\"}"})
+	sink.Publish("run-evict", sse.Event{Event: "step.output", Data: "{\"msg\":\"new\"}"})
+
+	h := NewRunEventsHandler(store, hub, journal)
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-evict/events", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410 Gone, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected problem+json content type, got %q", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "https://flowd.org/problems/sse/stale-cursor") {
+		t.Fatalf("expected stale-cursor problem type, got %q", body)
+	}
+}
+
 func newTestJournal(t *testing.T) *coredb.Journal {
 	t.Helper()
 	return newTestJournalWithLimit(t, 0)
