@@ -459,6 +459,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	execScriptDir = startRes.ScriptDir
 	binding := startRes.Binding
 	plan := startRes.Plan
+	runID := startRes.RunID
 
 	executorMode := strings.ToLower(cfg.Executor)
 	if strings.HasPrefix(cfg.Interpreter, "container:") && executorMode == "" {
@@ -517,6 +518,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if policyCtx == nil {
 		policyCtx, _ = policy.NewContext(nil)
 	}
+	policyPayload := &RunPayload{
+		ID:              runID,
+		JobID:           effectiveID,
+		SecurityProfile: effProfile,
+		Executor:        executorMode,
+		Runtime:         runtimeStr,
+		Provenance:      provenance,
+	}
 
 	var findings []types.Finding
 	var trustPreview *types.ImageTrustPreview
@@ -529,6 +538,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	image := containerImageFromConfig(cfg)
 	if image != "" {
 		if prob := enforceRegistryAllowList(ctx, image, policyCtx); prob != nil {
+			publishPolicyDenied(h.events, policyPayload, "container.image", policyProblemCode(prob), policyProblemDetail(prob))
 			response.Write(w, *prob)
 			return
 		}
@@ -541,6 +551,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		outcome, prob := enforceImageVerification(ctx, image, mode, h.verifier)
 		if prob != nil {
+			publishPolicyDenied(h.events, policyPayload, "container.image", policyProblemCode(prob), policyProblemDetail(prob))
 			response.Write(w, *prob)
 			return
 		}
@@ -564,6 +575,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if prob := enforceResourceCeilings(ctx, cfg, policyCtx.ContainerCeilings()); prob != nil {
+			publishPolicyDenied(h.events, policyPayload, "container.resources", policyProblemCode(prob), policyProblemDetail(prob))
 			response.Write(w, *prob)
 			return
 		}
@@ -571,13 +583,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	overrideFindings, decisions, prob := evaluateOverrides(ctx, cfg, effProfile, policyCtx)
 	if prob != nil {
 		if len(decisions) > 0 {
-			tempPayload := &RunPayload{
-				JobID:           effectiveID,
-				SecurityProfile: effProfile,
-				Executor:        executorMode,
-				Provenance:      provenance,
-			}
-			publishPolicyDecisions(h.events, tempPayload, decisions)
+			publishPolicyDecisions(h.events, policyPayload, decisions)
 		}
 		response.Write(w, *prob)
 		return
@@ -593,7 +599,6 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if trustPreview != nil {
 		plan.ImageTrust = trustPreview
 	}
-	runID := startRes.RunID
 	if executorMode == "container" && runtime != "" {
 		if err := container.RemoveContainer(context.Background(), runtime, runID); err != nil {
 			response.Write(w, containerNameConflictProblem(err))
@@ -606,10 +611,15 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if runtime != "" {
 		resp.Runtime = string(runtime)
 	}
+	resultPayload := map[string]any{}
 	if len(plan.ResolvedArgs) > 0 {
-		resp.Result = map[string]any{
-			"resolved_args": plan.ResolvedArgs,
-		}
+		resultPayload["resolved_args"] = plan.ResolvedArgs
+	}
+	if len(findings) > 0 {
+		resultPayload["policy_findings"] = findings
+	}
+	if len(resultPayload) > 0 {
+		resp.Result = resultPayload
 	}
 	resp.Provenance = provenance
 
@@ -1114,17 +1124,7 @@ func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []pol
 	if sink == nil || payload == nil || len(decisions) == 0 {
 		return
 	}
-	base := map[string]any{
-		"run_id":           payload.ID,
-		"job_id":           payload.JobID,
-		"security_profile": payload.SecurityProfile,
-		"executor":         payload.Executor,
-		"runtime":          payload.Runtime,
-		"timestamp":        time.Now().UTC(),
-	}
-	if payload.Provenance != nil {
-		base["provenance"] = payload.Provenance
-	}
+	base := policyEventBase(payload)
 	for _, dec := range decisions {
 		data := make(map[string]any, len(base)+4)
 		for k, v := range base {
@@ -1141,7 +1141,73 @@ func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []pol
 			bytes = []byte("{}")
 		}
 		sink.Publish(payload.ID, sse.Event{Event: "policy.decision", Data: string(bytes)})
+		if dec.Decision == "denied" {
+			publishPolicyDenied(sink, payload, dec.Subject, dec.Code, dec.Reason)
+		}
 	}
+}
+
+func publishPolicyDenied(sink EventSink, payload *RunPayload, subject, code, reason string) {
+	if sink == nil || payload == nil {
+		return
+	}
+	base := policyEventBase(payload)
+	data := make(map[string]any, len(base)+4)
+	for k, v := range base {
+		data[k] = v
+	}
+	if subject != "" {
+		data["subject"] = subject
+	}
+	if code != "" {
+		data["code"] = code
+	}
+	data["decision"] = "denied"
+	if reason != "" {
+		data["reason"] = reason
+	}
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		bytes = []byte("{}")
+	}
+	sink.Publish(payload.ID, sse.Event{Event: "policy.denied", Data: string(bytes)})
+}
+
+func policyEventBase(payload *RunPayload) map[string]any {
+	base := map[string]any{
+		"run_id":           payload.ID,
+		"job_id":           payload.JobID,
+		"security_profile": payload.SecurityProfile,
+		"executor":         payload.Executor,
+		"runtime":          payload.Runtime,
+		"timestamp":        time.Now().UTC(),
+	}
+	if payload.Provenance != nil {
+		base["provenance"] = payload.Provenance
+	}
+	return base
+}
+
+func policyProblemCode(prob *response.Problem) string {
+	if prob == nil || prob.Ext == nil {
+		return ""
+	}
+	if value, ok := prob.Ext["code"]; ok {
+		if code, ok := value.(string); ok {
+			return code
+		}
+	}
+	return ""
+}
+
+func policyProblemDetail(prob *response.Problem) string {
+	if prob == nil {
+		return ""
+	}
+	if prob.Detail != "" {
+		return prob.Detail
+	}
+	return prob.Title
 }
 
 type runExecutionContext struct {

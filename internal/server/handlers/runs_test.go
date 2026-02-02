@@ -1323,6 +1323,104 @@ container:
 	}
 }
 
+func TestRunsHandlerPolicyDeniedSSEEventPersistedAndLive(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "override", `
+version: v1
+job:
+  id: override
+  name: Override Job
+executor: container
+interpreter: "container:alpine:3.20"
+container:
+  network: bridge
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	journal := coredb.NewJournal(db, 0)
+
+	store := runstore.New()
+	runHub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	globalHub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	baseSink := EventSinkFunc(func(runID string, ev sse.Event) {
+		runHub.Publish(runID, ev)
+		globalHub.Publish("global", WrapGlobalEvent(runID, ev))
+	})
+	eventSink := NewJournalEventSink(journal, baseSink)
+
+	oldDetect := detectContainerRuntime
+	detectContainerRuntime = func(func(string) (string, error)) (container.Runtime, error) {
+		return container.RuntimeDocker, nil
+	}
+	defer func() { detectContainerRuntime = oldDetect }()
+
+	h := NewRunsHandler(RunsConfig{
+		Root:    root,
+		Profile: "secure",
+		Store:   store,
+		Events:  eventSink,
+		DB:      db,
+		Runtime: container.RuntimeDocker,
+	})
+	globalEvents := NewEventsHandler(EventsConfig{
+		RunStore:  store,
+		RunHub:    runHub,
+		GlobalHub: globalHub,
+		Journal:   journal,
+	})
+
+	// Start a live SSE stream and ensure it is ready.
+	liveCtx, liveCancel := context.WithCancel(context.Background())
+	liveReq := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(liveCtx)
+	liveRec := httptest.NewRecorder()
+	liveDone := make(chan struct{})
+	go func() {
+		globalEvents.ServeHTTP(liveRec, liveReq)
+		close(liveDone)
+	}()
+	waitFor(func() bool { return strings.Contains(liveRec.Body.String(), "retry: 3000") }, 200*time.Millisecond, t)
+
+	// Trigger a policy denial.
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"override"}`))
+	req.Header.Set("Content-Type", "application/json")
+	addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var problem map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem["code"] != "policy.denied" {
+		t.Fatalf("expected policy.denied, got %+v", problem)
+	}
+
+	// Live stream should include policy.denied event.
+	waitFor(func() bool { return strings.Contains(liveRec.Body.String(), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
+	liveCancel()
+	<-liveDone
+
+	// Persisted replay should include policy.denied event as well.
+	replayCtx, replayCancel := context.WithCancel(context.Background())
+	replayReq := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(replayCtx)
+	replayRec := httptest.NewRecorder()
+	replayDone := make(chan struct{})
+	go func() {
+		globalEvents.ServeHTTP(replayRec, replayReq)
+		close(replayDone)
+	}()
+	waitFor(func() bool { return strings.Contains(replayRec.Body.String(), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
+	replayCancel()
+	<-replayDone
+}
+
 func TestRunsHandlerOverrideAllowedPermissive(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "override", `
