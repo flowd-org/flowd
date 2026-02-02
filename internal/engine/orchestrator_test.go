@@ -3,6 +3,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,6 +46,16 @@ argspec:
 	}
 	if got := res.Plan.ResolvedArgs["token"]; got != events.SecretToken() {
 		t.Fatalf("expected secret redacted, got %v", got)
+	}
+	if res.Binding == nil {
+		t.Fatalf("expected binding")
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(res.Binding.ArgsJSON), &decoded); err != nil {
+		t.Fatalf("decode ArgsJSON: %v", err)
+	}
+	if decoded["token"] != "$$REDACTED$$" {
+		t.Fatalf("unexpected ArgsJSON values: %+v", decoded)
 	}
 }
 

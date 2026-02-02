@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package types
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Legacy/compat definition for simple maps in config.yaml
 type ArgumentDefinition struct {
 	Type        string      `yaml:"type"`
@@ -29,4 +34,41 @@ type Arg struct {
 
 type ArgSpec struct {
 	Args []Arg `yaml:"args" json:"args"`
+}
+
+var reservedArgNames = map[string]struct{}{
+	"help":        {},
+	"h":           {},
+	"version":     {},
+	"dry-run":     {},
+	"verbose":     {},
+	"quiet":       {},
+	"strict":      {},
+	"on-error":    {},
+	"report":      {},
+	"report-file": {},
+	"profile":     {},
+	"json":        {},
+	"server":      {},
+}
+
+// ValidateArgName validates arg names against reserved tokens and unsafe characters.
+func ValidateArgName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return fmt.Errorf("name is required")
+	}
+	if strings.ContainsAny(trimmed, " \t\n\r") {
+		return fmt.Errorf("name must not contain whitespace")
+	}
+	if strings.HasPrefix(trimmed, "-") {
+		return fmt.Errorf("name must not start with '-'")
+	}
+	if strings.Contains(trimmed, "=") {
+		return fmt.Errorf("name must not contain '='")
+	}
+	if _, ok := reservedArgNames[strings.ToLower(trimmed)]; ok {
+		return fmt.Errorf("name is reserved")
+	}
+	return nil
 }

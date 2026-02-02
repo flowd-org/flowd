@@ -2,7 +2,6 @@
 package engine
 
 import (
-	"errors"
 	"io"
 	"strconv"
 
@@ -24,12 +23,18 @@ func BindArgs(spec types.ArgSpec, args map[string]interface{}) (*Binding, error)
 	}
 
 	for name := range args {
+		if err := types.ValidateArgName(name); err != nil {
+			return nil, &ArgError{Arg: name, Msg: err.Error()}
+		}
 		if !hasArgInSpec(spec, name) {
-			return nil, errors.New("unknown argument: " + name)
+			return nil, &ArgError{Arg: name, Msg: "unknown argument"}
 		}
 	}
 
 	for _, arg := range spec.Args {
+		if err := types.ValidateArgName(arg.Name); err != nil {
+			return nil, &ArgError{Arg: arg.Name, Msg: err.Error()}
+		}
 		val, ok := args[arg.Name]
 		if !ok {
 			continue
@@ -44,6 +49,9 @@ func BindArgs(spec types.ArgSpec, args map[string]interface{}) (*Binding, error)
 
 func attachSpecFlagsForBind(fs *pflag.FlagSet, spec types.ArgSpec) error {
 	for _, a := range spec.Args {
+		if err := types.ValidateArgName(a.Name); err != nil {
+			return &ArgError{Arg: a.Name, Msg: err.Error()}
+		}
 		switch a.Type {
 		case "string":
 			def, _ := a.Default.(string)
@@ -65,7 +73,7 @@ func attachSpecFlagsForBind(fs *pflag.FlagSet, spec types.ArgSpec) error {
 		case "array", "object":
 			fs.StringArray(a.Name, nil, "")
 		default:
-			return errors.New("unsupported arg type: " + a.Type)
+			return &ArgError{Arg: a.Name, Msg: "unsupported arg type"}
 		}
 	}
 	return nil
@@ -76,13 +84,13 @@ func setFlagFromValueForBind(fs *pflag.FlagSet, arg types.Arg, val interface{}) 
 	case "string":
 		s, ok := val.(string)
 		if !ok {
-			return errors.New("argument " + arg.Name + " must be a string")
+			return &ArgError{Arg: arg.Name, Msg: "must be a string"}
 		}
 		return fs.Set(arg.Name, s)
 	case "boolean":
 		b, ok := val.(bool)
 		if !ok {
-			return errors.New("argument " + arg.Name + " must be a boolean")
+			return &ArgError{Arg: arg.Name, Msg: "must be a boolean"}
 		}
 		return fs.Set(arg.Name, strconv.FormatBool(b))
 	case "integer":
@@ -94,7 +102,7 @@ func setFlagFromValueForBind(fs *pflag.FlagSet, arg types.Arg, val interface{}) 
 		case int64:
 			return fs.Set(arg.Name, strconv.Itoa(int(v)))
 		default:
-			return errors.New("argument " + arg.Name + " must be an integer")
+			return &ArgError{Arg: arg.Name, Msg: "must be an integer"}
 		}
 	case "array":
 		switch arr := val.(type) {
@@ -102,7 +110,7 @@ func setFlagFromValueForBind(fs *pflag.FlagSet, arg types.Arg, val interface{}) 
 			for _, item := range arr {
 				s, ok := item.(string)
 				if !ok {
-					return errors.New("argument " + arg.Name + " array items must be strings")
+					return &ArgError{Arg: arg.Name, Msg: "array items must be strings"}
 				}
 				if err := fs.Set(arg.Name, s); err != nil {
 					return err
@@ -117,17 +125,17 @@ func setFlagFromValueForBind(fs *pflag.FlagSet, arg types.Arg, val interface{}) 
 			}
 			return nil
 		default:
-			return errors.New("argument " + arg.Name + " must be an array of strings")
+			return &ArgError{Arg: arg.Name, Msg: "must be an array of strings"}
 		}
 	case "object":
 		mp, ok := val.(map[string]interface{})
 		if !ok {
-			return errors.New("argument " + arg.Name + " must be an object")
+			return &ArgError{Arg: arg.Name, Msg: "must be an object"}
 		}
 		for k, v := range mp {
 			str, ok := v.(string)
 			if !ok {
-				return errors.New("argument " + arg.Name + " values must be strings")
+				return &ArgError{Arg: arg.Name, Msg: "object values must be strings"}
 			}
 			if err := fs.Set(arg.Name, k+"="+str); err != nil {
 				return err
@@ -135,7 +143,7 @@ func setFlagFromValueForBind(fs *pflag.FlagSet, arg types.Arg, val interface{}) 
 		}
 		return nil
 	default:
-		return errors.New("unsupported arg type: " + arg.Type)
+		return &ArgError{Arg: arg.Name, Msg: "unsupported arg type"}
 	}
 }
 

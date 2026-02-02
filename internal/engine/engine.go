@@ -2,13 +2,18 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/flowd-org/flowd/internal/types"
 	"github.com/spf13/pflag"
 )
+
+const argsJSONSecretToken = "$$REDACTED$$"
 
 type Binding struct {
 	Values       map[string]interface{}
@@ -33,6 +38,9 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 	var secretValues []string
 
 	for _, a := range spec.Args {
+		if err := types.ValidateArgName(a.Name); err != nil {
+			return nil, &ArgError{Arg: a.Name, Msg: err.Error()}
+		}
 		name := a.Name
 		provided := flags.Changed(name)
 
@@ -103,23 +111,23 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 			scalars[argEnvName(name)] = fmt.Sprintf("%d", v)
 
 		case "array":
-			// Phase 1: array<string>
 			arr, _ := flags.GetStringArray(name)
 			// default fallback if not provided and default present
 			if len(arr) == 0 && a.Default != nil {
-				// allow default to be []string or comma-separated string
 				switch dv := a.Default.(type) {
 				case []interface{}:
 					for _, it := range dv {
-						if s, ok := it.(string); ok {
-							arr = append(arr, s)
+						s, ok := it.(string)
+						if !ok {
+							return nil, &ArgError{Arg: name, Msg: "default array items must be strings"}
 						}
+						arr = append(arr, s)
 					}
 				case []string:
 					arr = append(arr, dv...)
 				case string:
 					if dv != "" {
-						arr = strings.Split(dv, ",")
+						arr = append(arr, strings.Split(dv, ",")...)
 					}
 				}
 			}
@@ -139,7 +147,6 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 			vals[name] = arr
 
 		case "object":
-			// Accept repeated --name k=v (string values only in Phase 1)
 			pairs, _ := flags.GetStringArray(name)
 			m := map[string]string{}
 			for _, p := range pairs {
@@ -167,7 +174,7 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 		}
 	}
 
-	argsJSON, err := json.Marshal(vals)
+	argsJSON, err := marshalCanonicalJSON(redactedArgs(vals, secretNames))
 	if err != nil {
 		return nil, fmt.Errorf("encode args json: %w", err)
 	}
@@ -189,6 +196,118 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func redactedArgs(vals map[string]interface{}, secretNames map[string]struct{}) map[string]interface{} {
+	if len(secretNames) == 0 || len(vals) == 0 {
+		return vals
+	}
+	copy := make(map[string]interface{}, len(vals))
+	for k, v := range vals {
+		if _, ok := secretNames[k]; ok {
+			copy[k] = argsJSONSecretToken
+		} else {
+			copy[k] = v
+		}
+	}
+	return copy
+}
+
+func marshalCanonicalJSON(vals map[string]interface{}) ([]byte, error) {
+	buf := &bytes.Buffer{}
+	if err := encodeCanonicalJSON(buf, vals); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeCanonicalJSON(buf *bytes.Buffer, v any) error {
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		buf.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			writeJSONString(buf, k)
+			buf.WriteByte(':')
+			if err := encodeCanonicalJSON(buf, t[k]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+	case map[string]string:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		buf.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			writeJSONString(buf, k)
+			buf.WriteByte(':')
+			writeJSONString(buf, t[k])
+		}
+		buf.WriteByte('}')
+	case []any:
+		buf.WriteByte('[')
+		for i, elem := range t {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := encodeCanonicalJSON(buf, elem); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+	case []string:
+		buf.WriteByte('[')
+		for i, elem := range t {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			writeJSONString(buf, elem)
+		}
+		buf.WriteByte(']')
+	case string:
+		writeJSONString(buf, t)
+	case json.Number:
+		buf.WriteString(t.String())
+	case float64:
+		buf.WriteString(strconv.FormatFloat(t, 'f', -1, 64))
+	case int:
+		buf.WriteString(strconv.Itoa(t))
+	case int64:
+		buf.WriteString(strconv.FormatInt(t, 10))
+	case bool:
+		if t {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+	case nil:
+		buf.WriteString("null")
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
+		buf.Write(b)
+	}
+	return nil
+}
+
+func writeJSONString(buf *bytes.Buffer, s string) {
+	b, _ := json.Marshal(s)
+	buf.Write(b)
 }
 
 func argEnvName(name string) string {

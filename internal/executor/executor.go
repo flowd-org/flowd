@@ -29,7 +29,7 @@ type ExecutorConfig struct {
 	Strict    bool
 	// Engine bindings
 	ArgEnv                  map[string]string // ARG_<UPPER>=value (scalars only)
-	ArgsJSON                string            // FLWD_ARGS_JSON content
+	ArgsJSON                string            // FLOWD_ARGS_JSON content
 	ArgValues               map[string]interface{}
 	RunID                   string
 	JobID                   string
@@ -508,6 +508,7 @@ func buildSecureEnv(cfg *types.Config, argEnv map[string]string, argsJSON string
 		set(k, v)
 	}
 	if argsJSON != "" {
+		set("FLOWD_ARGS_JSON", argsJSON)
 		set("FLWD_ARGS_JSON", argsJSON)
 	}
 	if inherit {

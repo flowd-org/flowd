@@ -96,6 +96,9 @@ param (
 	if ext == ".sh" && spec != nil && len(spec.Args) > 0 {
 		lines = append(lines, "", "# ArgSpec bindings (auto-generated)")
 		for _, arg := range spec.Args {
+			if err := types.ValidateArgName(arg.Name); err != nil {
+				return "", nil, fmt.Errorf("invalid argspec name %q: %w", arg.Name, err)
+			}
 			value, ok := argValues[arg.Name]
 			if !ok {
 				continue

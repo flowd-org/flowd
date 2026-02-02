@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/flowd-org/flowd/internal/types"
@@ -31,6 +32,35 @@ func TestValidateAndBind_StringEnumRequired(t *testing.T) {
 	}
 	if env := bind.ScalarEnv["ARG_MODE"]; env != "quick" {
 		t.Fatalf("expected ARG_MODE=quick, got %q", env)
+	}
+}
+
+func TestValidateAndBind_ArgsJSONCanonicalAndRedacted(t *testing.T) {
+	spec := types.ArgSpec{Args: []types.Arg{{
+		Name:   "alpha",
+		Type:   "string",
+		Format: "secret",
+	}, {
+		Name: "beta",
+		Type: "string",
+	}}}
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("alpha", "", "")
+	flags.String("beta", "", "")
+	_ = flags.Set("alpha", "topsecret")
+	_ = flags.Set("beta", "ok")
+
+	bind, err := ValidateAndBind(flags, spec)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(bind.ArgsJSON), &decoded); err != nil {
+		t.Fatalf("decode ArgsJSON: %v", err)
+	}
+	if decoded["alpha"] != "$$REDACTED$$" || decoded["beta"] != "ok" {
+		t.Fatalf("unexpected ArgsJSON values: %+v", decoded)
 	}
 }
 
@@ -95,5 +125,32 @@ func TestValidateAndBind_ObjectRequiresKV(t *testing.T) {
 	_ = flags2.Set("meta", "invalidpair")
 	if _, err := ValidateAndBind(flags2, spec); err == nil {
 		t.Fatalf("expected error for invalid pair")
+	}
+}
+
+func TestValidateAndBind_ReservedName(t *testing.T) {
+	spec := types.ArgSpec{Args: []types.Arg{{
+		Name: "dry-run",
+		Type: "boolean",
+	}}}
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.Bool("dry-run", false, "")
+	if _, err := ValidateAndBind(flags, spec); err == nil {
+		t.Fatalf("expected error for reserved arg name")
+	}
+}
+
+func TestValidateAndBind_DefaultArrayTypeError(t *testing.T) {
+	spec := types.ArgSpec{Args: []types.Arg{{
+		Name:    "tags",
+		Type:    "array",
+		Default: []interface{}{1},
+	}}}
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.StringArray("tags", nil, "")
+	if _, err := ValidateAndBind(flags, spec); err == nil {
+		t.Fatalf("expected error for non-string default array item")
 	}
 }
