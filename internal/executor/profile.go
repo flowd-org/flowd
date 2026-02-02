@@ -13,6 +13,14 @@ import (
 
 func GenerateRunnerProfile(scriptDir string, interp string, verbosity int, spec *types.ArgSpec, argValues map[string]interface{}) (string, func(), error) {
 	var ext, profileHeader string
+	var secretArgs []string
+	if spec != nil {
+		for _, arg := range spec.Args {
+			if arg.Format == "secret" || arg.Secret {
+				secretArgs = append(secretArgs, arg.Name)
+			}
+		}
+	}
 	switch {
 	case strings.Contains(interp, "bash"):
 		ext = ".sh"
@@ -103,6 +111,9 @@ param (
 			if !ok {
 				continue
 			}
+			if arg.Format == "secret" || arg.Secret {
+				continue
+			}
 			varName := sanitizeVarName(arg.Name)
 			switch arg.Type {
 			case "string", "boolean", "integer":
@@ -133,16 +144,24 @@ param (
 	}
 
 	if ext == ".ps1" {
+		lines = append(lines, "", "# Secret args (do not export to env)")
+		lines = append(lines, "$secretArgs = @{")
+		for _, name := range secretArgs {
+			lines = append(lines, fmt.Sprintf("  \"%s\" = $true", name))
+		}
+		lines = append(lines, "}")
 		lines = append(lines,
 			"",
 			"# Export --arg[=value] pairs to environment variables",
 			`foreach ($arg in $ScriptArgs) {`,
 			`  if ($arg -match "^--([^=]+)=(.+)$") {`,
 			`    $name = $matches[1]`,
+			`    if ($secretArgs.ContainsKey($name)) { continue }`,
 			`    $value = $matches[2]`,
 			`    Set-Item -Path "env:$name" -Value $value`,
 			`  } elseif ($arg -match "^--(.+)$") {`,
 			`    $name = $matches[1]`,
+			`    if ($secretArgs.ContainsKey($name)) { continue }`,
 			`    Set-Item -Path "env:$name" -Value "true"`,
 			`  }`,
 			`}`,

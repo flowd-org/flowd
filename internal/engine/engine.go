@@ -92,7 +92,9 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 				return nil, &ArgError{Arg: name, Msg: "required"}
 			}
 			vals[name] = v
-			scalars[argEnvName(name)] = fmt.Sprintf("%t", v)
+			if !isSecret(a.Format, a.Secret) {
+				scalars[argEnvName(name)] = fmt.Sprintf("%t", v)
+			}
 
 		case "integer":
 			var v int
@@ -112,7 +114,9 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 				return nil, &ArgError{Arg: name, Msg: "required"}
 			}
 			vals[name] = v
-			scalars[argEnvName(name)] = fmt.Sprintf("%d", v)
+			if !isSecret(a.Format, a.Secret) {
+				scalars[argEnvName(name)] = fmt.Sprintf("%d", v)
+			}
 
 		case "array":
 			arr, _ := flags.GetStringArray(name)

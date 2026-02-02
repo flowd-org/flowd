@@ -3,6 +3,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,8 @@ type ExecutorConfig struct {
 	SecretsDir              string
 	SecretHandles           map[string]string
 }
+
+const secretHandlesEnv = "FLOWD_SECRET_HANDLES"
 
 // ScriptResult holds per-script run outcome.
 type ScriptResult struct {
@@ -536,12 +539,15 @@ func injectSecretHandles(env []string, ecfg ExecutorConfig) []string {
 	if len(ecfg.SecretHandles) == 0 {
 		return env
 	}
+	handlePayload := make(map[string]map[string]string, len(ecfg.SecretHandles))
 	for name, handlePath := range ecfg.SecretHandles {
-		varName := "FLOWD_SECRET_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-		if ecfg.Verbosity >= 2 {
-			fmt.Fprintf(os.Stderr, "[DEBUG] injecting secret handle for %s\n", name)
+		handlePayload[name] = map[string]string{
+			"type": "file",
+			"path": handlePath,
 		}
-		env = upsertEnv(env, varName, handlePath)
+	}
+	if payload, err := json.Marshal(handlePayload); err == nil {
+		env = upsertEnv(env, secretHandlesEnv, string(payload))
 	}
 	return env
 }
