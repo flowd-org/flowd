@@ -6,11 +6,17 @@ func TestRedactSecrets(t *testing.T) {
 	vals := map[string]interface{}{"a": "1", "secret": "value"}
 	secrets := map[string]struct{}{"secret": {}}
 	redacted := RedactSecrets(vals, secrets)
-	if redacted["secret"] != secretToken {
+	if redacted["secret"] != "$$REDACTED$$" {
 		t.Fatalf("expected secret redacted, got %v", redacted["secret"])
 	}
 	if redacted["a"] != "1" {
 		t.Fatalf("expected non secret preserved")
+	}
+}
+
+func TestSecretTokenValue(t *testing.T) {
+	if SecretToken() != "$$REDACTED$$" {
+		t.Fatalf("expected $$REDACTED$$ token, got %s", SecretToken())
 	}
 }
 

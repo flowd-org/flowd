@@ -589,6 +589,22 @@ argspec:
 	}
 }
 
+func TestRunsHandlerIdempotencyTTLDefault(t *testing.T) {
+	root := t.TempDir()
+	h := NewRunsHandler(RunsConfig{Root: root})
+	if h.idempotencyTTL != defaultIdempotencyTTL {
+		t.Fatalf("expected default idempotency TTL %s, got %s", defaultIdempotencyTTL, h.idempotencyTTL)
+	}
+}
+
+func TestRunsHandlerIdempotencyTTLMaxBound(t *testing.T) {
+	root := t.TempDir()
+	h := NewRunsHandler(RunsConfig{Root: root, IdempotencyTTL: 100 * time.Hour})
+	if h.idempotencyTTL != maxIdempotencyTTL {
+		t.Fatalf("expected idempotency TTL capped at %s, got %s", maxIdempotencyTTL, h.idempotencyTTL)
+	}
+}
+
 func TestRunsHandlerIdempotencyHashMismatch(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `
