@@ -10,6 +10,7 @@ import (
 	"github.com/flowd-org/flowd/internal/events"
 	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/server/sse"
+	"github.com/flowd-org/flowd/internal/types"
 )
 
 type persistenceScrubber struct {
@@ -61,6 +62,78 @@ func newPersistenceScrubber(binding *engine.Binding, secretHandles map[string]st
 		}
 	}
 	return scrubber
+}
+
+func newProblemScrubber(spec *types.ArgSpec, args map[string]any, binding *engine.Binding, secretHandles map[string]string) *persistenceScrubber {
+	scrubber := newPersistenceScrubber(binding, secretHandles)
+	if scrubber == nil {
+		scrubber = newPersistenceScrubber(nil, secretHandles)
+	}
+	if len(args) == 0 || spec == nil {
+		return scrubber
+	}
+	for _, arg := range spec.Args {
+		if !isSecretArgSpec(arg) {
+			continue
+		}
+		if scrubber.secretNames == nil {
+			scrubber.secretNames = map[string]struct{}{}
+		}
+		scrubber.secretNames[arg.Name] = struct{}{}
+		if val, ok := args[arg.Name]; ok {
+			scrubber.secretValues = appendStringValues(scrubber.secretValues, val)
+		}
+	}
+	return scrubber
+}
+
+func isSecretArgSpec(arg types.Arg) bool {
+	return arg.Format == "secret" || arg.Secret
+}
+
+func appendStringValues(existing []string, value any) []string {
+	if value == nil {
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing))
+	for _, val := range existing {
+		if val == "" {
+			continue
+		}
+		seen[val] = struct{}{}
+	}
+	var add func(any)
+	add = func(v any) {
+		switch t := v.(type) {
+		case string:
+			if t == "" {
+				return
+			}
+			if _, ok := seen[t]; ok {
+				return
+			}
+			seen[t] = struct{}{}
+			existing = append(existing, t)
+		case []string:
+			for _, item := range t {
+				add(item)
+			}
+		case []any:
+			for _, item := range t {
+				add(item)
+			}
+		case map[string]string:
+			for _, item := range t {
+				add(item)
+			}
+		case map[string]any:
+			for _, item := range t {
+				add(item)
+			}
+		}
+	}
+	add(value)
+	return existing
 }
 
 func scrubRunPayloadForPersistence(payload RunPayload, binding *engine.Binding, secretHandles map[string]string) RunPayload {

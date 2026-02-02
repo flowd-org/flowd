@@ -187,7 +187,7 @@ func (h *RunsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	req, rawBody, err := decodeRunRequest(r.Body)
 	if err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	if req.JobID == "" {
@@ -197,7 +197,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	canonicalBody, err := canonicalizeJSON(rawBody)
 	if err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	bodyHash := sha256.Sum256(canonicalBody)
@@ -241,7 +241,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if h.idempotency != nil {
 		cached, status, storedHash, found, err := h.idempotency.Lookup(ctx, scopedKey, endpoint, now)
 		if err != nil {
-			response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		if found {
@@ -267,14 +267,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if coredb.IsQuotaExceeded(err) {
 				response.Write(w, storageQuotaExceededProblem())
 			} else {
-				response.Write(w, response.New(http.StatusInternalServerError, "idempotency reserve failed", response.WithDetail(err.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency reserve failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			}
 			return
 		}
 		if !reserved {
 			cached, status, storedHash, found, err = h.idempotency.Lookup(ctx, scopedKey, endpoint, now)
 			if err != nil {
-				response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(err.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 				return
 			}
 			if found {
@@ -317,11 +317,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		if h.sources != nil {
 			src, ok := h.sources.Get(req.Source.Name)
 			if !ok {
-				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(req.Source.Name)))
+				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(scrubProblemDetail(req.Source.Name, nil, nil, nil, nil))))
 				return
 			}
 			if src.LocalPath == "" {
-				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail("source "+req.Source.Name+" has no local checkout")))
+				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail(scrubProblemDetail("source "+req.Source.Name+" has no local checkout", nil, nil, nil, nil))))
 				return
 			}
 			runRoot = src.LocalPath
@@ -330,7 +330,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.discover(runRoot)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -404,18 +404,18 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			response.Write(w, *prob)
 			return
 		}
-		response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(requestedID)))
+		response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(scrubProblemDetail(requestedID, nil, nil, nil, nil))))
 		return
 	}
 
 	absScriptDir, err := filepath.Abs(scriptDir)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "resolve script directory", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "resolve script directory", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	absScriptsRoot, err := filepath.Abs(runRoot)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "resolve scripts root", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "resolve scripts root", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	relJobPath, relErr := filepath.Rel(absScriptsRoot, absScriptDir)
@@ -428,7 +428,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.loadConfig(absScriptDir)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -448,8 +448,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var argErr *engine.ArgError
 		if errors.As(err, &argErr) {
+			scrubber := newProblemScrubber(spec, req.Args, nil, nil)
+			safeMsg := scrubProblemDetail(argErr.Msg, scrubber, nil, nil, nil)
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
-				response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
+				response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": safeMsg}})))
 			return
 		}
 		if errors.Is(err, engine.ErrSecretContainerUnsupported) {
@@ -457,7 +459,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				response.WithExtension("code", "E_SECRET")))
 			return
 		}
-		response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 		return
 	}
 	effectiveID = startRes.EffectiveJobID
@@ -523,7 +525,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Write(w, response.New(http.StatusUnprocessableEntity, "invalid security profile",
 			response.WithExtension("code", "E_POLICY"),
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 		return
 	}
 
@@ -552,20 +554,20 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if image != "" {
 		if prob := enforceRegistryAllowList(ctx, image, policyCtx); prob != nil {
 			publishPolicyDenied(h.events, policyPayload, "container.image", policyProblemCode(prob), policyProblemDetail(prob))
-			response.Write(w, *prob)
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 		mode, err := policyCtx.VerifyModeForProfile(effProfile)
 		if err != nil {
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 				response.WithExtension("code", "E_POLICY"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 			return
 		}
 		outcome, prob := enforceImageVerification(ctx, image, mode, h.verifier)
 		if prob != nil {
 			publishPolicyDenied(h.events, policyPayload, "container.image", policyProblemCode(prob), policyProblemDetail(prob))
-			response.Write(w, *prob)
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 		if mode != policy.VerifyModeDisabled {
@@ -589,7 +591,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if prob := enforceResourceCeilings(ctx, cfg, policyCtx.ContainerCeilings()); prob != nil {
 			publishPolicyDenied(h.events, policyPayload, "container.resources", policyProblemCode(prob), policyProblemDetail(prob))
-			response.Write(w, *prob)
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 	}
@@ -598,7 +600,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		if len(decisions) > 0 {
 			publishPolicyDecisions(h.events, policyPayload, decisions)
 		}
-		response.Write(w, *prob)
+		response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 		return
 	}
 	if len(overrideFindings) > 0 {
@@ -614,7 +616,8 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if executorMode == "container" && runtime != "" {
 		if err := container.RemoveContainer(context.Background(), runtime, runID); err != nil {
-			response.Write(w, containerNameConflictProblem(err))
+			prob := containerNameConflictProblem(err)
+			response.Write(w, scrubProblemResponse(&prob, nil, nil, spec, req.Args))
 			return
 		}
 	}
@@ -655,7 +658,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if coredb.IsQuotaExceeded(err) {
 				response.Write(w, storageQuotaExceededProblem())
 			} else {
-				response.Write(w, response.New(http.StatusInternalServerError, "idempotency store failed", response.WithDetail(err.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency store failed", response.WithDetail(scrubProblemDetail(err.Error(), scrubber, nil, spec, req.Args))))
 			}
 			return
 		}
@@ -674,7 +677,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if coredb.IsQuotaExceeded(err) {
 				response.Write(w, storageQuotaExceededProblem())
 			} else {
-				response.Write(w, response.New(http.StatusInternalServerError, "run store failed", response.WithDetail(err.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "run store failed", response.WithDetail(scrubProblemDetail(err.Error(), scrubber, nil, spec, req.Args))))
 			}
 			return
 		}

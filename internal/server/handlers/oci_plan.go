@@ -52,7 +52,7 @@ func buildOCIPlan(ctx context.Context, req planRequest, cfg PlansConfig, src sou
 	if err != nil {
 		prob := response.New(http.StatusUnprocessableEntity, "invalid security profile",
 			response.WithExtension("code", "E_POLICY"),
-			response.WithDetail(err.Error()))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, req.Args)))
 		return types.Plan{}, nil, &prob, nil
 	}
 	ctx = requestctx.WithEffectiveProfile(ctx, effProfile)
@@ -78,11 +78,13 @@ func buildOCIPlan(ctx context.Context, req planRequest, cfg PlansConfig, src sou
 		if bindErr != nil {
 			var argErr *engine.ArgError
 			if errors.As(bindErr, &argErr) {
+				scrubber := newProblemScrubber(&spec, req.Args, nil, nil)
+				safeMsg := scrubProblemDetail(argErr.Msg, scrubber, nil, nil, nil)
 				prob := response.New(http.StatusUnprocessableEntity, "argument validation failed",
-					response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}}))
+					response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": safeMsg}}))
 				return types.Plan{}, nil, &prob, nil
 			}
-			prob := response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(bindErr.Error()))
+			prob := response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(scrubProblemDetail(bindErr.Error(), nil, nil, &spec, req.Args)))
 			return types.Plan{}, nil, &prob, nil
 		}
 		binding = bind
@@ -98,7 +100,7 @@ func buildOCIPlan(ctx context.Context, req planRequest, cfg PlansConfig, src sou
 		if newCtxErr != nil {
 			prob := response.New(http.StatusUnprocessableEntity, "policy error",
 				response.WithExtension("code", "E_POLICY"),
-				response.WithDetail(newCtxErr.Error()))
+				response.WithDetail(scrubProblemDetail(newCtxErr.Error(), nil, nil, &spec, req.Args)))
 			return types.Plan{}, nil, &prob, nil
 		}
 	}
@@ -117,7 +119,7 @@ func buildOCIPlan(ctx context.Context, req planRequest, cfg PlansConfig, src sou
 	if err != nil {
 		prob := response.New(http.StatusUnprocessableEntity, "policy error",
 			response.WithExtension("code", "E_POLICY"),
-			response.WithDetail(err.Error()))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, &spec, req.Args)))
 		return types.Plan{}, nil, &prob, nil
 	}
 

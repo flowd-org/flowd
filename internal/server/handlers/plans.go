@@ -60,7 +60,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		req, err := decodePlanRequest(r.Body)
 		if err != nil {
-			response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		if req.JobID == "" {
@@ -75,16 +75,16 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		if req.Source != nil && req.Source.Name != "" {
 			if cfg.Sources == nil {
-				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(req.Source.Name)))
+				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(scrubProblemDetail(req.Source.Name, nil, nil, nil, nil))))
 				return
 			}
 			source, ok := cfg.Sources.Get(req.Source.Name)
 			if !ok {
-				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(req.Source.Name)))
+				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(scrubProblemDetail(req.Source.Name, nil, nil, nil, nil))))
 				return
 			}
 			if source.LocalPath == "" {
-				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail("source "+req.Source.Name+" has no local checkout")))
+				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail(scrubProblemDetail("source "+req.Source.Name+" has no local checkout", nil, nil, nil, nil))))
 				return
 			}
 			discoverRoot = source.LocalPath
@@ -92,7 +92,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		result, err := discoverFn(discoverRoot)
 		if err != nil {
-			response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 
@@ -189,11 +189,11 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			ociPlan, attrs, handled, prob, planErr := tryBuildOCIPlan(r, req, cfg)
 			if handled {
 				if planErr != nil {
-					response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(planErr.Error())))
+					response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(scrubProblemDetail(planErr.Error(), nil, nil, nil, nil))))
 					return
 				}
 				if prob != nil {
-					response.Write(w, *prob)
+					response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
 					return
 				}
 				if logger := requestctx.Logger(ctx); logger != nil {
@@ -202,19 +202,19 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 				writePlanResponse(w, ociPlan)
 				return
 			}
-			response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(requestedID)))
+			response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(scrubProblemDetail(requestedID, nil, nil, nil, nil))))
 			return
 		}
 
 		cfgObj, err := loadConfig(jobPath)
 		if err != nil {
-			response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		isDAG := isDAGConfig(cfgObj)
 		if isDAG {
 			if prob := validateDAGConfig(cfgObj); prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
 				return
 			}
 		}
@@ -226,11 +226,13 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			if bindErr != nil {
 				var argErr *engine.ArgError
 				if errors.As(bindErr, &argErr) {
+					scrubber := newProblemScrubber(spec, req.Args, nil, nil)
+					safeMsg := scrubProblemDetail(argErr.Msg, scrubber, nil, nil, nil)
 					response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
-						response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
+						response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": safeMsg}})))
 					return
 				}
-				response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(bindErr.Error())))
+				response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(scrubProblemDetail(bindErr.Error(), nil, nil, spec, req.Args))))
 				return
 			}
 			binding = bind
@@ -243,7 +245,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		if err != nil {
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "invalid security profile",
 				response.WithExtension("code", "E_POLICY"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 			return
 		}
 
@@ -261,7 +263,8 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			if executor == "container" && runtimeVal == "" {
 				detected, detectErr := detectContainerRuntime(nil)
 				if detectErr != nil {
-					response.Write(w, runtimeUnavailableProblem(detectErr))
+					prob := runtimeUnavailableProblem(detectErr)
+					response.Write(w, scrubProblemResponse(&prob, nil, nil, spec, req.Args))
 					return
 				}
 				runtimeVal = detected
@@ -274,12 +277,12 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 			plan, attrs, prob, buildErr := buildDAGPlan(ctx, effectiveID, cfgObj, spec, binding, effProfile, policyCtx, cfg.Verifier, runtimeStr)
 			if buildErr != nil {
-				response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(buildErr.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(scrubProblemDetail(buildErr.Error(), nil, nil, spec, req.Args))))
 				return
 			}
 			annotatePlan(&plan)
 			if prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 			if logger := requestctx.Logger(ctx); logger != nil {
@@ -308,12 +311,13 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		if image != "" {
 			if runtimeVal == "" {
 				if _, detectErr := detectContainerRuntime(nil); detectErr != nil {
-					response.Write(w, runtimeUnavailableProblem(detectErr))
+					prob := runtimeUnavailableProblem(detectErr)
+					response.Write(w, scrubProblemResponse(&prob, nil, nil, spec, req.Args))
 					return
 				}
 			}
 			if prob := enforceRegistryAllowList(ctx, image, policyCtx); prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 
@@ -321,13 +325,13 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			if err != nil {
 				response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 					response.WithExtension("code", "E_POLICY"),
-					response.WithDetail(err.Error())))
+					response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 				return
 			}
 
 			outcome, prob := enforceImageVerification(ctx, image, mode, cfg.Verifier)
 			if prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 			if mode != policy.VerifyModeDisabled {
@@ -351,14 +355,14 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			}
 
 			if prob := enforceResourceCeilings(ctx, cfgObj, policyCtx.ContainerCeilings()); prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 		}
 
 		overrideFindings, _, prob := evaluateOverrides(ctx, cfgObj, effProfile, policyCtx)
 		if prob != nil {
-			response.Write(w, *prob)
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 		if len(overrideFindings) > 0 {
