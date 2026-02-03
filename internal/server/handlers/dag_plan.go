@@ -30,6 +30,18 @@ func buildDAGPlan(ctx context.Context, jobID string, cfgObj *types.Config, spec 
 		plan.ExecutorPreview["container_image"] = strings.TrimSpace(cfgObj.Container.Image)
 	}
 	plan.SecurityProfile = effProfile
+	if plan.Outputs == nil {
+		plan.Outputs = map[string]any{}
+	}
+	if plan.Provenance == nil {
+		plan.Provenance = map[string]any{}
+	}
+	if plan.PolicyFindings == nil {
+		plan.PolicyFindings = []types.Finding{}
+	}
+	if plan.Steps == nil {
+		plan.Steps = []types.PlanStepPreview{}
+	}
 
 	var stepPreviews []types.PlanStepPreview
 	var allFindings []types.Finding

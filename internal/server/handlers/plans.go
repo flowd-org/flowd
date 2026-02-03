@@ -138,10 +138,19 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		}
 
 		annotatePlan := func(plan *types.Plan) {
-			plan.JobID = effectiveID
 			if plan.Provenance == nil {
 				plan.Provenance = map[string]any{}
 			}
+			if plan.Outputs == nil {
+				plan.Outputs = map[string]any{}
+			}
+			if plan.PolicyFindings == nil {
+				plan.PolicyFindings = []types.Finding{}
+			}
+			if plan.Steps == nil {
+				plan.Steps = []types.PlanStepPreview{}
+			}
+			plan.JobID = effectiveID
 			plan.Provenance["canonical_id"] = effectiveID
 			canonicalPath := strings.ReplaceAll(effectiveID, ".", "/")
 			if aliasUsed != nil {

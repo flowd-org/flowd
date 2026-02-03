@@ -157,7 +157,10 @@ func buildOCIPlan(ctx context.Context, req planRequest, cfg PlansConfig, src sou
 
 	plan := engine.BuildPlan(req.JobID, nil, &spec, binding)
 	plan.SecurityProfile = effProfile
-	plan.Provenance = map[string]interface{}{"source": sourceToProvenance(src)}
+	if plan.Provenance == nil {
+		plan.Provenance = map[string]any{}
+	}
+	plan.Provenance["source"] = sourceToProvenance(src)
 	if plan.ExecutorPreview == nil {
 		plan.ExecutorPreview = map[string]interface{}{}
 	}

@@ -11,7 +11,13 @@ import (
 // BuildPlan produces a minimal Plan object for previews and artifacts.
 // Secrets are redacted (replaced with "$$REDACTED$$").
 func BuildPlan(jobID string, cfg *types.Config, spec *types.ArgSpec, bind *Binding) types.Plan {
-	plan := types.Plan{JobID: jobID}
+	plan := types.Plan{
+		JobID:          jobID,
+		Outputs:        map[string]any{},
+		Provenance:     map[string]any{},
+		PolicyFindings: []types.Finding{},
+		Steps:          []types.PlanStepPreview{},
+	}
 	if spec != nil {
 		plan.EffectiveArgSpec = *spec
 	}
@@ -43,6 +49,10 @@ func BuildPlan(jobID string, cfg *types.Config, spec *types.ArgSpec, bind *Bindi
 		if len(resolved) > 0 {
 			plan.ResolvedArgs = resolved
 		}
+	}
+
+	if plan.Outputs == nil {
+		plan.Outputs = map[string]any{}
 	}
 
 	return plan
