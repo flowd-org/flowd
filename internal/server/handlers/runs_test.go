@@ -23,6 +23,7 @@ import (
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
+	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/runstore"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
@@ -755,6 +756,76 @@ argspec:
 
 	if resp.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for hash mismatch, got %d", resp.Code)
+	}
+}
+
+func TestRunsHandlerIdempotencyStoreRedactsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "secret-demo", `
+version: v1
+job:
+  id: secret-demo
+  name: Secret Demo Job
+argspec:
+  args:
+    - name: token
+      type: string
+      format: secret
+      required: true
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	h := NewRunsHandler(RunsConfig{Root: root, DB: db})
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"secret-demo","args":{"token":"supersecret"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	key := addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	store := coredb.NewIdempotencyStore(db)
+	body, status, _, ok, err := store.Lookup(context.Background(), key, "POST /runs", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("lookup idempotency: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected idempotency entry to be stored")
+	}
+	if status != http.StatusCreated {
+		t.Fatalf("expected stored status 201, got %d", status)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode stored payload: %v", err)
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result payload, got %T", payload["result"])
+	}
+	resolved, ok := result["resolved_args"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resolved_args, got %T", result["resolved_args"])
+	}
+	if resolved["token"] != "$$REDACTED$$" {
+		t.Fatalf("expected redacted token, got %v", resolved["token"])
+	}
+
+	bodyStr := string(body)
+	if strings.Contains(bodyStr, "supersecret") {
+		t.Fatalf("stored idempotency payload contains secret value")
+	}
+	if baseDir := secrets.BaseDir(); baseDir != "" && strings.Contains(bodyStr, baseDir) {
+		t.Fatalf("stored idempotency payload contains secret handle base dir")
 	}
 }
 

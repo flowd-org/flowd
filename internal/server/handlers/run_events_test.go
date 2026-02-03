@@ -133,6 +133,74 @@ func TestRunEventsHandlerResumeFromLastEventID(t *testing.T) {
 	}
 }
 
+func TestRunEventsHandlerResumeAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	db, err := coredb.Open(ctx, coredb.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	journal := coredb.NewJournal(db, 0)
+	if journal == nil {
+		_ = db.Close()
+		t.Fatal("expected journal")
+	}
+
+	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {}))
+	sink.Publish("run-restart", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-restart", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	db, err = coredb.Open(ctx, coredb.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("reopen db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	journal = coredb.NewJournal(db, 0)
+	if journal == nil {
+		t.Fatal("expected journal after restart")
+	}
+
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-restart", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+	hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	h := NewRunEventsHandler(store, hub, journal)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-restart/events", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	req = req.WithContext(streamCtx)
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	if strings.Contains(body, "id: 1") {
+		t.Fatalf("expected resume to skip id 1 after restart, got %q", body)
+	}
+	if strings.Count(body, "id: 2") != 1 {
+		t.Fatalf("expected single replay of event id 2, got %q", body)
+	}
+	if !strings.Contains(body, "\"type\":\"step.output\"") {
+		t.Fatalf("expected step.output event, got %q", body)
+	}
+}
+
 func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 	store := runstore.New()
 	store.Create(runstore.Run{ID: "run-789", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
