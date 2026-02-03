@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flowd-org/flowd/internal/coredb"
+	"github.com/flowd-org/flowd/internal/metrics"
 )
 
 type idempotencyStore interface {
@@ -49,10 +50,12 @@ func (c *memoryIdempotencyCache) Lookup(_ context.Context, key, endpoint string,
 	defer c.mu.Unlock()
 	bucket, ok := c.items[key]
 	if !ok {
+		metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeMiss)
 		return RunPayload{}, 0, "", false, nil
 	}
 	entry, ok := bucket[endpoint]
 	if !ok {
+		metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeMiss)
 		return RunPayload{}, 0, "", false, nil
 	}
 	if now.After(entry.expires) {
@@ -60,8 +63,10 @@ func (c *memoryIdempotencyCache) Lookup(_ context.Context, key, endpoint string,
 		if len(bucket) == 0 {
 			delete(c.items, key)
 		}
+		metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeExpired)
 		return RunPayload{}, 0, "", false, nil
 	}
+	metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeHit)
 	return entry.payload, entry.status, entry.bodyHash, true, nil
 }
 

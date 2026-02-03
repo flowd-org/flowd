@@ -10,8 +10,10 @@ const (
 // SSEStreamStarted increments the active stream gauge and returns a function to decrement it.
 func SSEStreamStarted() func() {
 	getSink().RecordSSEActiveDelta(SSETransportDefault, 1)
+	getSink().RecordSSEStreamStart(SSETransportDefault)
 	return func() {
 		getSink().RecordSSEActiveDelta(SSETransportDefault, -1)
+		getSink().RecordSSEStreamEnd(SSETransportDefault)
 	}
 }
 
@@ -23,4 +25,14 @@ func RecordSSEResumeAttempt() {
 // RecordSSECursorExpired increments the SSE cursor expired counter.
 func RecordSSECursorExpired() {
 	getSink().RecordSSECursorExpired()
+}
+
+// RecordSSEStreamStart increments the SSE stream start counter for the transport.
+func RecordSSEStreamStart(transport string) {
+	getSink().RecordSSEStreamStart(transport)
+}
+
+// RecordSSEStreamEnd increments the SSE stream end counter for the transport.
+func RecordSSEStreamEnd(transport string) {
+	getSink().RecordSSEStreamEnd(transport)
 }

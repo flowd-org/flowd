@@ -32,9 +32,21 @@ type Registry struct {
 	persistenceLatency    map[[2]string]*valueHistogram
 	persistenceEvictions  map[string]uint64
 	persistenceBytes      map[string]uint64
+	idempotencyLookups    map[string]uint64
+	idempotencyReplays    uint64
+	idempotencyConflicts  uint64
+	idempotencyInFlight   uint64
 	sseActive             map[string]int64
+	sseStreamStarts       map[string]uint64
+	sseStreamEnds         map[string]uint64
 	sseResumeTotal        uint64
 	sseCursorExpiredTotal uint64
+	runStartedTotal       uint64
+	runFinishedTotals     map[string]uint64
+	secretHandlesCreated  uint64
+	secretHandlesCleaned  uint64
+	secretHandleErrors    uint64
+	secretContainerReject uint64
 }
 
 // NewRegistry constructs a metrics registry with default buckets.
@@ -52,7 +64,11 @@ func NewRegistry() *Registry {
 		persistenceLatency:   make(map[[2]string]*valueHistogram),
 		persistenceEvictions: make(map[string]uint64),
 		persistenceBytes:     make(map[string]uint64),
+		idempotencyLookups:   make(map[string]uint64),
 		sseActive:            make(map[string]int64),
+		sseStreamStarts:      make(map[string]uint64),
+		sseStreamEnds:        make(map[string]uint64),
+		runFinishedTotals:    make(map[string]uint64),
 	}
 	for op, outcomes := range persistenceLatencyDefaults {
 		op = normalizeLabel(op)
@@ -64,6 +80,9 @@ func NewRegistry() *Registry {
 	for _, kind := range persistenceDefaultKinds {
 		r.persistenceEvictions[normalizeLabel(kind)] = 0
 		r.persistenceBytes[normalizeLabel(kind)] = 0
+	}
+	for _, outcome := range idempotencyLookupOutcomes {
+		r.idempotencyLookups[normalizeLabel(outcome)] = 0
 	}
 	return r
 }
@@ -254,17 +273,49 @@ func (r *Registry) writeAll(w http.ResponseWriter) {
 	}
 	buf.WriteByte('\n')
 
+	writeMetricHeader(buf, "flowd_idempotency_lookup_total", "Idempotency lookup outcomes", "counter")
+	for _, outcome := range sortedKeysUint(r.idempotencyLookups) {
+		fmt.Fprintf(buf, "flowd_idempotency_lookup_total{outcome=%q} %d\n", outcome, r.idempotencyLookups[outcome])
+	}
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_idempotency_replay_total", "Idempotency replay responses", "counter")
+	fmt.Fprintf(buf, "flowd_idempotency_replay_total %d\n", r.idempotencyReplays)
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_idempotency_conflict_total", "Idempotency conflict responses", "counter")
+	fmt.Fprintf(buf, "flowd_idempotency_conflict_total %d\n", r.idempotencyConflicts)
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_idempotency_inflight_total", "Idempotency in-flight responses", "counter")
+	fmt.Fprintf(buf, "flowd_idempotency_inflight_total %d\n", r.idempotencyInFlight)
+	buf.WriteByte('\n')
+
 	writeMetricHeader(buf, "flowd_sse_active_streams", "Active SSE streams by transport", "gauge")
 	for _, transport := range sortedKeysInt64(r.sseActive) {
 		fmt.Fprintf(buf, "flowd_sse_active_streams{transport=%q} %d\n", transport, r.sseActive[transport])
 	}
 	buf.WriteByte('\n')
 
+	writeMetricHeader(buf, "flowd_sse_stream_start_total", "SSE stream starts by transport", "counter")
+	for _, transport := range sortedKeysUint(r.sseStreamStarts) {
+		fmt.Fprintf(buf, "flowd_sse_stream_start_total{transport=%q} %d\n", transport, r.sseStreamStarts[transport])
+	}
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_sse_stream_end_total", "SSE stream ends by transport", "counter")
+	for _, transport := range sortedKeysUint(r.sseStreamEnds) {
+		fmt.Fprintf(buf, "flowd_sse_stream_end_total{transport=%q} %d\n", transport, r.sseStreamEnds[transport])
+	}
+	buf.WriteByte('\n')
+
 	writeMetricHeader(buf, "flowd_sse_resume_total", "SSE resume attempts", "counter")
-	fmt.Fprintf(buf, "flowd_sse_resume_total %d\n\n", r.sseResumeTotal)
+	fmt.Fprintf(buf, "flowd_sse_resume_total %d\n", r.sseResumeTotal)
+	buf.WriteByte('\n')
 
 	writeMetricHeader(buf, "flowd_sse_cursor_expired_total", "SSE cursor expired responses (HTTP 410)", "counter")
-	fmt.Fprintf(buf, "flowd_sse_cursor_expired_total %d\n\n", r.sseCursorExpiredTotal)
+	fmt.Fprintf(buf, "flowd_sse_cursor_expired_total %d\n", r.sseCursorExpiredTotal)
+	buf.WriteByte('\n')
 
 	r.writeHistogram(buf, "flwd_container_runs_total", "counter", func() (float64, bool) {
 		return float64(r.containerRunsTotal), true
@@ -284,6 +335,32 @@ func (r *Registry) writeAll(w http.ResponseWriter) {
 
 	writeMetricHeader(buf, "flwd_addon_manifest_invalid_total", "Invalid add-on manifests", "counter")
 	fmt.Fprintf(buf, "flwd_addon_manifest_invalid_total %d\n\n", r.addonManifestInvalid)
+
+	writeMetricHeader(buf, "flowd_runs_started_total", "Run started events", "counter")
+	fmt.Fprintf(buf, "flowd_runs_started_total %d\n", r.runStartedTotal)
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_runs_finished_total", "Run finished events by status", "counter")
+	for _, status := range sortedKeysUint(r.runFinishedTotals) {
+		fmt.Fprintf(buf, "flowd_runs_finished_total{status=%q} %d\n", status, r.runFinishedTotals[status])
+	}
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_secret_handles_created_total", "Secret handles created", "counter")
+	fmt.Fprintf(buf, "flowd_secret_handles_created_total %d\n", r.secretHandlesCreated)
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_secret_handles_cleaned_total", "Secret handles cleaned", "counter")
+	fmt.Fprintf(buf, "flowd_secret_handles_cleaned_total %d\n", r.secretHandlesCleaned)
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_secret_handle_errors_total", "Secret handle cleanup errors", "counter")
+	fmt.Fprintf(buf, "flowd_secret_handle_errors_total %d\n", r.secretHandleErrors)
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "flowd_secret_container_rejected_total", "Container runs rejected due to secret args", "counter")
+	fmt.Fprintf(buf, "flowd_secret_container_rejected_total %d\n", r.secretContainerReject)
+	buf.WriteByte('\n')
 }
 
 func (r *Registry) writeHistogram(buf *bufio.Writer, name, metricType string, getter func() (float64, bool)) {
@@ -540,6 +617,38 @@ func (r *Registry) RecordPersistenceEviction(kind string, bytes int64) {
 	r.persistenceBytes[kind] += uint64(bytes)
 }
 
+// RecordIdempotencyLookup increments idempotency lookup counters by outcome.
+func (r *Registry) RecordIdempotencyLookup(outcome string) {
+	outcome = normalizeLabel(outcome)
+	if outcome == "" {
+		outcome = "error"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.idempotencyLookups[outcome]++
+}
+
+// RecordIdempotencyReplay increments idempotency replay counter.
+func (r *Registry) RecordIdempotencyReplay() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.idempotencyReplays++
+}
+
+// RecordIdempotencyConflict increments idempotency conflict counter.
+func (r *Registry) RecordIdempotencyConflict() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.idempotencyConflicts++
+}
+
+// RecordIdempotencyInFlight increments idempotency in-flight counter.
+func (r *Registry) RecordIdempotencyInFlight() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.idempotencyInFlight++
+}
+
 // RecordSSEActiveDelta adjusts the active SSE stream gauge for the provided transport.
 func (r *Registry) RecordSSEActiveDelta(transport string, delta int64) {
 	transport = normalizeLabel(transport)
@@ -554,6 +663,28 @@ func (r *Registry) RecordSSEActiveDelta(transport string, delta int64) {
 	}
 }
 
+// RecordSSEStreamStart increments SSE stream start counter for a transport.
+func (r *Registry) RecordSSEStreamStart(transport string) {
+	transport = normalizeLabel(transport)
+	if transport == "" {
+		transport = "unknown"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sseStreamStarts[transport]++
+}
+
+// RecordSSEStreamEnd increments SSE stream end counter for a transport.
+func (r *Registry) RecordSSEStreamEnd(transport string) {
+	transport = normalizeLabel(transport)
+	if transport == "" {
+		transport = "unknown"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sseStreamEnds[transport]++
+}
+
 // RecordSSEResumeAttempt increments the SSE resume counter.
 func (r *Registry) RecordSSEResumeAttempt() {
 	r.mu.Lock()
@@ -566,6 +697,54 @@ func (r *Registry) RecordSSECursorExpired() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sseCursorExpiredTotal++
+}
+
+// RecordRunStarted increments run started counter.
+func (r *Registry) RecordRunStarted() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runStartedTotal++
+}
+
+// RecordRunFinished increments run finished counter by status.
+func (r *Registry) RecordRunFinished(status string) {
+	status = normalizeLabel(status)
+	if status == "" {
+		status = "unknown"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runFinishedTotals[status]++
+}
+
+// RecordSecretHandleCreated increments secret handle creation counters.
+func (r *Registry) RecordSecretHandleCreated(count int) {
+	if count <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.secretHandlesCreated += uint64(count)
+}
+
+// RecordSecretHandleCleanup increments secret handle cleanup counters.
+func (r *Registry) RecordSecretHandleCleanup(count int, success bool) {
+	if count <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.secretHandlesCleaned += uint64(count)
+	if !success {
+		r.secretHandleErrors++
+	}
+}
+
+// RecordSecretContainerRejected increments container secret rejection counter.
+func (r *Registry) RecordSecretContainerRejected() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.secretContainerReject++
 }
 
 func normalizeLabel(v string) string {
@@ -583,6 +762,8 @@ var persistenceLatencyDefaults = map[string][]string{
 }
 
 var persistenceDefaultKinds = []string{"journal", "idempotency"}
+
+var idempotencyLookupOutcomes = []string{"hit", "miss", "expired", "error"}
 
 type valueHistogram struct {
 	buckets []float64

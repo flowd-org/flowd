@@ -694,7 +694,6 @@ func runContainerStep(ctx context.Context, cfg *types.Config, ecfg ExecutorConfi
 		_ = container.RemoveContainer(cancelCtx, runtime, containerName)
 	}
 	metrics.Default.RecordContainerRun(dur)
-	metrics.Default.RecordContainerPull(dur)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

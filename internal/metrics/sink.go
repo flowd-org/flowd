@@ -12,9 +12,20 @@ type Sink interface {
 	EnsurePersistenceLatency(operation, outcome string)
 	RecordPersistenceLatency(operation, outcome string, duration time.Duration)
 	RecordPersistenceEviction(kind string, bytes int64)
+	RecordIdempotencyLookup(outcome string)
+	RecordIdempotencyReplay()
+	RecordIdempotencyConflict()
+	RecordIdempotencyInFlight()
 	RecordSSEActiveDelta(transport string, delta int64)
+	RecordSSEStreamStart(transport string)
+	RecordSSEStreamEnd(transport string)
 	RecordSSEResumeAttempt()
 	RecordSSECursorExpired()
+	RecordRunStarted()
+	RecordRunFinished(status string)
+	RecordSecretHandleCreated(count int)
+	RecordSecretHandleCleanup(count int, success bool)
+	RecordSecretContainerRejected()
 }
 
 type noopSink struct{}
@@ -22,9 +33,20 @@ type noopSink struct{}
 func (noopSink) EnsurePersistenceLatency(string, string)                {}
 func (noopSink) RecordPersistenceLatency(string, string, time.Duration) {}
 func (noopSink) RecordPersistenceEviction(string, int64)                {}
+func (noopSink) RecordIdempotencyLookup(string)                         {}
+func (noopSink) RecordIdempotencyReplay()                               {}
+func (noopSink) RecordIdempotencyConflict()                             {}
+func (noopSink) RecordIdempotencyInFlight()                             {}
 func (noopSink) RecordSSEActiveDelta(string, int64)                     {}
+func (noopSink) RecordSSEStreamStart(string)                            {}
+func (noopSink) RecordSSEStreamEnd(string)                              {}
 func (noopSink) RecordSSEResumeAttempt()                                {}
 func (noopSink) RecordSSECursorExpired()                                {}
+func (noopSink) RecordRunStarted()                                      {}
+func (noopSink) RecordRunFinished(string)                               {}
+func (noopSink) RecordSecretHandleCreated(int)                          {}
+func (noopSink) RecordSecretHandleCleanup(int, bool)                    {}
+func (noopSink) RecordSecretContainerRejected()                         {}
 
 var (
 	sinkMu sync.RWMutex

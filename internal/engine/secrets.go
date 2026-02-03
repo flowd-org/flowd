@@ -4,6 +4,7 @@ package engine
 import (
 	"fmt"
 
+	"github.com/flowd-org/flowd/internal/metrics"
 	"github.com/flowd-org/flowd/internal/secrets"
 )
 
@@ -69,6 +70,7 @@ func (DefaultSecretProvider) Prepare(runID string, binding *Binding) (map[string
 			closers = append(closers, closeFn)
 		}
 	}
+	metrics.RecordSecretHandleCreated(len(handles))
 
 	cleanup := func() error {
 		var firstErr error
@@ -84,6 +86,8 @@ func (DefaultSecretProvider) Prepare(runID string, binding *Binding) (map[string
 			}
 			binding.SecretValues = nil
 		}
+		success := firstErr == nil
+		metrics.RecordSecretHandleCleanup(len(handles), success)
 		return firstErr
 	}
 	return handles, cleanup, nil

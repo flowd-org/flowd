@@ -56,19 +56,23 @@ func (s *IdempotencyStore) Lookup(ctx context.Context, key, endpoint string, now
 	var expires int64
 	if scanErr := row.Scan(&body, &status, &bodyHash, &expires); errors.Is(scanErr, sql.ErrNoRows) {
 		outcome = metrics.PersistenceOutcomeMiss
+		metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeMiss)
 		err = nil
 		return nil, 0, "", false, nil
 	} else if scanErr != nil {
 		err = scanErr
+		metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeError)
 		return nil, 0, "", false, err
 	}
 	if expires > 0 && now.UnixMilli() > expires {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM core_idempotency WHERE key = ? AND endpoint = ?`, key, endpoint)
 		metrics.RecordPersistenceEviction(metrics.PersistenceKindIdempotency, int64(len(body)))
 		outcome = metrics.PersistenceOutcomeExpired
+		metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeExpired)
 		return nil, 0, "", false, nil
 	}
 	outcome = metrics.PersistenceOutcomeHit
+	metrics.RecordIdempotencyLookup(metrics.PersistenceOutcomeHit)
 	ok = true
 	return body, status, bodyHash, ok, nil
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/flowd-org/flowd/internal/executor"
 	"github.com/flowd-org/flowd/internal/executor/container"
 	"github.com/flowd-org/flowd/internal/indexer"
+	"github.com/flowd-org/flowd/internal/metrics"
 	"github.com/flowd-org/flowd/internal/observability/logctx"
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
@@ -260,6 +261,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if found {
 			if storedHash != bodyHashHex {
+				metrics.RecordIdempotencyConflict()
 				response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
 					response.WithType(idempotencyMismatchType),
 					response.WithExtension("stored_sha256", storedHash),
@@ -268,10 +270,12 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if status == idempotencyStatusInFlight {
+				metrics.RecordIdempotencyInFlight()
 				response.Write(w, idempotencyInFlightProblem())
 				return
 			}
 			w.Header().Set("Idempotent-Replay", "true")
+			metrics.RecordIdempotencyReplay()
 			writeRunPayload(w, cached, status)
 			return
 		}
@@ -293,6 +297,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			if found {
 				if storedHash != bodyHashHex {
+					metrics.RecordIdempotencyConflict()
 					response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
 						response.WithType(idempotencyMismatchType),
 						response.WithExtension("stored_sha256", storedHash),
@@ -301,10 +306,12 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if status == idempotencyStatusInFlight {
+					metrics.RecordIdempotencyInFlight()
 					response.Write(w, idempotencyInFlightProblem())
 					return
 				}
 				w.Header().Set("Idempotent-Replay", "true")
+				metrics.RecordIdempotencyReplay()
 				writeRunPayload(w, cached, status)
 				return
 			}
@@ -470,6 +477,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, engine.ErrSecretContainerUnsupported) {
+			metrics.RecordSecretContainerRejected()
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "container execution does not support secret args",
 				response.WithExtension("code", "E_SECRET")))
 			return
@@ -646,6 +654,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if executorMode == "container" && binding != nil && len(binding.SecretNames) > 0 {
+		metrics.RecordSecretContainerRejected()
 		response.Write(w, response.New(http.StatusUnprocessableEntity, "container execution does not support secret args",
 			response.WithExtension("code", "E_SECRET")))
 		return
@@ -1305,6 +1314,7 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 
 	h.updateRunStatus(runID, "running", nil)
 	if sink != nil {
+		metrics.RecordRunStarted()
 		sink.EmitRunStart(runID, jobID)
 	}
 
@@ -1372,6 +1382,7 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	execCtx.runPayload.FinishedAt = &finished
 	execCtx.runPayload.Status = status
 	if sink != nil {
+		metrics.RecordRunFinished(status)
 		sink.EmitRunFinish(runID, status, runErr)
 	}
 	prevStatus := ""

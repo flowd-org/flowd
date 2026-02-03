@@ -96,6 +96,65 @@ func RecordPersistenceEviction(kind string, bytes int64) {
 	getSink().RecordPersistenceEviction(k, bytes)
 }
 
+// RecordIdempotencyLookup records an idempotency lookup outcome.
+func RecordIdempotencyLookup(outcome string) {
+	o := sanitize(outcome)
+	if o == "" {
+		o = PersistenceOutcomeError
+	}
+	getSink().RecordIdempotencyLookup(o)
+}
+
+// RecordIdempotencyReplay increments the idempotency replay counter.
+func RecordIdempotencyReplay() {
+	getSink().RecordIdempotencyReplay()
+}
+
+// RecordIdempotencyConflict increments the idempotency conflict counter.
+func RecordIdempotencyConflict() {
+	getSink().RecordIdempotencyConflict()
+}
+
+// RecordIdempotencyInFlight increments the idempotency in-flight counter.
+func RecordIdempotencyInFlight() {
+	getSink().RecordIdempotencyInFlight()
+}
+
+// RecordRunStarted increments the run started counter.
+func RecordRunStarted() {
+	getSink().RecordRunStarted()
+}
+
+// RecordRunFinished increments the run finished counter for the provided status.
+func RecordRunFinished(status string) {
+	s := sanitize(status)
+	if s == "" {
+		s = "unknown"
+	}
+	getSink().RecordRunFinished(s)
+}
+
+// RecordSecretHandleCreated records secret handle creation count.
+func RecordSecretHandleCreated(count int) {
+	if count < 0 {
+		count = 0
+	}
+	getSink().RecordSecretHandleCreated(count)
+}
+
+// RecordSecretHandleCleanup records secret handle cleanup count and success.
+func RecordSecretHandleCleanup(count int, success bool) {
+	if count < 0 {
+		count = 0
+	}
+	getSink().RecordSecretHandleCleanup(count, success)
+}
+
+// RecordSecretContainerRejected increments the container secret rejection counter.
+func RecordSecretContainerRejected() {
+	getSink().RecordSecretContainerRejected()
+}
+
 func seedPersistenceDefaults(s Sink) {
 	if s == nil {
 		return
