@@ -31,7 +31,8 @@ var baseMigrations = [...]string{
 		executor TEXT,
 		runtime TEXT,
 		security_profile TEXT,
-		provenance BLOB
+		provenance BLOB,
+		request_id TEXT
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_core_runs_started_at ON core_runs(started_at);`,
 	`CREATE TABLE IF NOT EXISTS core_run_journal (
@@ -49,6 +50,38 @@ func applyMigrations(ctx context.Context, conn *sql.DB) error {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("apply migration: %w", err)
 		}
+	}
+	if err := ensureRunRequestIDColumn(ctx, conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureRunRequestIDColumn(ctx context.Context, conn *sql.DB) error {
+	rows, err := conn.QueryContext(ctx, "PRAGMA table_info(core_runs);")
+	if err != nil {
+		return fmt.Errorf("inspect core_runs schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("inspect core_runs schema: %w", err)
+		}
+		if name == "request_id" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect core_runs schema: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "ALTER TABLE core_runs ADD COLUMN request_id TEXT;"); err != nil {
+		return fmt.Errorf("add core_runs.request_id: %w", err)
 	}
 	return nil
 }

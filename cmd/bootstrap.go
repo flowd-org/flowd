@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/flowd-org/flowd/internal/argsloader"
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -23,6 +24,10 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
+
+func newCLIRequestID() string {
+	return fmt.Sprintf("cli-%d", time.Now().UnixNano())
+}
 
 func RegisterScriptCommands(root *cobra.Command, scriptsDir string) error {
 	leafScripts := make(map[string]string)
@@ -206,6 +211,7 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 			JobID:     cmd.CommandPath(),
 			ScriptDir: scriptDir,
 			Args:      argsMap,
+			RequestID: newCLIRequestID(),
 		})
 		if err != nil {
 			var argErr *engine.ArgError

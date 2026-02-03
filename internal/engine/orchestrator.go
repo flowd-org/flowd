@@ -8,6 +8,7 @@ import (
 
 	"github.com/flowd-org/flowd/internal/configloader"
 	"github.com/flowd-org/flowd/internal/events"
+	"github.com/flowd-org/flowd/internal/observability/logctx"
 	"github.com/flowd-org/flowd/internal/types"
 )
 
@@ -49,6 +50,7 @@ type StartRunResult struct {
 	Plan           types.Plan
 	SecretHandles  map[string]string
 	SecretCleanup  func() error
+	RequestID      string
 }
 
 var ErrSecretContainerUnsupported = errors.New("container execution does not support secret args")
@@ -81,6 +83,10 @@ func (o *Orchestrator) StartRun(ctx context.Context, req types.StartRunRequest) 
 		return res, fmt.Errorf("load config: %w", err)
 	}
 
+	if req.RequestID != "" {
+		ctx = logctx.WithRequestID(ctx, req.RequestID)
+	}
+
 	var spec types.ArgSpec
 	if cfg != nil && cfg.ArgSpec != nil {
 		spec = *cfg.ArgSpec
@@ -105,6 +111,7 @@ func (o *Orchestrator) StartRun(ctx context.Context, req types.StartRunRequest) 
 	res.Config = cfg
 	res.Binding = bind
 	res.Plan = plan
+	res.RequestID = req.RequestID
 	if bind != nil && len(bind.SecretNames) > 0 {
 		handles, cleanup, err := o.secrets.Prepare(res.RunID, bind)
 		if err != nil {

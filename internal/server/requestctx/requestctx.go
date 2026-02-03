@@ -19,8 +19,9 @@ var (
 
 // Metadata stores auxiliary request attributes for structured logging.
 type Metadata struct {
-	Runtime string
-	Route   string
+	Runtime   string
+	Route     string
+	RequestID string
 }
 
 // WithLogger stores the request-scoped logger in the context.
@@ -98,6 +99,29 @@ func WithRuntime(ctx context.Context, runtime string) context.Context {
 	}
 	meta.Runtime = runtime
 	return ctx
+}
+
+// WithRequestID annotates metadata with the request/correlation identifier.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if requestID == "" {
+		return ctx
+	}
+	meta := MetadataFromContext(ctx)
+	if meta == nil {
+		meta = &Metadata{}
+		ctx = context.WithValue(ctx, ctxMetadataKey, meta)
+	}
+	meta.RequestID = requestID
+	return ctx
+}
+
+// RequestID extracts the request/correlation identifier from metadata, if any.
+func RequestID(ctx context.Context) (string, bool) {
+	meta := MetadataFromContext(ctx)
+	if meta == nil || meta.RequestID == "" {
+		return "", false
+	}
+	return meta.RequestID, true
 }
 
 // Runtime extracts the runtime value recorded in metadata, if any.

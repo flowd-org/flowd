@@ -7,4 +7,5 @@ type StartRunRequest struct {
 	JobID     string                 `json:"job_id"`
 	ScriptDir string                 `json:"script_dir,omitempty"`
 	Args      map[string]interface{} `json:"args,omitempty"`
+	RequestID string                 `json:"request_id,omitempty"`
 }

@@ -22,6 +22,7 @@ type RunRecord struct {
 	Runtime         string
 	SecurityProfile string
 	Provenance      map[string]any
+	RequestID       string
 }
 
 // RunStore provides CoreDB-backed run record persistence.
@@ -52,7 +53,7 @@ func (s *RunStore) Get(ctx context.Context, id string) (RunRecord, bool, error) 
 	if s == nil {
 		return RunRecord{}, false, nil
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT run_id, job_id, status, started_at, finished_at, result, executor, runtime, security_profile, provenance FROM core_runs WHERE run_id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT run_id, job_id, status, started_at, finished_at, result, executor, runtime, security_profile, provenance, request_id FROM core_runs WHERE run_id = ?`, id)
 	var rec RunRecord
 	var startedAt int64
 	var finishedAt sql.NullInt64
@@ -61,7 +62,8 @@ func (s *RunStore) Get(ctx context.Context, id string) (RunRecord, bool, error) 
 	var executor sql.NullString
 	var runtime sql.NullString
 	var securityProfile sql.NullString
-	if err := row.Scan(&rec.ID, &rec.JobID, &rec.Status, &startedAt, &finishedAt, &resultBytes, &executor, &runtime, &securityProfile, &provenanceBytes); errors.Is(err, sql.ErrNoRows) {
+	var requestID sql.NullString
+	if err := row.Scan(&rec.ID, &rec.JobID, &rec.Status, &startedAt, &finishedAt, &resultBytes, &executor, &runtime, &securityProfile, &provenanceBytes, &requestID); errors.Is(err, sql.ErrNoRows) {
 		return RunRecord{}, false, nil
 	} else if err != nil {
 		return RunRecord{}, false, err
@@ -81,6 +83,9 @@ func (s *RunStore) Get(ctx context.Context, id string) (RunRecord, bool, error) 
 	}
 	if securityProfile.Valid {
 		rec.SecurityProfile = securityProfile.String
+	}
+	if requestID.Valid {
+		rec.RequestID = requestID.String
 	}
 	if len(resultBytes) > 0 {
 		var result map[string]any
@@ -102,7 +107,7 @@ func (s *RunStore) List(ctx context.Context) ([]RunRecord, error) {
 	if s == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT run_id, job_id, status, started_at, finished_at, result, executor, runtime, security_profile, provenance FROM core_runs ORDER BY started_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT run_id, job_id, status, started_at, finished_at, result, executor, runtime, security_profile, provenance, request_id FROM core_runs ORDER BY started_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +122,8 @@ func (s *RunStore) List(ctx context.Context) ([]RunRecord, error) {
 		var executor sql.NullString
 		var runtime sql.NullString
 		var securityProfile sql.NullString
-		if err := rows.Scan(&rec.ID, &rec.JobID, &rec.Status, &startedAt, &finishedAt, &resultBytes, &executor, &runtime, &securityProfile, &provenanceBytes); err != nil {
+		var requestID sql.NullString
+		if err := rows.Scan(&rec.ID, &rec.JobID, &rec.Status, &startedAt, &finishedAt, &resultBytes, &executor, &runtime, &securityProfile, &provenanceBytes, &requestID); err != nil {
 			return nil, err
 		}
 		if startedAt > 0 {
@@ -135,6 +141,9 @@ func (s *RunStore) List(ctx context.Context) ([]RunRecord, error) {
 		}
 		if securityProfile.Valid {
 			rec.SecurityProfile = securityProfile.String
+		}
+		if requestID.Valid {
+			rec.RequestID = requestID.String
 		}
 		if len(resultBytes) > 0 {
 			var result map[string]any
@@ -173,8 +182,8 @@ func (s *RunStore) upsert(ctx context.Context, record RunRecord) error {
 		finishedAt = record.FinishedAt.UnixMilli()
 	}
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO core_runs (run_id, job_id, status, started_at, finished_at, result, executor, runtime, security_profile, provenance)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO core_runs (run_id, job_id, status, started_at, finished_at, result, executor, runtime, security_profile, provenance, request_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(run_id) DO UPDATE SET
   job_id = excluded.job_id,
   status = excluded.status,
@@ -184,8 +193,9 @@ ON CONFLICT(run_id) DO UPDATE SET
   executor = excluded.executor,
   runtime = excluded.runtime,
   security_profile = excluded.security_profile,
-  provenance = excluded.provenance;
-`, record.ID, record.JobID, record.Status, record.StartedAt.UnixMilli(), finishedAt, resultBytes, record.Executor, record.Runtime, record.SecurityProfile, provenanceBytes)
+  provenance = excluded.provenance,
+  request_id = excluded.request_id;
+`, record.ID, record.JobID, record.Status, record.StartedAt.UnixMilli(), finishedAt, resultBytes, record.Executor, record.Runtime, record.SecurityProfile, provenanceBytes, record.RequestID)
 	return err
 }
 

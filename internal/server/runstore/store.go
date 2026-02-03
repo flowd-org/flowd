@@ -18,6 +18,7 @@ type Run struct {
 	Runtime         string         `json:"runtime,omitempty"`
 	SecurityProfile string         `json:"security_profile,omitempty"`
 	Provenance      map[string]any `json:"provenance,omitempty"`
+	RequestID       string         `json:"request_id,omitempty"`
 }
 
 // Store keeps runs in memory for serve mode.

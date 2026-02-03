@@ -8,8 +8,10 @@ import (
 )
 
 type loggerKey struct{}
+type requestIDKey struct{}
 
 var ctxLoggerKey = &loggerKey{}
+var ctxRequestIDKey = &requestIDKey{}
 
 // WithLogger stores the logger in the context for downstream consumers.
 func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
@@ -26,6 +28,26 @@ func Logger(ctx context.Context) *slog.Logger {
 	}
 	logger, _ := ctx.Value(ctxLoggerKey).(*slog.Logger)
 	return logger
+}
+
+// WithRequestID stores a request/correlation identifier in the context.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if ctx == nil || requestID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxRequestIDKey, requestID)
+}
+
+// RequestID extracts the request/correlation identifier from context, if present.
+func RequestID(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	requestID, _ := ctx.Value(ctxRequestIDKey).(string)
+	if requestID == "" {
+		return "", false
+	}
+	return requestID, true
 }
 
 // WrapLogger returns a logger that applies the supplied scrubber to message and string attributes.

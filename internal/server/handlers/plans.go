@@ -288,7 +288,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			}
 			r = r.WithContext(ctx)
 
-			plan, attrs, prob, buildErr := buildDAGPlan(ctx, effectiveID, cfgObj, spec, binding, effProfile, policyCtx, cfg.Verifier, runtimeStr)
+			plan, attrs, prob, buildErr := buildDAGPlan(ctx, effectiveID, cfgObj, spec, binding, effProfile, policyCtx, cfg.Verifier, runtimeStr, requestIDFromContext(ctx))
 			if buildErr != nil {
 				response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(scrubProblemDetail(buildErr.Error(), nil, nil, spec, req.Args))))
 				return
@@ -385,6 +385,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		plan := engine.BuildPlan(effectiveID, cfgObj, spec, binding)
 		annotatePlan(&plan)
 		plan.SecurityProfile = effProfile
+		plan.RequestID = requestIDFromContext(ctx)
 		if len(findings) > 0 {
 			plan.PolicyFindings = findings
 		}

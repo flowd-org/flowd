@@ -27,6 +27,7 @@ import (
 	"github.com/flowd-org/flowd/internal/executor"
 	"github.com/flowd-org/flowd/internal/executor/container"
 	"github.com/flowd-org/flowd/internal/indexer"
+	"github.com/flowd-org/flowd/internal/observability/logctx"
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
@@ -37,6 +38,19 @@ import (
 	"github.com/flowd-org/flowd/internal/server/sse"
 	"github.com/flowd-org/flowd/internal/types"
 )
+
+func requestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if requestID, ok := requestctx.RequestID(ctx); ok {
+		return requestID
+	}
+	if requestID, ok := logctx.RequestID(ctx); ok {
+		return requestID
+	}
+	return ""
+}
 
 const (
 	defaultRunStatus          = "queued"
@@ -444,6 +458,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		JobID:     effectiveID,
 		ScriptDir: execScriptDir,
 		Args:      req.Args,
+		RequestID: requestIDFromContext(ctx),
 	})
 	if err != nil {
 		var argErr *engine.ArgError
@@ -616,6 +631,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	plan.SecurityProfile = effProfile
+	plan.RequestID = requestIDFromContext(ctx)
 	if len(findings) > 0 {
 		plan.PolicyFindings = findings
 	}
@@ -637,6 +653,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	resp := newRunPayload(runID, effectiveID, defaultRunStatus, now)
 	resp.Executor = executorMode
 	resp.SecurityProfile = effProfile
+	resp.RequestID = requestIDFromContext(ctx)
 	if runtime != "" {
 		resp.Runtime = string(runtime)
 	}
@@ -701,6 +718,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		Runtime:         respForPersistence.Runtime,
 		SecurityProfile: respForPersistence.SecurityProfile,
 		Provenance:      respForPersistence.Provenance,
+		RequestID:       respForPersistence.RequestID,
 	})
 
 	eventSink := newScrubbedEventSink(h.events, scrubber)
@@ -1015,6 +1033,7 @@ func runRecordFromPayload(payload RunPayload) coredb.RunRecord {
 		Runtime:         payload.Runtime,
 		SecurityProfile: payload.SecurityProfile,
 		Provenance:      payload.Provenance,
+		RequestID:       payload.RequestID,
 	}
 }
 
@@ -1030,6 +1049,7 @@ func runRecordFromStore(run runstore.Run) coredb.RunRecord {
 		Runtime:         run.Runtime,
 		SecurityProfile: run.SecurityProfile,
 		Provenance:      run.Provenance,
+		RequestID:       run.RequestID,
 	}
 }
 

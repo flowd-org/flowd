@@ -12,6 +12,7 @@ type Plan struct {
 	Outputs          map[string]any         `json:"outputs"`
 	SecurityProfile  string                 `json:"security_profile"`
 	PolicyFindings   []Finding              `json:"policy_findings"`
+	RequestID        string                 `json:"request_id,omitempty"`
 	ImageTrust       *ImageTrustPreview     `json:"image_trust,omitempty"`
 	Steps            []PlanStepPreview      `json:"steps"`
 	Provenance       map[string]interface{} `json:"provenance"`

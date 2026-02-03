@@ -38,9 +38,20 @@ func loggingMiddleware(cfg Config) Middleware {
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 			)
+			requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+			if requestID == "" {
+				requestID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
+			}
+			if requestID != "" {
+				reqLogger = reqLogger.With(slog.String("request_id", requestID))
+				w.Header().Set("X-Request-ID", requestID)
+			}
 			meta := &requestctx.Metadata{}
 			ctx := requestctx.WithMetadata(r.Context(), meta)
 			ctx = requestctx.WithLogger(ctx, reqLogger)
+			if requestID != "" {
+				ctx = requestctx.WithRequestID(ctx, requestID)
+			}
 			next.ServeHTTP(recorder, r.WithContext(ctx))
 			effective, ok := requestctx.EffectiveProfile(ctx)
 			if !ok || effective == "" {
@@ -59,6 +70,14 @@ func loggingMiddleware(cfg Config) Middleware {
 			}
 			if runtime != "" {
 				attrs = append(attrs, slog.String("runtime.effective", runtime))
+			}
+			if requestID == "" {
+				if ctxRequestID, ok := requestctx.RequestID(ctx); ok {
+					requestID = ctxRequestID
+				}
+			}
+			if requestID != "" {
+				attrs = append(attrs, slog.String("request_id", requestID))
 			}
 			reqLogger.Info("request", attrs...)
 		})

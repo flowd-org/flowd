@@ -21,6 +21,7 @@ type RunPayload struct {
 	Runtime         string         `json:"runtime,omitempty"`
 	SecurityProfile string         `json:"security_profile,omitempty"`
 	Provenance      map[string]any `json:"provenance,omitempty"`
+	RequestID       string         `json:"request_id,omitempty"`
 }
 
 func newRunPayload(id, jobID, status string, startedAt time.Time) RunPayload {
@@ -44,6 +45,7 @@ func payloadFromStore(run runstore.Run) RunPayload {
 		Runtime:         run.Runtime,
 		SecurityProfile: run.SecurityProfile,
 		Provenance:      run.Provenance,
+		RequestID:       run.RequestID,
 	}
 }
 
@@ -59,6 +61,7 @@ func payloadFromRecord(record coredb.RunRecord) RunPayload {
 		Runtime:         record.Runtime,
 		SecurityProfile: record.SecurityProfile,
 		Provenance:      record.Provenance,
+		RequestID:       record.RequestID,
 	}
 }
 
