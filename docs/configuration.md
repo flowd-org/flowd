@@ -151,6 +151,13 @@ logging:
 
 ### Persistence
 
+flwd stores run records and event journals in an embedded SQLite database (CoreDB).
+By default, the database file lives under the configured `instance.data_dir` and
+uses the `persistence.db_path` value relative to that directory. On startup, flwd
+applies any pending schema migrations automatically. Migrations are forward-only
+and do **not** backfill data for runs that existed only in memory before the
+database was initialized.
+
 ```yaml
 persistence:
   # SQLite database path (relative to data_dir)

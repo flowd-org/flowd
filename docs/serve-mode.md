@@ -65,7 +65,32 @@ $ curl -Ns -H 'Authorization: Bearer dev-token' \
     http://127.0.0.1:8080/runs/RUN_ID/events
 ```
 
+Stream events for all runs (global stream):
+
+```bash
+$ curl -Ns -H 'Authorization: Bearer dev-token' \
+    http://127.0.0.1:8080/events/stream
+```
+
+Resume a global stream using the last seen sequence number:
+
+```bash
+$ curl -Ns -H 'Authorization: Bearer dev-token' \
+    -H 'Last-Event-ID: 41' \
+    http://127.0.0.1:8080/events/stream
+```
+
+Use the legacy alias endpoint (same behavior as `/events/stream`):
+
+```bash
+$ curl -Ns -H 'Authorization: Bearer dev-token' \
+    http://127.0.0.1:8080/events
+```
+
+The legacy `/events` path is an alias of `/events/stream`.
+
 Events are sent as SSE and can be parsed by dashboards, CLIs or monitoring tools.
+See the API reference for the SSE envelope (`event: flowd`, `retry: 3000`), resume behavior, and stale-cursor semantics.
 
 ## Authentication and scopes
 

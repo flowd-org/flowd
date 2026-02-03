@@ -49,9 +49,9 @@ the container executor aims for:
 - `--network none` (or equivalent),
 - isolated working directories.
 
-Secrets are materialised as files under a dedicated directory such as
-`/run/secrets`, and are not leaked via environment variables unless policy
-explicitly allows it.
+Secret values are never exported via environment variables. Instead, the executor
+receives secret **handles** only. In this branch, only file-based secret handles
+are supported (shape: `{ "type": "file", "path": "..." }`).
 
 Policies can be configured to allow writable rootfs, extra capabilities or
 limited networking in permissive or disabled profiles. All such decisions are

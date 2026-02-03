@@ -95,6 +95,31 @@ POST /api/v1/runs
 
 Creates and executes a new run of a job.
 
+##### Idempotency
+
+`POST /api/v1/runs` requires an idempotency key so clients can safely retry without duplicate effects.
+
+**Required header**
+- `Idempotency-Key`: 20–128 characters, alphanumeric plus `_` and `-`.
+
+**Optional header**
+- `Idempotency-SHA256`: lowercase hex SHA-256 of the canonicalized JSON request body.
+  - If provided and it does not match the server-computed hash, the request fails with a conflict.
+
+**TTL behavior**
+- Default TTL: **24 hours**.
+- Maximum TTL: **72 hours** (higher configured values are clamped to this maximum).
+
+**Replay behavior**
+- If the same `Idempotency-Key` and request body are replayed after a successful run creation, the server returns the cached response and sets `Idempotent-Replay: true`.
+
+**Failure modes (RFC7807)**
+- **409 Conflict** — key reuse with a different request body or hash mismatch:
+  - `type`: `https://flowd.org/problems/idempotency/mismatch`
+- **429 Too Many Requests** — key already in use (in-flight):
+  - `type`: `https://flowd.org/problems/scheduler/rejected`
+- **400 Bad Request** — missing/invalid `Idempotency-Key` or invalid `Idempotency-SHA256` format.
+
 **Request Body:**
 ```json
 {
@@ -314,32 +339,69 @@ Returns system information and configuration.
 
 flwd supports real-time event streaming via Server-Sent Events for monitoring runs and system events.
 
-### Run Events Stream
+### Endpoints
 
 ```http
-GET /api/v1/events/runs
+GET /events/stream
 ```
 
-Streams all run-related events.
+Global stream of all events visible to the caller.
 
-**Query Parameters:**
-- `run_id` (optional): Filter events for a specific run
-- `job_id` (optional): Filter events for a specific job
-
-**Event Types:**
-- `run.created`: New run started
-- `run.started`: Run execution began
-- `run.output`: Log output from run
-- `run.finished`: Run completed
-- `step.started`: Step execution began
-- `step.output`: Log output from step
-- `step.finished`: Step completed
-
-**Example Event:**
+```http
+GET /events
 ```
-event: run.output
-data: {"run_id":"run_01HX...","timestamp":"2024-01-15T10:30:01Z","level":"info","message":"Processing..."}
+
+Alias of `/events/stream`.
+
+```http
+GET /runs/{run_id}/events
 ```
+
+Run-scoped stream for a single run.
+
+### Envelope and retry behavior
+
+All SSE endpoints use a single `flowd` envelope and a fixed retry hint:
+
+```
+event: flowd
+retry: 3000
+id: 42
+data: {"seq":42,"ts":"2026-01-10T10:00:15Z","type":"run.output","run_id":"run_01HX...","tenant":"default","data":{...}}
+```
+
+Heartbeat comments are emitted at least every 15 seconds in the form:
+
+```
+:hb 2026-01-10T10:00:15Z
+```
+
+### Resume and stale cursor behavior
+
+Resume by sending the last received sequence number via `Last-Event-ID`:
+
+```http
+GET /events/stream
+Last-Event-ID: 41
+```
+
+- If the cursor is older than the retained journal range, the server responds with **HTTP 410** and RFC7807 type `https://flowd.org/problems/sse/stale-cursor`.
+- If the cursor is not a valid integer or is greater than the current max sequence, the server responds with **HTTP 400**.
+
+### Event types (minimum set)
+
+- `run.started`
+- `run.output`
+- `run.finished`
+- `step.started`
+- `step.output`
+- `step.finished`
+- `log`
+- `metric`
+- `warning`
+- `error`
+- `source.sync`
+- `policy.denied`
 
 ## Error Handling
 
