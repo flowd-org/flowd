@@ -17,6 +17,7 @@ type authInfo struct {
 	token   string
 	subject string
 	scopes  map[string]struct{}
+	tenant  string
 }
 
 func (a *authInfo) hasScopes(required []string) bool {
@@ -51,6 +52,13 @@ func (a *authInfo) principal() string {
 		return "token:" + hex.EncodeToString(sum[:])
 	}
 	return "anonymous"
+}
+
+func (a *authInfo) tenantClaim() (string, bool) {
+	if a == nil || a.tenant == "" {
+		return "", false
+	}
+	return a.tenant, true
 }
 
 type authContextKey struct{}
@@ -120,11 +128,14 @@ func parseToken(token string, secret string, allowUnsigned bool) (*authInfo, err
 		return nil, err
 	}
 	subject, _ := claims["sub"].(string)
+	tenant, _ := claims["tenant"].(string)
+	tenant = strings.TrimSpace(tenant)
 	scopes := extractScopes(claims)
 	return &authInfo{
 		token:   token,
 		subject: subject,
 		scopes:  scopes,
+		tenant:  tenant,
 	}, nil
 }
 
