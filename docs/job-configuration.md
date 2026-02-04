@@ -148,14 +148,15 @@ When an argument is marked as `format: "secret"`:
 
 **Secret-handle file location and cleanup (operational notes):**
 
-- Secret-handle files are created under the OS temp directory in a flowd-managed
-  subdirectory (for example, `$TMPDIR/flowd-secrets/` on Unix-like systems). The
-  base path is internal and not intended to be configured externally.
+- Secret-handle files are created under the flowd instance data directory
+  (configured via `instance.data_dir`), in a flowd-managed subdirectory (for
+  example, `<data_dir>/secrets/`). The base path is internal and not intended to
+  be configured separately.
 - POSIX: secret files are **unlinked on open**; the job reads via an fd-backed
   path while the underlying on-disk path is removed.
 - Windows: secret files are opened with **delete-on-close** semantics.
-- On startup, flowd runs a janitor that removes secret directories older than
-  **72h** (defense-in-depth cleanup only).
+- On startup, flowd runs a janitor that removes secret run directories under the
+  base secrets directory older than **72h** (defense-in-depth cleanup only).
 - Secret-handle paths are sensitive and MUST NOT be persisted or logged.
 
 ### Composition Modes
