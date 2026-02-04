@@ -2,20 +2,26 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/flowd-org/flowd/internal/events"
+	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/types"
 	"github.com/spf13/pflag"
 )
 
 type Binding struct {
-	Values       map[string]interface{}
-	ArgsJSON     string
-	ScalarEnv    map[string]string // ARG_<UPPER> for scalar types only
-	SecretNames  map[string]struct{}
-	SecretValues []string
+	Values        map[string]interface{}
+	ArgsJSON      string
+	ScalarEnv     map[string]string // ARG_<UPPER> for scalar types only
+	SecretNames   map[string]struct{}
+	SecretValues  []string
+	SecretBuffers map[string]*secrets.Buffer
 }
 
 type ArgError struct {
@@ -31,8 +37,12 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 	scalars := make(map[string]string)
 	secretNames := make(map[string]struct{})
 	var secretValues []string
+	secretBuffers := map[string]*secrets.Buffer{}
 
 	for _, a := range spec.Args {
+		if err := types.ValidateArgName(a.Name); err != nil {
+			return nil, &ArgError{Arg: a.Name, Msg: err.Error()}
+		}
 		name := a.Name
 		provided := flags.Changed(name)
 
@@ -62,6 +72,7 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 				secretNames[name] = struct{}{}
 				if v != "" {
 					secretValues = append(secretValues, v)
+					secretBuffers[name] = secrets.NewBufferFromString(v)
 				}
 			} else {
 				scalars[argEnvName(name)] = v
@@ -80,7 +91,9 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 				return nil, &ArgError{Arg: name, Msg: "required"}
 			}
 			vals[name] = v
-			scalars[argEnvName(name)] = fmt.Sprintf("%t", v)
+			if !isSecret(a.Format, a.Secret) {
+				scalars[argEnvName(name)] = fmt.Sprintf("%t", v)
+			}
 
 		case "integer":
 			var v int
@@ -100,26 +113,28 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 				return nil, &ArgError{Arg: name, Msg: "required"}
 			}
 			vals[name] = v
-			scalars[argEnvName(name)] = fmt.Sprintf("%d", v)
+			if !isSecret(a.Format, a.Secret) {
+				scalars[argEnvName(name)] = fmt.Sprintf("%d", v)
+			}
 
 		case "array":
-			// Phase 1: array<string>
 			arr, _ := flags.GetStringArray(name)
 			// default fallback if not provided and default present
 			if len(arr) == 0 && a.Default != nil {
-				// allow default to be []string or comma-separated string
 				switch dv := a.Default.(type) {
 				case []interface{}:
 					for _, it := range dv {
-						if s, ok := it.(string); ok {
-							arr = append(arr, s)
+						s, ok := it.(string)
+						if !ok {
+							return nil, &ArgError{Arg: name, Msg: "default array items must be strings"}
 						}
+						arr = append(arr, s)
 					}
 				case []string:
 					arr = append(arr, dv...)
 				case string:
 					if dv != "" {
-						arr = strings.Split(dv, ",")
+						arr = append(arr, strings.Split(dv, ",")...)
 					}
 				}
 			}
@@ -139,7 +154,6 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 			vals[name] = arr
 
 		case "object":
-			// Accept repeated --name k=v (string values only in Phase 1)
 			pairs, _ := flags.GetStringArray(name)
 			m := map[string]string{}
 			for _, p := range pairs {
@@ -167,7 +181,7 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 		}
 	}
 
-	argsJSON, err := json.Marshal(vals)
+	argsJSON, err := marshalCanonicalJSON(events.RedactSecrets(vals, secretNames))
 	if err != nil {
 		return nil, fmt.Errorf("encode args json: %w", err)
 	}
@@ -179,6 +193,9 @@ func ValidateAndBind(flags *pflag.FlagSet, spec types.ArgSpec) (*Binding, error)
 	if len(secretValues) > 0 {
 		b.SecretValues = secretValues
 	}
+	if len(secretBuffers) > 0 {
+		b.SecretBuffers = secretBuffers
+	}
 	return b, nil
 }
 
@@ -189,6 +206,103 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func marshalCanonicalJSON(vals map[string]interface{}) ([]byte, error) {
+	buf := &bytes.Buffer{}
+	if err := encodeCanonicalJSON(buf, vals); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeCanonicalJSON(buf *bytes.Buffer, v any) error {
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		buf.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			writeJSONString(buf, k)
+			buf.WriteByte(':')
+			if err := encodeCanonicalJSON(buf, t[k]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+	case map[string]string:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		buf.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			writeJSONString(buf, k)
+			buf.WriteByte(':')
+			writeJSONString(buf, t[k])
+		}
+		buf.WriteByte('}')
+	case []any:
+		buf.WriteByte('[')
+		for i, elem := range t {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := encodeCanonicalJSON(buf, elem); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+	case []string:
+		buf.WriteByte('[')
+		for i, elem := range t {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			writeJSONString(buf, elem)
+		}
+		buf.WriteByte(']')
+	case string:
+		writeJSONString(buf, t)
+	case json.Number:
+		buf.WriteString(t.String())
+	case float64:
+		buf.WriteString(strconv.FormatFloat(t, 'f', -1, 64))
+	case int:
+		buf.WriteString(strconv.Itoa(t))
+	case int64:
+		buf.WriteString(strconv.FormatInt(t, 10))
+	case bool:
+		if t {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+	case nil:
+		buf.WriteString("null")
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
+		buf.Write(b)
+	}
+	return nil
+}
+
+func writeJSONString(buf *bytes.Buffer, s string) {
+	b, _ := json.Marshal(s)
+	buf.Write(b)
 }
 
 func argEnvName(name string) string {

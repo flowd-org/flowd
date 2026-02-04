@@ -27,6 +27,7 @@ func aliasCollisionProblem(aliasName string, contenders []indexer.AliasInfo) *re
 		response.WithExtension("alias", aliasName),
 		response.WithExtension("contenders", payload),
 		response.WithDetail(detail))
+	prob = scrubProblemResponse(&prob, newProblemScrubber(nil, map[string]any{"alias": aliasName}, nil, nil), nil, nil, nil)
 	return &prob
 }
 
@@ -39,5 +40,6 @@ func aliasValidationProblem(aliasName string, validation indexer.AliasValidation
 		response.WithExtension("code", validation.Code),
 		response.WithExtension("alias", aliasName),
 		response.WithDetail(detail))
+	prob = scrubProblemResponse(&prob, newProblemScrubber(nil, map[string]any{"alias": aliasName}, nil, nil), nil, nil, nil)
 	return &prob
 }

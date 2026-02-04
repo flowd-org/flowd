@@ -30,6 +30,9 @@ func AttachFlags(cmd *cobra.Command, dirPath string) error {
 	for _, a := range spec.Args {
 		name := a.Name
 		desc := a.Description
+		if err := types.ValidateArgName(name); err != nil {
+			return fmt.Errorf("invalid argspec name %q: %w", name, err)
+		}
 		switch a.Type {
 		case "string":
 			def, _ := a.Default.(string)

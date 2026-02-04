@@ -2,7 +2,9 @@ package sse
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ const (
 	defaultKeepAliveInterval = 15 * time.Second
 	defaultBufferSize        = 1000
 	defaultRetention         = 5 * time.Minute
+	flowdEventName           = "flowd"
 )
 
 // Event represents an SSE payload delivered to subscribers.
@@ -20,6 +23,8 @@ type Event struct {
 	Event     string
 	Data      string
 	Timestamp time.Time
+	RunID     string
+	Tenant    string
 }
 
 // Config controls Hub behaviour.
@@ -66,6 +71,9 @@ func (h *Hub) Publish(runID string, ev Event) {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = h.nowFn()
 	}
+	if ev.RunID == "" {
+		ev.RunID = runID
+	}
 
 	stream := h.getOrCreateStream(runID)
 	stored := stream.add(ev, h.cfg.MaxBufferSize, h.cfg.Retention, h.nowFn())
@@ -75,9 +83,13 @@ func (h *Hub) Publish(runID string, ev Event) {
 // Subscribe registers a subscriber for a run and replays buffered events after the provided lastEventID.
 func (h *Hub) Subscribe(ctx context.Context, runID, lastEventID string) *Subscription {
 	stream := h.getOrCreateStream(runID)
-	ch := make(chan []byte, 32)
+	bufSize := 32
+	if h.cfg.MaxBufferSize > bufSize {
+		bufSize = h.cfg.MaxBufferSize
+	}
+	ch := make(chan []byte, bufSize)
 	subCtx, cancel := context.WithCancel(ctx)
-	stream.addSubscriber(subCtx, ch, h.cfg.KeepAliveInterval)
+	stream.addSubscriber(subCtx, ch, h.cfg.KeepAliveInterval, h.nowFn)
 	stream.replay(ch, lastEventID)
 	return &Subscription{
 		C:    ch,
@@ -115,6 +127,7 @@ type subscriber struct {
 	ch         chan<- []byte
 	keepAlive  time.Duration
 	keepTicker *time.Ticker
+	nowFn      func() time.Time
 }
 
 func newRunStream() *runStream {
@@ -131,6 +144,9 @@ func (rs *runStream) add(ev Event, maxSize int, retention time.Duration, now tim
 	rs.seq++
 	if ev.ID == "" {
 		ev.ID = fmt.Sprintf("%d", rs.seq)
+	}
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = now.UTC()
 	}
 	rs.events = append(rs.events, ev)
 
@@ -150,11 +166,15 @@ func (rs *runStream) add(ev Event, maxSize int, retention time.Duration, now tim
 	return ev
 }
 
-func (rs *runStream) addSubscriber(ctx context.Context, ch chan<- []byte, keepAlive time.Duration) {
+func (rs *runStream) addSubscriber(ctx context.Context, ch chan<- []byte, keepAlive time.Duration, nowFn func() time.Time) {
+	if nowFn == nil {
+		nowFn = time.Now
+	}
 	sub := &subscriber{
 		ctx:       ctx,
 		ch:        ch,
 		keepAlive: keepAlive,
+		nowFn:     nowFn,
 	}
 	rs.mu.Lock()
 	rs.subscribers[sub] = struct{}{}
@@ -181,11 +201,16 @@ func (rs *runStream) replay(ch chan<- []byte, lastID string) {
 		return
 	}
 	start := 0
+	found := false
 	for i, ev := range rs.events {
 		if ev.ID == lastID {
 			start = i + 1
+			found = true
 			break
 		}
+	}
+	if !found {
+		return
 	}
 	for _, ev := range rs.events[start:] {
 		ch <- formatEvent(ev)
@@ -231,7 +256,7 @@ func (s *subscriber) run(onClose func()) {
 			return
 		case <-s.keepTicker.C:
 			select {
-			case s.ch <- []byte(":keep-alive\n\n"):
+			case s.ch <- FormatHeartbeat(s.nowFn()):
 			default:
 			}
 		}
@@ -239,18 +264,90 @@ func (s *subscriber) run(onClose func()) {
 }
 
 func formatEvent(ev Event) []byte {
+	payload, err := EncodeEvent(ev)
+	if err != nil {
+		payload = []byte("event: " + flowdEventName + "\n" + "retry: 3000\n" + "data: {}\n\n")
+	}
+	return payload
+}
+
+type envelope struct {
+	Seq    int64     `json:"seq"`
+	TS     time.Time `json:"ts"`
+	Type   string    `json:"type"`
+	RunID  string    `json:"run_id,omitempty"`
+	Tenant string    `json:"tenant,omitempty"`
+	Data   any       `json:"data,omitempty"`
+}
+
+// EncodeEvent formats the event using the Core SoT v1.0.1 envelope and SSE framing.
+func EncodeEvent(ev Event) ([]byte, error) {
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = time.Now().UTC()
+	}
+	seq := parseEventSeq(ev.ID)
+	data := dataValue(ev.Data)
+	if data == nil && ev.Data != "" {
+		data = ev.Data
+	}
+	payload, err := json.Marshal(envelope{
+		Seq:    seq,
+		TS:     ev.Timestamp.UTC(),
+		Type:   ev.Event,
+		RunID:  ev.RunID,
+		Tenant: ev.Tenant,
+		Data:   data,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return formatPayload(ev.ID, payload), nil
+}
+
+// FormatHeartbeat returns the SSE heartbeat comment payload.
+func FormatHeartbeat(ts time.Time) []byte {
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return []byte(fmt.Sprintf(":hb %s\n\n", ts.UTC().Format(time.RFC3339)))
+}
+
+func parseEventSeq(id string) int64 {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0
+	}
+	seq, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return seq
+}
+
+func dataValue(input string) any {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	var raw json.RawMessage
+	if err := json.Unmarshal([]byte(input), &raw); err != nil {
+		return input
+	}
+	return raw
+}
+
+func formatPayload(id string, payload []byte) []byte {
 	var builder strings.Builder
-	if ev.ID != "" {
+	if strings.TrimSpace(id) != "" {
 		builder.WriteString("id: ")
-		builder.WriteString(ev.ID)
+		builder.WriteString(strings.TrimSpace(id))
 		builder.WriteByte('\n')
 	}
-	if ev.Event != "" {
-		builder.WriteString("event: ")
-		builder.WriteString(ev.Event)
-		builder.WriteByte('\n')
-	}
-	for _, line := range strings.Split(ev.Data, "\n") {
+	builder.WriteString("event: ")
+	builder.WriteString(flowdEventName)
+	builder.WriteByte('\n')
+	builder.WriteString("retry: 3000\n")
+	for _, line := range strings.Split(string(payload), "\n") {
 		builder.WriteString("data: ")
 		builder.WriteString(line)
 		builder.WriteByte('\n')

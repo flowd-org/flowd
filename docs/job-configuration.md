@@ -138,6 +138,27 @@ argspec:
       description: "API key for remote storage"
 ```
 
+When an argument is marked as `format: "secret"`:
+
+- Secret values are redacted in user-visible outputs using the `$$REDACTED$$` marker.
+- Secret values are **not** exported to environment variables; the executor receives **handles only**.
+- Only **file-based** secret handles are supported in this branch. The handle shape is:
+  `{ "type": "file", "path": "..." }`.
+- `memfd`-backed secret handles are explicitly deferred (not supported).
+
+**Secret-handle file location and cleanup (operational notes):**
+
+- Secret-handle files are created under the flowd instance data directory
+  (configured via `instance.data_dir`), in a flowd-managed subdirectory (for
+  example, `<data_dir>/secrets/`). The base path is internal and not intended to
+  be configured separately.
+- POSIX: secret files are **unlinked on open**; the job reads via an fd-backed
+  path while the underlying on-disk path is removed.
+- Windows: secret files are opened with **delete-on-close** semantics.
+- On startup, flowd runs a janitor that removes secret run directories under the
+  base secrets directory older than **72h** (defense-in-depth cleanup only).
+- Secret-handle paths are sensitive and MUST NOT be persisted or logged.
+
 ### Composition Modes
 
 #### Single (Default)

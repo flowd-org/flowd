@@ -4,14 +4,16 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/flowd-org/flowd/internal/argsloader"
-	"github.com/flowd-org/flowd/internal/configloader"
+	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/engine"
 	"github.com/flowd-org/flowd/internal/events"
 	"github.com/flowd-org/flowd/internal/executor"
@@ -22,6 +24,10 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
+
+func newCLIRequestID() string {
+	return fmt.Sprintf("cli-%d", time.Now().UnixNano())
+}
 
 func RegisterScriptCommands(root *cobra.Command, scriptsDir string) error {
 	leafScripts := make(map[string]string)
@@ -158,28 +164,8 @@ func RegisterScriptCommands(root *cobra.Command, scriptsDir string) error {
 
 func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		cfg, err := configloader.LoadConfig(scriptDir)
-		if err != nil {
-			return err
-		}
-
-		if cmd.Flags().Changed("on-error") {
-			pol, _ := cmd.Flags().GetString("on-error")
-			cfg.ErrorHandling.Policy = pol
-		}
-
-		// Validate CLI flags against ArgSpec and build bindings
-		var bind *engine.Binding
-		if cfg.ArgSpec != nil {
-			b, vErr := engine.ValidateAndBind(cmd.Flags(), *cfg.ArgSpec)
-			if vErr != nil {
-				// E_ARGS: return with field-level message
-				return fmt.Errorf("E_ARGS: %v", vErr)
-			}
-			bind = b
-		}
-
 		flagsMap := make(map[string]interface{})
+		argsMap := make(map[string]interface{})
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
 			switch f.Name {
 			case "dry-run", "verbose", "quiet", "strict", "on-error", "report", "report-file", "json":
@@ -189,14 +175,26 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 			case "bool":
 				v, _ := cmd.Flags().GetBool(f.Name)
 				flagsMap[f.Name] = v
+				if f.Changed {
+					argsMap[f.Name] = v
+				}
 			case "int":
 				v, _ := cmd.Flags().GetInt(f.Name)
 				flagsMap[f.Name] = v
+				if f.Changed {
+					argsMap[f.Name] = v
+				}
 			case "stringArray":
 				v, _ := cmd.Flags().GetStringArray(f.Name)
 				flagsMap[f.Name] = v
+				if f.Changed {
+					argsMap[f.Name] = v
+				}
 			default:
 				flagsMap[f.Name] = f.Value.String()
+				if f.Changed {
+					argsMap[f.Name] = f.Value.String()
+				}
 			}
 		})
 
@@ -208,10 +206,37 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 		reportFile, _ := cmd.Flags().GetString("report-file")
 		jsonEvents, _ := cmd.Flags().GetBool("json")
 
-		runID := events.GenerateRunID()
-		jobID := cmd.CommandPath()
+		orchestrator := engine.NewOrchestrator(engine.OrchestratorDeps{})
+		startRes, err := orchestrator.StartRun(cmd.Context(), types.StartRunRequest{
+			JobID:     cmd.CommandPath(),
+			ScriptDir: scriptDir,
+			Args:      argsMap,
+			RequestID: newCLIRequestID(),
+		})
+		if err != nil {
+			var argErr *engine.ArgError
+			if errors.As(err, &argErr) {
+				return fmt.Errorf("E_ARGS: %v", argErr)
+			}
+			return err
+		}
 
-		plan := engine.BuildPlan(jobID, cfg, cfg.ArgSpec, bind)
+		cfg := startRes.Config
+		if cfg == nil {
+			return fmt.Errorf("missing config")
+		}
+
+		runID := startRes.RunID
+		jobID := startRes.JobID
+		bind := startRes.Binding
+		plan := startRes.Plan
+		secretHandles := startRes.SecretHandles
+		secretCleanup := startRes.SecretCleanup
+		if secretCleanup != nil {
+			defer func() {
+				_ = secretCleanup()
+			}()
+		}
 		// Resolve profile precedence for CLI run: flag > env > default
 		prof, _ := cmd.Flags().GetString("profile")
 		if prof == "" {
@@ -223,6 +248,10 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 			prof = "secure"
 		}
 		plan.SecurityProfile = strings.ToLower(prof)
+		if cmd.Flags().Changed("on-error") {
+			pol, _ := cmd.Flags().GetString("on-error")
+			cfg.ErrorHandling.Policy = pol
+		}
 		runDir := paths.RunDir(runID)
 		if abs, err := filepath.Abs(runDir); err == nil {
 			runDir = abs
@@ -246,7 +275,23 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 		if verbosity > 0 {
 			consoleEmitter = events.NewEmitter(os.Stdout, jsonEvents)
 		}
-		emitter := events.NewCompositeSink(consoleEmitter)
+		var journalSink events.Sink
+		var journalDB *coredb.DB
+		if dataDir := paths.DataDir(); dataDir != "" {
+			db, dbErr := coredb.Open(context.Background(), coredb.Options{DataDir: dataDir})
+			if dbErr == nil {
+				journalDB = db
+				journalSink = events.NewJournalSink(coredb.NewJournal(db, 0))
+			} else if verbosity > 0 {
+				fmt.Fprintf(os.Stderr, "[warn] coredb unavailable; run journal disabled: %v\n", dbErr)
+			}
+		}
+		if journalDB != nil {
+			defer func() {
+				_ = journalDB.Close()
+			}()
+		}
+		emitter := events.NewCompositeSink(consoleEmitter, journalSink)
 		if emitter != nil {
 			emitter.EmitRunStart(runID, jobID)
 		}
@@ -276,8 +321,15 @@ func makeRunE(scriptDir string) func(cmd *cobra.Command, args []string) error {
 			ecfg.ArgValues = bind.Values
 			ecfg.LineRedactor = events.NewLineRedactor(bind.SecretValues)
 		}
+		if len(secretHandles) > 0 {
+			ecfg.SecretHandles = secretHandles
+		}
 
-		results, err := executor.RunScripts(context.Background(), scriptDir, ecfg)
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		results, err := executor.RunScripts(ctx, scriptDir, ecfg)
 		status := "completed"
 		if err != nil {
 			status = "failed"

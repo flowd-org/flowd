@@ -34,7 +34,7 @@ func (h *storageHealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	stats, err := h.stats(r)
 	if err != nil {
 		response.Write(w, response.New(http.StatusServiceUnavailable, "storage degraded",
-			response.WithType("https://flowd.dev/problems/storage-degraded"),
+			response.WithType("https://flowd.org/problems/storage-degraded"),
 			response.WithDetail(err.Error()),
 		))
 		return
@@ -42,7 +42,7 @@ func (h *storageHealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	if !stats.OK {
 		response.Write(w, response.New(http.StatusServiceUnavailable, "storage degraded",
-			response.WithType("https://flowd.dev/problems/storage-degraded"),
+			response.WithType("https://flowd.org/problems/storage-degraded"),
 			response.WithExtension("driver", stats.Driver),
 			response.WithExtension("bytes_used", stats.BytesUsed),
 			response.WithExtension("max_bytes", stats.MaxBytes),

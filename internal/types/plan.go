@@ -9,11 +9,13 @@ type Plan struct {
 	ExecutorPreview  map[string]interface{} `json:"executor_preview,omitempty"`
 	Requirements     *PlanRequirements      `json:"requirements,omitempty"`
 	ResolvedArgs     map[string]interface{} `json:"resolved_args,omitempty"`
-	SecurityProfile  string                 `json:"security_profile,omitempty"`
-	PolicyFindings   []Finding              `json:"policy_findings,omitempty"`
+	Outputs          map[string]any         `json:"outputs"`
+	SecurityProfile  string                 `json:"security_profile"`
+	PolicyFindings   []Finding              `json:"policy_findings"`
+	RequestID        string                 `json:"request_id,omitempty"`
 	ImageTrust       *ImageTrustPreview     `json:"image_trust,omitempty"`
-	Steps            []PlanStepPreview      `json:"steps,omitempty"`
-	Provenance       map[string]interface{} `json:"provenance,omitempty"`
+	Steps            []PlanStepPreview      `json:"steps"`
+	Provenance       map[string]interface{} `json:"provenance"`
 }
 
 type PlanRequirements struct {

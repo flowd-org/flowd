@@ -61,6 +61,12 @@ argspec:
 	if plan.JobID != "demo" {
 		t.Fatalf("expected job_id demo, got %s", plan.JobID)
 	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
+	}
 	if len(plan.ResolvedArgs) == 0 || plan.ResolvedArgs["name"] != "Alice" {
 		t.Fatalf("expected resolved name Alice, got %+v", plan.ResolvedArgs)
 	}
@@ -94,6 +100,12 @@ interpreter: "container:alpine:3.20"
 	execPreview := plan.ExecutorPreview
 	if execPreview["executor"] != "container" {
 		t.Fatalf("expected executor preview container, got %+v", execPreview)
+	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
 	}
 	if execPreview["container_image"] != "alpine:3.20" {
 		t.Fatalf("expected container image in preview, got %+v", execPreview)
@@ -140,6 +152,12 @@ steps:
 	}
 	if plan.ExecutorPreview["composition"] != "steps" {
 		t.Fatalf("expected composition steps in preview, got %+v", plan.ExecutorPreview)
+	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
 	}
 	if len(plan.Steps) != 2 {
 		t.Fatalf("expected 2 steps in preview, got %+v", plan.Steps)
@@ -321,6 +339,12 @@ argspec:
 	if plan.JobID != "remote" {
 		t.Fatalf("expected plan job_id remote, got %s", plan.JobID)
 	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
+	}
 	if plan.ResolvedArgs["name"] != "Bob" {
 		t.Fatalf("expected resolved arg Bob, got %+v", plan.ResolvedArgs)
 	}
@@ -364,6 +388,12 @@ func TestPlansHandlerUsesGitSource(t *testing.T) {
 	}
 	if plan.JobID != "gitjob" {
 		t.Fatalf("expected job gitjob, got %s", plan.JobID)
+	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
 	}
 	if plan.ResolvedArgs["name"] != "Charlie" {
 		t.Fatalf("expected resolved name Charlie, got %+v", plan.ResolvedArgs)
@@ -541,6 +571,12 @@ container:
 	if plan.ImageTrust == nil || plan.ImageTrust.Mode != string(policy.VerifyModePermissive) || plan.ImageTrust.Verified {
 		t.Fatalf("unexpected image trust preview: %+v", plan.ImageTrust)
 	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
+	}
 	if len(plan.PolicyFindings) != 1 || plan.PolicyFindings[0].Code != "image.signature.permissive" {
 		t.Fatalf("expected permissive finding, got %+v", plan.PolicyFindings)
 	}
@@ -677,6 +713,12 @@ container:
 	}
 	if len(plan.PolicyFindings) == 0 {
 		t.Fatalf("expected policy findings for override, got none")
+	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance in plan")
 	}
 	if plan.PolicyFindings[0].Code != "policy.override.allowed" {
 		t.Fatalf("expected policy.override.allowed, got %+v", plan.PolicyFindings)
@@ -850,6 +892,9 @@ jobs:
 	if plan.SecurityProfile != "secure" {
 		t.Fatalf("expected security profile secure, got %s", plan.SecurityProfile)
 	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
+	}
 	if val, ok := plan.ResolvedArgs["image-tag"].(string); !ok || val != "latest" {
 		t.Fatalf("expected resolved arg image-tag=latest, got %+v", plan.ResolvedArgs)
 	}
@@ -934,6 +979,9 @@ jobs:
 	}
 	if plan.ImageTrust == nil || plan.ImageTrust.Mode != string(policy.VerifyModePermissive) || plan.ImageTrust.Verified {
 		t.Fatalf("expected permissive image trust warning, got %+v", plan.ImageTrust)
+	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs in plan")
 	}
 	foundWarning := false
 	for _, finding := range plan.PolicyFindings {

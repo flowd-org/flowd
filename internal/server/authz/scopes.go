@@ -39,6 +39,8 @@ func RequiredScopes(method, path string) []string {
 			return []string{ScopeSourcesRead}
 		case path == "/events":
 			return []string{ScopeEventsRead}
+		case path == "/events/stream":
+			return []string{ScopeEventsRead}
 		case strings.HasPrefix(path, "/kv/"):
 			return []string{ScopeRuleYRead}
 		case path == "/health/storage":

@@ -16,8 +16,9 @@ import (
 	"github.com/flowd-org/flowd/internal/types"
 )
 
-func buildDAGPlan(ctx context.Context, jobID string, cfgObj *types.Config, spec *types.ArgSpec, binding *engine.Binding, effProfile string, policyCtx *policy.Context, verifier policyverify.ImageVerifier, runtime string) (types.Plan, []any, *response.Problem, error) {
+func buildDAGPlan(ctx context.Context, jobID string, cfgObj *types.Config, spec *types.ArgSpec, binding *engine.Binding, effProfile string, policyCtx *policy.Context, verifier policyverify.ImageVerifier, runtime string, requestID string) (types.Plan, []any, *response.Problem, error) {
 	plan := engine.BuildPlan(jobID, cfgObj, spec, binding)
+	plan.RequestID = requestID
 	if plan.ExecutorPreview == nil {
 		plan.ExecutorPreview = map[string]interface{}{}
 	}
@@ -30,6 +31,18 @@ func buildDAGPlan(ctx context.Context, jobID string, cfgObj *types.Config, spec 
 		plan.ExecutorPreview["container_image"] = strings.TrimSpace(cfgObj.Container.Image)
 	}
 	plan.SecurityProfile = effProfile
+	if plan.Outputs == nil {
+		plan.Outputs = map[string]any{}
+	}
+	if plan.Provenance == nil {
+		plan.Provenance = map[string]any{}
+	}
+	if plan.PolicyFindings == nil {
+		plan.PolicyFindings = []types.Finding{}
+	}
+	if plan.Steps == nil {
+		plan.Steps = []types.PlanStepPreview{}
+	}
 
 	var stepPreviews []types.PlanStepPreview
 	var allFindings []types.Finding

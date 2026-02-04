@@ -60,13 +60,17 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		req, err := decodePlanRequest(r.Body)
 		if err != nil {
-			response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		if req.JobID == "" {
 			response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
 			return
 		}
+		ctx = requestctx.WithScrubbedLogger(ctx, func(msg string) string {
+			return scrubProblemDetail(msg, nil, nil, nil, req.Args)
+		})
+		r = r.WithContext(ctx)
 
 		discoverRoot := cfg.Root
 		if discoverRoot == "" {
@@ -75,16 +79,16 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		if req.Source != nil && req.Source.Name != "" {
 			if cfg.Sources == nil {
-				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(req.Source.Name)))
+				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(scrubProblemDetail(req.Source.Name, nil, nil, nil, nil))))
 				return
 			}
 			source, ok := cfg.Sources.Get(req.Source.Name)
 			if !ok {
-				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(req.Source.Name)))
+				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(scrubProblemDetail(req.Source.Name, nil, nil, nil, nil))))
 				return
 			}
 			if source.LocalPath == "" {
-				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail("source "+req.Source.Name+" has no local checkout")))
+				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail(scrubProblemDetail("source "+req.Source.Name+" has no local checkout", nil, nil, nil, nil))))
 				return
 			}
 			discoverRoot = source.LocalPath
@@ -92,7 +96,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		result, err := discoverFn(discoverRoot)
 		if err != nil {
-			response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 
@@ -134,10 +138,19 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		}
 
 		annotatePlan := func(plan *types.Plan) {
-			plan.JobID = effectiveID
 			if plan.Provenance == nil {
 				plan.Provenance = map[string]any{}
 			}
+			if plan.Outputs == nil {
+				plan.Outputs = map[string]any{}
+			}
+			if plan.PolicyFindings == nil {
+				plan.PolicyFindings = []types.Finding{}
+			}
+			if plan.Steps == nil {
+				plan.Steps = []types.PlanStepPreview{}
+			}
+			plan.JobID = effectiveID
 			plan.Provenance["canonical_id"] = effectiveID
 			canonicalPath := strings.ReplaceAll(effectiveID, ".", "/")
 			if aliasUsed != nil {
@@ -189,11 +202,11 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			ociPlan, attrs, handled, prob, planErr := tryBuildOCIPlan(r, req, cfg)
 			if handled {
 				if planErr != nil {
-					response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(planErr.Error())))
+					response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(scrubProblemDetail(planErr.Error(), nil, nil, nil, nil))))
 					return
 				}
 				if prob != nil {
-					response.Write(w, *prob)
+					response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
 					return
 				}
 				if logger := requestctx.Logger(ctx); logger != nil {
@@ -202,19 +215,19 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 				writePlanResponse(w, ociPlan)
 				return
 			}
-			response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(requestedID)))
+			response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(scrubProblemDetail(requestedID, nil, nil, nil, nil))))
 			return
 		}
 
 		cfgObj, err := loadConfig(jobPath)
 		if err != nil {
-			response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		isDAG := isDAGConfig(cfgObj)
 		if isDAG {
 			if prob := validateDAGConfig(cfgObj); prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
 				return
 			}
 		}
@@ -226,11 +239,13 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			if bindErr != nil {
 				var argErr *engine.ArgError
 				if errors.As(bindErr, &argErr) {
+					scrubber := newProblemScrubber(spec, req.Args, nil, nil)
+					safeMsg := scrubProblemDetail(argErr.Msg, scrubber, nil, nil, nil)
 					response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
-						response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
+						response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": safeMsg}})))
 					return
 				}
-				response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(bindErr.Error())))
+				response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(scrubProblemDetail(bindErr.Error(), nil, nil, spec, req.Args))))
 				return
 			}
 			binding = bind
@@ -243,7 +258,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		if err != nil {
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "invalid security profile",
 				response.WithExtension("code", "E_POLICY"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 			return
 		}
 
@@ -261,7 +276,8 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			if executor == "container" && runtimeVal == "" {
 				detected, detectErr := detectContainerRuntime(nil)
 				if detectErr != nil {
-					response.Write(w, runtimeUnavailableProblem(detectErr))
+					prob := runtimeUnavailableProblem(detectErr)
+					response.Write(w, scrubProblemResponse(&prob, nil, nil, spec, req.Args))
 					return
 				}
 				runtimeVal = detected
@@ -272,14 +288,14 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			}
 			r = r.WithContext(ctx)
 
-			plan, attrs, prob, buildErr := buildDAGPlan(ctx, effectiveID, cfgObj, spec, binding, effProfile, policyCtx, cfg.Verifier, runtimeStr)
+			plan, attrs, prob, buildErr := buildDAGPlan(ctx, effectiveID, cfgObj, spec, binding, effProfile, policyCtx, cfg.Verifier, runtimeStr, requestIDFromContext(ctx))
 			if buildErr != nil {
-				response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(buildErr.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "plan generation failed", response.WithDetail(scrubProblemDetail(buildErr.Error(), nil, nil, spec, req.Args))))
 				return
 			}
 			annotatePlan(&plan)
 			if prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 			if logger := requestctx.Logger(ctx); logger != nil {
@@ -308,12 +324,13 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		if image != "" {
 			if runtimeVal == "" {
 				if _, detectErr := detectContainerRuntime(nil); detectErr != nil {
-					response.Write(w, runtimeUnavailableProblem(detectErr))
+					prob := runtimeUnavailableProblem(detectErr)
+					response.Write(w, scrubProblemResponse(&prob, nil, nil, spec, req.Args))
 					return
 				}
 			}
 			if prob := enforceRegistryAllowList(ctx, image, policyCtx); prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 
@@ -321,13 +338,13 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			if err != nil {
 				response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 					response.WithExtension("code", "E_POLICY"),
-					response.WithDetail(err.Error())))
+					response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 				return
 			}
 
 			outcome, prob := enforceImageVerification(ctx, image, mode, cfg.Verifier)
 			if prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 			if mode != policy.VerifyModeDisabled {
@@ -351,14 +368,14 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 			}
 
 			if prob := enforceResourceCeilings(ctx, cfgObj, policyCtx.ContainerCeilings()); prob != nil {
-				response.Write(w, *prob)
+				response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 				return
 			}
 		}
 
 		overrideFindings, _, prob := evaluateOverrides(ctx, cfgObj, effProfile, policyCtx)
 		if prob != nil {
-			response.Write(w, *prob)
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 		if len(overrideFindings) > 0 {
@@ -368,6 +385,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		plan := engine.BuildPlan(effectiveID, cfgObj, spec, binding)
 		annotatePlan(&plan)
 		plan.SecurityProfile = effProfile
+		plan.RequestID = requestIDFromContext(ctx)
 		if len(findings) > 0 {
 			plan.PolicyFindings = findings
 		}
@@ -437,8 +455,11 @@ func validatePlanArgs(spec types.ArgSpec, args map[string]interface{}) (*engine.
 	}
 
 	for name := range args {
+		if err := types.ValidateArgName(name); err != nil {
+			return nil, &engine.ArgError{Arg: name, Msg: err.Error()}
+		}
 		if !hasArg(spec, name) {
-			return nil, errors.New("unknown argument: " + name)
+			return nil, &engine.ArgError{Arg: name, Msg: "unknown argument"}
 		}
 	}
 
@@ -457,6 +478,9 @@ func validatePlanArgs(spec types.ArgSpec, args map[string]interface{}) (*engine.
 
 func attachSpecFlags(fs *pflag.FlagSet, spec types.ArgSpec) error {
 	for _, a := range spec.Args {
+		if err := types.ValidateArgName(a.Name); err != nil {
+			return &engine.ArgError{Arg: a.Name, Msg: err.Error()}
+		}
 		switch a.Type {
 		case "string":
 			def, _ := a.Default.(string)
@@ -478,7 +502,7 @@ func attachSpecFlags(fs *pflag.FlagSet, spec types.ArgSpec) error {
 		case "array", "object":
 			fs.StringArray(a.Name, nil, "")
 		default:
-			return errors.New("unsupported arg type: " + a.Type)
+			return &engine.ArgError{Arg: a.Name, Msg: "unsupported arg type"}
 		}
 	}
 	return nil
@@ -489,13 +513,13 @@ func setFlagFromValue(fs *pflag.FlagSet, arg types.Arg, val interface{}) error {
 	case "string":
 		s, ok := val.(string)
 		if !ok {
-			return errors.New("argument " + arg.Name + " must be a string")
+			return &engine.ArgError{Arg: arg.Name, Msg: "must be a string"}
 		}
 		return fs.Set(arg.Name, s)
 	case "boolean":
 		b, ok := val.(bool)
 		if !ok {
-			return errors.New("argument " + arg.Name + " must be a boolean")
+			return &engine.ArgError{Arg: arg.Name, Msg: "must be a boolean"}
 		}
 		return fs.Set(arg.Name, strconv.FormatBool(b))
 	case "integer":
@@ -507,7 +531,7 @@ func setFlagFromValue(fs *pflag.FlagSet, arg types.Arg, val interface{}) error {
 		case int64:
 			return fs.Set(arg.Name, strconv.Itoa(int(v)))
 		default:
-			return errors.New("argument " + arg.Name + " must be an integer")
+			return &engine.ArgError{Arg: arg.Name, Msg: "must be an integer"}
 		}
 	case "array":
 		switch arr := val.(type) {
@@ -515,7 +539,7 @@ func setFlagFromValue(fs *pflag.FlagSet, arg types.Arg, val interface{}) error {
 			for _, item := range arr {
 				s, ok := item.(string)
 				if !ok {
-					return errors.New("argument " + arg.Name + " array items must be strings")
+					return &engine.ArgError{Arg: arg.Name, Msg: "array items must be strings"}
 				}
 				if err := fs.Set(arg.Name, s); err != nil {
 					return err
@@ -530,17 +554,17 @@ func setFlagFromValue(fs *pflag.FlagSet, arg types.Arg, val interface{}) error {
 			}
 			return nil
 		default:
-			return errors.New("argument " + arg.Name + " must be an array of strings")
+			return &engine.ArgError{Arg: arg.Name, Msg: "must be an array of strings"}
 		}
 	case "object":
 		mp, ok := val.(map[string]interface{})
 		if !ok {
-			return errors.New("argument " + arg.Name + " must be an object")
+			return &engine.ArgError{Arg: arg.Name, Msg: "must be an object"}
 		}
 		for k, v := range mp {
 			str, ok := v.(string)
 			if !ok {
-				return errors.New("argument " + arg.Name + " values must be strings")
+				return &engine.ArgError{Arg: arg.Name, Msg: "object values must be strings"}
 			}
 			if err := fs.Set(arg.Name, k+"="+str); err != nil {
 				return err
@@ -548,7 +572,7 @@ func setFlagFromValue(fs *pflag.FlagSet, arg types.Arg, val interface{}) error {
 		}
 		return nil
 	default:
-		return errors.New("unsupported arg type: " + arg.Type)
+		return &engine.ArgError{Arg: arg.Name, Msg: "unsupported arg type"}
 	}
 }
 

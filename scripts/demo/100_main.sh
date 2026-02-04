@@ -15,7 +15,7 @@ fi
 
 echo "demo: $greeting"
 
-if [ "${FLWD_ARGS_JSON:-}" != "" ]; then
+if [ "${FLOWD_ARGS_JSON:-}" != "" ] || [ "${FLWD_ARGS_JSON:-}" != "" ]; then
     echo "demo: arguments captured (see events/artifacts)"
 fi
 

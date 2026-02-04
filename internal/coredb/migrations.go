@@ -21,6 +21,20 @@ var baseMigrations = [...]string{
 		PRIMARY KEY (key, endpoint)
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_core_idemp_ttl ON core_idempotency(ttl_expires_at);`,
+	`CREATE TABLE IF NOT EXISTS core_runs (
+		run_id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		started_at INTEGER NOT NULL,
+		finished_at INTEGER,
+		result BLOB,
+		executor TEXT,
+		runtime TEXT,
+		security_profile TEXT,
+		provenance BLOB,
+		request_id TEXT
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_core_runs_started_at ON core_runs(started_at);`,
 	`CREATE TABLE IF NOT EXISTS core_run_journal (
 		seq INTEGER PRIMARY KEY AUTOINCREMENT,
 		run_id TEXT NOT NULL,
@@ -36,6 +50,38 @@ func applyMigrations(ctx context.Context, conn *sql.DB) error {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("apply migration: %w", err)
 		}
+	}
+	if err := ensureRunRequestIDColumn(ctx, conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureRunRequestIDColumn(ctx context.Context, conn *sql.DB) error {
+	rows, err := conn.QueryContext(ctx, "PRAGMA table_info(core_runs);")
+	if err != nil {
+		return fmt.Errorf("inspect core_runs schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("inspect core_runs schema: %w", err)
+		}
+		if name == "request_id" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect core_runs schema: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "ALTER TABLE core_runs ADD COLUMN request_id TEXT;"); err != nil {
+		return fmt.Errorf("add core_runs.request_id: %w", err)
 	}
 	return nil
 }

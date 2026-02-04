@@ -64,7 +64,7 @@ var (
 	addonManifestMountPath = "/flwd-addon/" + addonManifestFileName
 )
 
-const problemTypeSignatureInvalid = "https://flowd.dev/problems/source-signature-invalid"
+const problemTypeSignatureInvalid = "https://flowd.org/problems/source-signature-invalid"
 
 func normalizeExpose(value string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(value))
@@ -209,7 +209,7 @@ func handleListSources(w http.ResponseWriter, r *http.Request, cfg SourcesConfig
 	}
 	data, err := json.Marshal(items)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "encode sources failed", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "encode sources failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -223,7 +223,7 @@ func handleUpsertSource(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -232,7 +232,7 @@ func handleUpsertSource(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if req.Name != "" && strings.ContainsAny(req.Name, "/\\") {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid name", response.WithDetail("name must not contain path separators")))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid name", response.WithDetail(scrubProblemDetail("name must not contain path separators", nil, nil, nil, nil))))
 		return
 	}
 
@@ -244,7 +244,7 @@ func handleUpsertSource(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	case "oci":
 		handleOCISource(ctx, w, req, cfg)
 	default:
-		response.Write(w, response.New(http.StatusBadRequest, "unsupported source type", response.WithDetail(req.Type)))
+		response.Write(w, response.New(http.StatusBadRequest, "unsupported source type", response.WithDetail(scrubProblemDetail(req.Type, nil, nil, nil, nil))))
 	}
 }
 
@@ -282,13 +282,13 @@ func handleLocalSource(w http.ResponseWriter, req sourceRequest, cfg SourcesConf
 	if allowedRoot == "" {
 		response.Write(w, response.New(http.StatusBadRequest, "source not allowed",
 			response.WithExtension("code", "source.not.allowed"),
-			response.WithDetail("local path outside allow-list")))
+			response.WithDetail(scrubProblemDetail("local path outside allow-list", nil, nil, nil, nil))))
 		return
 	}
 	expose, err := normalizeExpose(req.Expose)
 	if err != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid expose",
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -296,7 +296,7 @@ func handleLocalSource(w http.ResponseWriter, req sourceRequest, cfg SourcesConf
 	if aliasErr != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid alias configuration",
 			response.WithExtension("code", "alias.configuration.invalid"),
-			response.WithDetail(aliasErr.Error())))
+			response.WithDetail(scrubProblemDetail(aliasErr.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -343,7 +343,7 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 
 	parsed, err := url.Parse(repoURL)
 	if err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid git url", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid git url", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -360,7 +360,7 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		}
 		absPath, err := filepath.Abs(localPath)
 		if err != nil {
-			response.Write(w, response.New(http.StatusBadRequest, "invalid git url", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusBadRequest, "invalid git url", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		absPath = filepath.Clean(absPath)
@@ -374,7 +374,7 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		if !allowed {
 			response.Write(w, response.New(http.StatusBadRequest, "source not allowed",
 				response.WithExtension("code", "source.not.allowed"),
-				response.WithDetail("git path outside allow-list")))
+				response.WithDetail(scrubProblemDetail("git path outside allow-list", nil, nil, nil, nil))))
 			return
 		}
 		repoForClone = absPath
@@ -383,7 +383,7 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		if !hostAllowed(host, cfg.AllowGitHosts) {
 			response.Write(w, response.New(http.StatusBadRequest, "source not allowed",
 				response.WithExtension("code", "source.not.allowed"),
-				response.WithDetail("git host "+host+" not allowed")))
+				response.WithDetail(scrubProblemDetail("git host "+host+" not allowed", nil, nil, nil, nil))))
 			return
 		}
 	}
@@ -396,13 +396,13 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	expose, err := normalizeExpose(req.Expose)
 	if err != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid expose",
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
 	commit, checkoutPath, err := materializeGitSource(ctx, cfg.CheckoutDir, name, repoForClone, refName)
 	if err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "git checkout failed", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "git checkout failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -417,7 +417,7 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	if aliasErr != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid alias configuration",
 			response.WithExtension("code", "alias.configuration.invalid"),
-			response.WithDetail(aliasErr.Error())))
+			response.WithDetail(scrubProblemDetail(aliasErr.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -459,27 +459,27 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		return
 	}
 	if strings.Contains(imageRef, "://") {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid image reference", response.WithDetail("image reference must not include scheme")))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid image reference", response.WithDetail(scrubProblemDetail("image reference must not include scheme", nil, nil, nil, nil))))
 		return
 	}
 
 	if !req.Trusted {
 		response.Write(w, response.New(http.StatusBadRequest, "trust confirmation required",
 			response.WithExtension("code", "source.trust.required"),
-			response.WithDetail("oci sources require trusted=true")))
+			response.WithDetail(scrubProblemDetail("oci sources require trusted=true", nil, nil, nil, nil))))
 		return
 	}
 
 	storedPolicy, internalPolicy, err := normalizePullPolicy(req.PullPolicy)
 	if err != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid pull policy",
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	expose, err := normalizeExpose(req.Expose)
 	if err != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid expose",
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -487,7 +487,7 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	if err != nil {
 		response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 			response.WithExtension("code", "E_POLICY"),
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	ctx = requestctx.WithEffectiveProfile(ctx, effProfile)
@@ -498,13 +498,13 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		if err != nil {
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 				response.WithExtension("code", "E_POLICY"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 	}
 
 	if prob := enforceRegistryAllowList(ctx, imageRef, policyCtx); prob != nil {
-		response.Write(w, *prob)
+		response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
 		return
 	}
 
@@ -512,7 +512,7 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	if err != nil {
 		response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 			response.WithExtension("code", "E_POLICY"),
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -522,7 +522,7 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "signature verification required",
 				response.WithType(problemTypeSignatureInvalid),
 				response.WithExtension("code", "source-signature-invalid"),
-				response.WithDetail("signature verification is disabled for the current profile")))
+				response.WithDetail(scrubProblemDetail("signature verification is disabled for the current profile", nil, nil, nil, nil))))
 			return
 		}
 		if !outcome.Verified {
@@ -533,17 +533,18 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "signature verification failed",
 				response.WithType(problemTypeSignatureInvalid),
 				response.WithExtension("code", "source-signature-invalid"),
-				response.WithDetail(detail)))
+				response.WithDetail(scrubProblemDetail(detail, nil, nil, nil, nil))))
 			return
 		}
 	} else if prob != nil {
-		response.Write(w, *prob)
+		response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
 		return
 	}
 
 	runtimeVal, runtimeStr, runtimeErr := resolveRuntimeForOCI(ctx, cfg)
 	if runtimeErr != nil {
-		response.Write(w, runtimeUnavailableProblem(runtimeErr))
+		prob := runtimeUnavailableProblem(runtimeErr)
+		response.Write(w, scrubProblemResponse(&prob, nil, nil, nil, nil))
 		return
 	}
 	ctx = requestctx.WithRuntime(ctx, runtimeStr)
@@ -554,7 +555,7 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 			detail := err.Error()
 			response.Write(w, response.New(http.StatusBadRequest, "oci pull failed",
 				response.WithExtension("code", "E_OCI"),
-				response.WithDetail(detail)))
+				response.WithDetail(scrubProblemDetail(detail, nil, nil, nil, nil))))
 			return
 		}
 		metrics.Default.RecordContainerPull(time.Since(start))
@@ -567,16 +568,16 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 			metrics.Default.RecordAddonManifestInvalid()
 			response.Write(w, response.New(http.StatusBadRequest, "addon manifest missing",
 				response.WithExtension("code", "E_ADDON_MANIFEST"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		case errors.Is(err, errManifestInvalid):
 			metrics.Default.RecordAddonManifestInvalid()
 			response.Write(w, response.New(http.StatusBadRequest, "addon manifest invalid",
 				response.WithExtension("code", "E_ADDON_MANIFEST"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		default:
 			response.Write(w, response.New(http.StatusBadRequest, "oci command failed",
 				response.WithExtension("code", "E_OCI"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		}
 		return
 	}
@@ -586,14 +587,14 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		metrics.Default.RecordAddonManifestInvalid()
 		response.Write(w, response.New(http.StatusBadRequest, "addon manifest parse failed",
 			response.WithExtension("code", "E_ADDON_MANIFEST"),
-			response.WithDetail(parseErr.Error())))
+			response.WithDetail(scrubProblemDetail(parseErr.Error(), nil, nil, nil, nil))))
 		return
 	}
 	if len(validationErrs) > 0 {
 		metrics.Default.RecordAddonManifestInvalid()
 		response.Write(w, response.New(http.StatusBadRequest, "addon manifest invalid",
 			response.WithExtension("code", "E_ADDON_MANIFEST"),
-			response.WithDetail(strings.Join(validationErrs, "; "))))
+			response.WithDetail(scrubProblemDetail(strings.Join(validationErrs, "; "), nil, nil, nil, nil))))
 		return
 	}
 
@@ -604,7 +605,7 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 		} else {
 			response.Write(w, response.New(http.StatusBadRequest, "image inspect failed",
 				response.WithExtension("code", "E_OCI"),
-				response.WithDetail(inspectErr.Error())))
+				response.WithDetail(scrubProblemDetail(inspectErr.Error(), nil, nil, nil, nil))))
 			return
 		}
 	}
@@ -620,7 +621,7 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	if writeErr != nil {
 		response.Write(w, response.New(http.StatusInternalServerError, "cache manifest failed",
 			response.WithExtension("code", "E_OCI"),
-			response.WithDetail(writeErr.Error())))
+			response.WithDetail(scrubProblemDetail(writeErr.Error(), nil, nil, nil, nil))))
 		return
 	}
 

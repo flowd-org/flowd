@@ -84,7 +84,7 @@ func NewPlanCmd(root *cobra.Command) *cobra.Command {
 					}
 					suffix := ""
 					if a.Secret || a.Format == "secret" {
-						suffix = " [secret]"
+						suffix = " ($$REDACTED$$)"
 					}
 					fmt.Printf("  - %s: %s%s%s\n", a.Name, a.Type, req, suffix)
 				}

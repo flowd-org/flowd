@@ -3,6 +3,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,7 +30,7 @@ type ExecutorConfig struct {
 	Strict    bool
 	// Engine bindings
 	ArgEnv                  map[string]string // ARG_<UPPER>=value (scalars only)
-	ArgsJSON                string            // FLWD_ARGS_JSON content
+	ArgsJSON                string            // FLOWD_ARGS_JSON content
 	ArgValues               map[string]interface{}
 	RunID                   string
 	JobID                   string
@@ -44,7 +45,10 @@ type ExecutorConfig struct {
 	ContainerRootfsWritable bool
 	ContainerCapabilities   []string
 	SecretsDir              string
+	SecretHandles           map[string]string
 }
+
+const secretHandlesEnv = "FLOWD_SECRET_HANDLES"
 
 // ScriptResult holds per-script run outcome.
 type ScriptResult struct {
@@ -350,9 +354,10 @@ func executeProcessStep(ctx context.Context, cfg *types.Config, ecfg ExecutorCon
 		env = upsertEnv(env, "RUN_DIR", runDir)
 		env = upsertEnv(env, "FLWD_RUN_DIR", runDir)
 		if strings.Contains(interpreter, "bash") {
+			env = injectSecretHandles(env, ecfg)
 			cmd.Env = append(env, fmt.Sprintf("BASH_ENV=%s", profilePath))
 		} else {
-			cmd.Env = env
+			cmd.Env = injectSecretHandles(env, ecfg)
 		}
 
 		restoreUmask := applySecureUmask()
@@ -508,6 +513,7 @@ func buildSecureEnv(cfg *types.Config, argEnv map[string]string, argsJSON string
 		set(k, v)
 	}
 	if argsJSON != "" {
+		set("FLOWD_ARGS_JSON", argsJSON)
 		set("FLWD_ARGS_JSON", argsJSON)
 	}
 	if inherit {
@@ -525,6 +531,23 @@ func buildSecureEnv(cfg *types.Config, argEnv map[string]string, argsJSON string
 	env := make([]string, 0, len(ordered))
 	for _, e := range ordered {
 		env = append(env, fmt.Sprintf("%s=%s", e.key, envSet[e.key]))
+	}
+	return env
+}
+
+func injectSecretHandles(env []string, ecfg ExecutorConfig) []string {
+	if len(ecfg.SecretHandles) == 0 {
+		return env
+	}
+	handlePayload := make(map[string]map[string]string, len(ecfg.SecretHandles))
+	for name, handlePath := range ecfg.SecretHandles {
+		handlePayload[name] = map[string]string{
+			"type": "file",
+			"path": handlePath,
+		}
+	}
+	if payload, err := json.Marshal(handlePayload); err == nil {
+		env = upsertEnv(env, secretHandlesEnv, string(payload))
 	}
 	return env
 }
@@ -671,7 +694,6 @@ func runContainerStep(ctx context.Context, cfg *types.Config, ecfg ExecutorConfi
 		_ = container.RemoveContainer(cancelCtx, runtime, containerName)
 	}
 	metrics.Default.RecordContainerRun(dur)
-	metrics.Default.RecordContainerPull(dur)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

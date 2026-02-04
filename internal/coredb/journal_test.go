@@ -3,6 +3,7 @@ package coredb
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,7 +24,7 @@ func TestJournalAppendAndIterate(t *testing.T) {
 	journal := NewJournal(db, 0)
 
 	ts := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
-	first, err := journal.Append(ctx, "run-1", "run.start", []byte(`{"status":"running"}`), ts)
+	first, err := journal.Append(ctx, "run-1", "run.started", []byte(`{"status":"running"}`), ts)
 	if err != nil {
 		t.Fatalf("append first: %v", err)
 	}
@@ -31,7 +32,7 @@ func TestJournalAppendAndIterate(t *testing.T) {
 		t.Fatalf("expected sequence > 0")
 	}
 
-	second, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"hello"}`), ts.Add(time.Second))
+	second, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"hello"}`), ts.Add(time.Second))
 	if err != nil {
 		t.Fatalf("append second: %v", err)
 	}
@@ -55,8 +56,8 @@ func TestJournalAppendAndIterate(t *testing.T) {
 	if !entries[0].Timestamp.Equal(ts) {
 		t.Fatalf("expected first timestamp %v, got %v", ts, entries[0].Timestamp)
 	}
-	if entries[1].EventType != "step.log" {
-		t.Fatalf("expected event type step.log, got %s", entries[1].EventType)
+	if entries[1].EventType != "step.output" {
+		t.Fatalf("expected event type step.output, got %s", entries[1].EventType)
 	}
 }
 
@@ -76,10 +77,10 @@ func TestJournalEvictsOldestWhenOverLimit(t *testing.T) {
 	// Limit well below two payloads to force eviction of the first.
 	journal := NewJournal(db, 30)
 
-	if _, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
+	if _, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
 		t.Fatalf("append alpha: %v", err)
 	}
-	second, err := journal.Append(ctx, "run-1", "step.log", []byte(`{"message":"bravo"}`), time.Now().UTC())
+	second, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"bravo"}`), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("append bravo: %v", err)
 	}
@@ -121,9 +122,164 @@ func TestJournalRejectsPayloadAboveLimit(t *testing.T) {
 	})
 
 	journal := NewJournal(db, 8) // eight bytes max
-	_, err = journal.Append(ctx, "run-1", "step.log", []byte(`{"msg":"too big"}`), time.Now().UTC())
+	_, err = journal.Append(ctx, "run-1", "step.output", []byte(`{"msg":"too big"}`), time.Now().UTC())
 	if !errors.Is(err, ErrJournalQuotaExceeded) {
 		t.Fatalf("expected ErrJournalQuotaExceeded, got %v", err)
+	}
+}
+
+func TestJournalBoundsAfterEvictionAcrossRuns(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(ctx, Options{DataDir: dir})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	// Limit forces eviction after the third append (10 + 10 + 10 > 20).
+	journal := NewJournal(db, 20)
+	if journal == nil {
+		t.Fatal("expected journal")
+	}
+
+	payload := []byte("1234567890")
+	first, err := journal.Append(ctx, "run-1", "step.output", payload, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("append first: %v", err)
+	}
+	second, err := journal.Append(ctx, "run-2", "step.output", payload, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("append second: %v", err)
+	}
+	third, err := journal.Append(ctx, "run-1", "step.output", payload, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("append third: %v", err)
+	}
+
+	if first.Seq == 0 || second.Seq == 0 || third.Seq == 0 {
+		t.Fatalf("expected non-zero sequences, got first=%d second=%d third=%d", first.Seq, second.Seq, third.Seq)
+	}
+
+	earliestAll, latestAll, err := journal.BoundsAll(ctx)
+	if err != nil {
+		t.Fatalf("bounds all: %v", err)
+	}
+	if earliestAll != second.Seq || latestAll != third.Seq {
+		t.Fatalf("expected bounds all earliest=%d latest=%d, got earliest=%d latest=%d", second.Seq, third.Seq, earliestAll, latestAll)
+	}
+
+	earliestRun1, latestRun1, err := journal.Bounds(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("bounds run-1: %v", err)
+	}
+	if earliestRun1 != third.Seq || latestRun1 != third.Seq {
+		t.Fatalf("expected run-1 bounds to equal third seq %d, got earliest=%d latest=%d", third.Seq, earliestRun1, latestRun1)
+	}
+
+	earliestRun2, latestRun2, err := journal.Bounds(ctx, "run-2")
+	if err != nil {
+		t.Fatalf("bounds run-2: %v", err)
+	}
+	if earliestRun2 != second.Seq || latestRun2 != second.Seq {
+		t.Fatalf("expected run-2 bounds to equal second seq %d, got earliest=%d latest=%d", second.Seq, earliestRun2, latestRun2)
+	}
+
+	var run1Entries []int64
+	if err := journal.ForEach(ctx, "run-1", 0, func(entry JournalEntry) error {
+		run1Entries = append(run1Entries, entry.Seq)
+		return nil
+	}); err != nil {
+		t.Fatalf("iterate run-1: %v", err)
+	}
+	if len(run1Entries) != 1 || run1Entries[0] != third.Seq {
+		t.Fatalf("expected only third seq retained for run-1, got %v", run1Entries)
+	}
+}
+
+func TestJournalEvictionAppendAtomicity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(ctx, Options{DataDir: dir})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	journal := NewJournal(db, 30)
+	if journal == nil {
+		t.Fatal("expected journal")
+	}
+
+	if _, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"alpha"}`), time.Now().UTC()); err != nil {
+		t.Fatalf("append seed: %v", err)
+	}
+
+	earliest, latest, err := journal.Bounds(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("bounds seed: %v", err)
+	}
+	if earliest == 0 || latest == 0 {
+		t.Fatalf("expected seeded bounds to be non-zero, got earliest=%d latest=%d", earliest, latest)
+	}
+
+	stop := make(chan struct{})
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			if _, err := journal.Append(ctx, "run-1", "step.output", []byte(`{"message":"bravo"}`), time.Now().UTC()); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		close(stop)
+	}()
+
+	for {
+		select {
+		case err := <-errCh:
+			wg.Wait()
+			t.Fatalf("append loop error: %v", err)
+		case <-stop:
+			wg.Wait()
+			goto Done
+		default:
+			currentEarliest, currentLatest, err := journal.Bounds(ctx, "run-1")
+			if err != nil {
+				wg.Wait()
+				t.Fatalf("bounds read: %v", err)
+			}
+			if currentEarliest == 0 || currentLatest == 0 {
+				wg.Wait()
+				t.Fatalf("observed empty bounds during append, earliest=%d latest=%d", currentEarliest, currentLatest)
+			}
+			if currentEarliest > currentLatest {
+				wg.Wait()
+				t.Fatalf("observed inverted bounds during append, earliest=%d latest=%d", currentEarliest, currentLatest)
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+	}
+
+Done:
+	finalEarliest, finalLatest, err := journal.Bounds(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("bounds final: %v", err)
+	}
+	if finalEarliest == 0 || finalLatest == 0 {
+		t.Fatalf("expected final bounds to be non-zero, got earliest=%d latest=%d", finalEarliest, finalLatest)
 	}
 }
 

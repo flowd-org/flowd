@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/runstore"
 )
@@ -20,6 +21,7 @@ type RunPayload struct {
 	Runtime         string         `json:"runtime,omitempty"`
 	SecurityProfile string         `json:"security_profile,omitempty"`
 	Provenance      map[string]any `json:"provenance,omitempty"`
+	RequestID       string         `json:"request_id,omitempty"`
 }
 
 func newRunPayload(id, jobID, status string, startedAt time.Time) RunPayload {
@@ -33,15 +35,33 @@ func newRunPayload(id, jobID, status string, startedAt time.Time) RunPayload {
 
 func payloadFromStore(run runstore.Run) RunPayload {
 	return RunPayload{
-		ID:         run.ID,
-		JobID:      run.JobID,
-		Status:     run.Status,
-		StartedAt:  run.StartedAt,
-		FinishedAt: run.FinishedAt,
-		Result:     run.Result,
-		Executor:   run.Executor,
-		Runtime:    run.Runtime,
-		Provenance: run.Provenance,
+		ID:              run.ID,
+		JobID:           run.JobID,
+		Status:          run.Status,
+		StartedAt:       run.StartedAt,
+		FinishedAt:      run.FinishedAt,
+		Result:          run.Result,
+		Executor:        run.Executor,
+		Runtime:         run.Runtime,
+		SecurityProfile: run.SecurityProfile,
+		Provenance:      run.Provenance,
+		RequestID:       run.RequestID,
+	}
+}
+
+func payloadFromRecord(record coredb.RunRecord) RunPayload {
+	return RunPayload{
+		ID:              record.ID,
+		JobID:           record.JobID,
+		Status:          record.Status,
+		StartedAt:       record.StartedAt,
+		FinishedAt:      record.FinishedAt,
+		Result:          record.Result,
+		Executor:        record.Executor,
+		Runtime:         record.Runtime,
+		SecurityProfile: record.SecurityProfile,
+		Provenance:      record.Provenance,
+		RequestID:       record.RequestID,
 	}
 }
 

@@ -3,15 +3,15 @@ package requestctx
 import (
 	"context"
 	"log/slog"
+
+	"github.com/flowd-org/flowd/internal/observability/logctx"
 )
 
-type loggerKey struct{}
 type profileKey struct{}
 type metadataKey struct{}
 type principalKey struct{}
 
 var (
-	ctxLoggerKey    = &loggerKey{}
 	ctxProfileKey   = &profileKey{}
 	ctxMetadataKey  = &metadataKey{}
 	ctxPrincipalKey = &principalKey{}
@@ -19,25 +19,35 @@ var (
 
 // Metadata stores auxiliary request attributes for structured logging.
 type Metadata struct {
-	Runtime string
-	Route   string
+	Runtime   string
+	Route     string
+	RequestID string
 }
 
 // WithLogger stores the request-scoped logger in the context.
 func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
-	if logger == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, ctxLoggerKey, logger)
+	return logctx.WithLogger(ctx, logger)
 }
 
 // Logger extracts the request-scoped logger from context, if present.
 func Logger(ctx context.Context) *slog.Logger {
-	if ctx == nil {
-		return nil
+	return logctx.Logger(ctx)
+}
+
+// WithScrubbedLogger wraps the request logger with a scrubber to redact sensitive data.
+func WithScrubbedLogger(ctx context.Context, scrub func(string) string) context.Context {
+	if scrub == nil {
+		return ctx
 	}
-	logger, _ := ctx.Value(ctxLoggerKey).(*slog.Logger)
-	return logger
+	logger := logctx.Logger(ctx)
+	if logger == nil {
+		return ctx
+	}
+	wrapped := logctx.WrapLogger(logger, scrub)
+	if wrapped == logger {
+		return ctx
+	}
+	return logctx.WithLogger(ctx, wrapped)
 }
 
 // WithEffectiveProfile annotates the context with the effective security profile.
@@ -89,6 +99,29 @@ func WithRuntime(ctx context.Context, runtime string) context.Context {
 	}
 	meta.Runtime = runtime
 	return ctx
+}
+
+// WithRequestID annotates metadata with the request/correlation identifier.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if requestID == "" {
+		return ctx
+	}
+	meta := MetadataFromContext(ctx)
+	if meta == nil {
+		meta = &Metadata{}
+		ctx = context.WithValue(ctx, ctxMetadataKey, meta)
+	}
+	meta.RequestID = requestID
+	return ctx
+}
+
+// RequestID extracts the request/correlation identifier from metadata, if any.
+func RequestID(ctx context.Context) (string, bool) {
+	meta := MetadataFromContext(ctx)
+	if meta == nil || meta.RequestID == "" {
+		return "", false
+	}
+	return meta.RequestID, true
 }
 
 // Runtime extracts the runtime value recorded in metadata, if any.

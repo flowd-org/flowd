@@ -28,12 +28,12 @@ To build and run the reference implementation you need:
 
 ## Clone and build
 
-Clone the official repository and build the static binary:
+Clone the official repository and build the binary (FLOWD avoids CGO, so the build is a self-contained static Go binary.):
 
 ```bash
 $ git clone https://github.com/flowd-org/flowd.git
 $ cd flowd
-$ go build ./cmd/flwd
+$ CGO_ENABLED=0 go build -o flwd .
 ```
 
 This produces a `flwd` binary in the current directory. You can also use any

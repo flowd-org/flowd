@@ -48,6 +48,9 @@ func (s *journalEventSink) Publish(runID string, ev sse.Event) {
 	}
 	ev.ID = strconv.FormatInt(entry.Seq, 10)
 	ev.Timestamp = entry.Timestamp
+	if ev.RunID == "" {
+		ev.RunID = runID
+	}
 	if s.next != nil {
 		s.next.Publish(runID, ev)
 	}

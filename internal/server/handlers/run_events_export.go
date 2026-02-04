@@ -17,7 +17,7 @@ import (
 const (
 	exportExtensionName  = "export"
 	extensionUnsupported = "about:blank#extension-unsupported"
-	cursorExpiredProblem = "https://flowd.dev/problems/cursor-expired"
+	cursorExpiredProblem = "https://flowd.org/problems/sse/stale-cursor"
 	ndjsonContentType    = "text/x-ndjson"
 	exportCacheControl   = "no-store"
 )

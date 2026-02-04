@@ -35,17 +35,20 @@ func TestRunEventsHandlerStreamsEvents(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	sink.Publish("run-123", sse.Event{Event: "run.start", Data: "{}"})
+	sink.Publish("run-123", sse.Event{Event: "run.started", Data: "{}"})
 	time.Sleep(10 * time.Millisecond)
 	cancel()
 
 	<-done
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: run.start") {
-		t.Fatalf("expected run.start event in body, got %q", body)
+	if !strings.Contains(body, "\"type\":\"run.started\"") {
+		t.Fatalf("expected run.started event in body, got %q", body)
 	}
-	if !strings.Contains(body, "retry: 2000") {
+	if !strings.Contains(body, "retry: 3000") {
 		t.Fatalf("expected retry directive in body, got %q", body)
+	}
+	if !strings.Contains(body, "event: flowd") {
+		t.Fatalf("expected flowd event envelope, got %q", body)
 	}
 }
 
@@ -58,8 +61,8 @@ func TestRunEventsHandlerReplayFromHeader(t *testing.T) {
 		hub.Publish(runID, ev)
 	}))
 
-	sink.Publish("run-456", sse.Event{Event: "run.start", Data: "{}"})
-	sink.Publish("run-456", sse.Event{Event: "step.log", Data: "{\"msg\":\"hello\"}"})
+	sink.Publish("run-456", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-456", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
 
 	h := NewRunEventsHandler(store, hub, journal)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-456/events", nil)
@@ -87,6 +90,117 @@ func TestRunEventsHandlerReplayFromHeader(t *testing.T) {
 	}
 }
 
+func TestRunEventsHandlerResumeFromLastEventID(t *testing.T) {
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-resume", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+	to := time.Hour
+	hub := sse.New(sse.Config{KeepAliveInterval: to})
+	journal := newTestJournal(t)
+	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {
+		hub.Publish(runID, ev)
+	}))
+
+	sink.Publish("run-resume", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-resume", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
+	sink.Publish("run-resume", sse.Event{Event: "step.finished", Data: "{\"status\":\"ok\"}"})
+
+	h := NewRunEventsHandler(store, hub, journal)
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-resume/events", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req = req.WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	if strings.Contains(body, "id: 1") {
+		t.Fatalf("expected resume to skip id 1, got %q", body)
+	}
+	if !strings.Contains(body, "id: 2") || !strings.Contains(body, "id: 3") {
+		t.Fatalf("expected replay of ids 2 and 3, got %q", body)
+	}
+	if strings.Count(body, "id: 2") != 1 || strings.Count(body, "id: 3") != 1 {
+		t.Fatalf("expected single replay of ids 2 and 3, got %q", body)
+	}
+}
+
+func TestRunEventsHandlerResumeAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	db, err := coredb.Open(ctx, coredb.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	journal := coredb.NewJournal(db, 0)
+	if journal == nil {
+		_ = db.Close()
+		t.Fatal("expected journal")
+	}
+
+	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {}))
+	sink.Publish("run-restart", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-restart", sse.Event{Event: "step.output", Data: "{\"msg\":\"hello\"}"})
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	db, err = coredb.Open(ctx, coredb.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("reopen db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	journal = coredb.NewJournal(db, 0)
+	if journal == nil {
+		t.Fatal("expected journal after restart")
+	}
+
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-restart", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+	hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	h := NewRunEventsHandler(store, hub, journal)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-restart/events", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	req = req.WithContext(streamCtx)
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	if strings.Contains(body, "id: 1") {
+		t.Fatalf("expected resume to skip id 1 after restart, got %q", body)
+	}
+	if strings.Count(body, "id: 2") != 1 {
+		t.Fatalf("expected single replay of event id 2, got %q", body)
+	}
+	if !strings.Contains(body, "\"type\":\"step.output\"") {
+		t.Fatalf("expected step.output event, got %q", body)
+	}
+}
+
 func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 	store := runstore.New()
 	store.Create(runstore.Run{ID: "run-789", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
@@ -96,8 +210,8 @@ func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 		hub.Publish(runID, ev)
 	}))
 
-	sink.Publish("run-789", sse.Event{Event: "run.start", Data: "{}"})
-	sink.Publish("run-789", sse.Event{Event: "step.log", Data: "{\"msg\":\"world\"}"})
+	sink.Publish("run-789", sse.Event{Event: "run.started", Data: "{}"})
+	sink.Publish("run-789", sse.Event{Event: "step.output", Data: "{\"msg\":\"world\"}"})
 
 	h := NewRunEventsHandler(store, hub, journal)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-789/events", nil)
@@ -116,7 +230,7 @@ func TestRunEventsHandlerReplayWithoutLastID(t *testing.T) {
 	<-done
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "run.start") || !strings.Contains(body, "step.log") {
+	if !strings.Contains(body, "\"type\":\"run.started\"") || !strings.Contains(body, "\"type\":\"step.output\"") {
 		t.Fatalf("expected replayed events, got %q", body)
 	}
 }
@@ -155,8 +269,8 @@ func TestRunEventsHandlerReturns410ForExpiredCursor(t *testing.T) {
 		hub.Publish(runID, ev)
 	}))
 
-	sink.Publish("run-expired", sse.Event{Event: "step.log", Data: "{\"msg\":\"old\"}"})
-	sink.Publish("run-expired", sse.Event{Event: "step.log", Data: "{\"msg\":\"new\"}"})
+	sink.Publish("run-expired", sse.Event{Event: "step.output", Data: "{\"msg\":\"old\"}"})
+	sink.Publish("run-expired", sse.Event{Event: "step.output", Data: "{\"msg\":\"new\"}"})
 
 	h := NewRunEventsHandler(store, hub, dirJournal)
 	req := httptest.NewRequest(http.MethodGet, "/runs/run-expired/events", nil)
@@ -172,6 +286,79 @@ func TestRunEventsHandlerReturns410ForExpiredCursor(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "cursor expired") {
 		t.Fatalf("expected cursor expired problem, got %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "https://flowd.org/problems/sse/stale-cursor") {
+		t.Fatalf("expected stale-cursor problem type, got %q", rec.Body.String())
+	}
+}
+
+func TestRunEventsHandlerInvalidLastEventID(t *testing.T) {
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-invalid", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+
+	t.Run("non-integer", func(t *testing.T) {
+		hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+		journal := newTestJournal(t)
+		h := NewRunEventsHandler(store, hub, journal)
+
+		req := httptest.NewRequest(http.MethodGet, "/runs/run-invalid/events", nil)
+		req.Header.Set("Last-Event-ID", "not-a-number")
+		rec := httptest.NewRecorder()
+
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+		}
+	})
+
+	t.Run("beyond-latest", func(t *testing.T) {
+		hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+		journal := newTestJournal(t)
+		sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {
+			hub.Publish(runID, ev)
+		}))
+
+		sink.Publish("run-invalid", sse.Event{Event: "run.started", Data: "{}"})
+
+		h := NewRunEventsHandler(store, hub, journal)
+		req := httptest.NewRequest(http.MethodGet, "/runs/run-invalid/events", nil)
+		req.Header.Set("Last-Event-ID", "2")
+		rec := httptest.NewRecorder()
+
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+		}
+	})
+}
+
+func TestRunEventsHandlerStaleCursorAfterEviction(t *testing.T) {
+	store := runstore.New()
+	store.Create(runstore.Run{ID: "run-evict", JobID: "demo", Status: "queued", StartedAt: time.Unix(0, 0)})
+	// Keepalive disabled to avoid background heartbeats in the response body.
+	hub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	journal := newTestJournalWithLimit(t, 20)
+	// Only persist to journal; live hub is unused for this stale-cursor path.
+	sink := NewJournalEventSink(journal, EventSinkFunc(func(runID string, ev sse.Event) {}))
+
+	sink.Publish("run-evict", sse.Event{Event: "step.output", Data: "{\"msg\":\"old\"}"})
+	sink.Publish("run-evict", sse.Event{Event: "step.output", Data: "{\"msg\":\"new\"}"})
+
+	h := NewRunEventsHandler(store, hub, journal)
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-evict/events", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410 Gone, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected problem+json content type, got %q", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "https://flowd.org/problems/sse/stale-cursor") {
+		t.Fatalf("expected stale-cursor problem type, got %q", body)
 	}
 }
 

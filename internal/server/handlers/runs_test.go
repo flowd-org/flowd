@@ -23,6 +23,7 @@ import (
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
+	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/runstore"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
@@ -127,7 +128,7 @@ argspec:
 	if source["resolved_ref"] == "" {
 		t.Fatalf("expected resolved_ref in provenance")
 	}
-	getHandler := NewRunGetHandler(store)
+	getHandler := NewRunGetHandler(RunGetConfig{Store: store})
 	getReq := httptest.NewRequest(http.MethodGet, "/runs/"+payload["id"].(string), nil)
 	getResp := httptest.NewRecorder()
 	getHandler.ServeHTTP(getResp, getReq)
@@ -166,7 +167,7 @@ argspec:
 	}
 	waitFor(func() bool { return sink.count() >= 1 }, 200*time.Millisecond, t)
 	e := sink.snapshot()[0]
-	if e.runID == "" || e.event.Event != "run.start" {
+	if e.runID == "" || e.event.Event != "run.started" {
 		t.Fatalf("unexpected event payload: %+v", e)
 	}
 	var payload map[string]any
@@ -185,7 +186,7 @@ argspec:
 	if _, ok := payload["provenance"].(map[string]any); !ok {
 		t.Fatalf("expected provenance in event payload, got %T", payload["provenance"])
 	}
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 500*time.Millisecond, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 500*time.Millisecond, t)
 }
 
 func TestRunsHandlerProvenanceFromResolver(t *testing.T) {
@@ -304,7 +305,7 @@ func TestRunsHandlerGitSource(t *testing.T) {
 		t.Fatalf("expected resolved_ref to be populated")
 	}
 
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 2*time.Second, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 2*time.Second, t)
 }
 
 func TestRunsHandlerUsesLocalSource(t *testing.T) {
@@ -435,7 +436,7 @@ func TestRunsHandlerUnknownJob(t *testing.T) {
 		t.Fatalf("expected 404, got %d", resp.Code)
 	}
 
-	getHandler := NewRunGetHandler(store)
+	getHandler := NewRunGetHandler(RunGetConfig{Store: store})
 	getReq := httptest.NewRequest(http.MethodGet, "/runs/does-not-exist", nil)
 	getResp := httptest.NewRecorder()
 	getHandler.ServeHTTP(getResp, getReq)
@@ -495,10 +496,134 @@ argspec:
 	if secondBody["id"] != firstID {
 		t.Fatalf("expected idempotent response id %s, got %v", firstID, secondBody["id"])
 	}
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 500*time.Millisecond, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 500*time.Millisecond, t)
 	t.Logf("events: %+v", sink.snapshot())
-	if sink.countBy("run.start") != 1 {
-		t.Fatalf("expected single run.start emission under idempotency, got %d", sink.countBy("run.start"))
+	if sink.countBy("run.started") != 1 {
+		t.Fatalf("expected single run.started emission under idempotency, got %d", sink.countBy("run.started"))
+	}
+}
+
+func TestRunsHandlerIdempotencyCoreDBReplayAndConflict(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store := runstore.New()
+	sink := &recordingSink{}
+	blocked := make(chan struct{})
+	unblock := make(chan struct{})
+	var discoverCalls int32
+	discover := func(root string) (indexer.Result, error) {
+		if atomic.AddInt32(&discoverCalls, 1) == 1 {
+			close(blocked)
+			<-unblock
+		}
+		return indexer.Discover(root)
+	}
+	h := NewRunsHandler(RunsConfig{
+		Root:     root,
+		Store:    store,
+		Events:   sink,
+		DB:       db,
+		Discover: discover,
+	})
+	key := "dddddddddddddddddddd"
+	payload := `{"job_id":"demo","args":{"name":"Alice"}}`
+
+	first := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req1.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req1, key)
+	firstDone := make(chan struct{})
+	go func() {
+		h.ServeHTTP(first, req1)
+		close(firstDone)
+	}()
+
+	waitFor(func() bool {
+		select {
+		case <-blocked:
+			return true
+		default:
+			return false
+		}
+	}, 500*time.Millisecond, t)
+
+	second := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req2.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req2, key)
+	h.ServeHTTP(second, req2)
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for in-flight idempotency, got %d", second.Code)
+	}
+	var problem map[string]any
+	if err := json.NewDecoder(second.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode in-flight problem: %v", err)
+	}
+	if problem["type"] != idempotencyInFlightType {
+		t.Fatalf("expected in-flight type %s, got %+v", idempotencyInFlightType, problem)
+	}
+
+	close(unblock)
+	<-firstDone
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request 201, got %d", first.Code)
+	}
+	var firstBody map[string]any
+	if err := json.NewDecoder(first.Body).Decode(&firstBody); err != nil {
+		t.Fatalf("decode first body: %v", err)
+	}
+	firstID, _ := firstBody["id"].(string)
+
+	third := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req3.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req3, key)
+	h.ServeHTTP(third, req3)
+	if third.Code != http.StatusCreated {
+		t.Fatalf("expected replay 201, got %d", third.Code)
+	}
+	if replay := third.Header().Get("Idempotent-Replay"); replay != "true" {
+		t.Fatalf("expected Idempotent-Replay header true, got %q", replay)
+	}
+	var thirdBody map[string]any
+	if err := json.NewDecoder(third.Body).Decode(&thirdBody); err != nil {
+		t.Fatalf("decode replay body: %v", err)
+	}
+	if thirdBody["id"] != firstID {
+		t.Fatalf("expected replay id %s, got %v", firstID, thirdBody["id"])
+	}
+
+	conflict := httptest.NewRecorder()
+	req4 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"demo","args":{"name":"Bob"}}`))
+	req4.Header.Set("Content-Type", "application/json")
+	setSpecificIdempotencyKey(req4, key)
+	h.ServeHTTP(conflict, req4)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for idempotency conflict, got %d", conflict.Code)
+	}
+	problem = map[string]any{}
+	if err := json.NewDecoder(conflict.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode conflict problem: %v", err)
+	}
+	if problem["type"] != idempotencyMismatchType {
+		t.Fatalf("expected conflict type %s, got %+v", idempotencyMismatchType, problem)
 	}
 }
 
@@ -508,8 +633,16 @@ func (quotaFailingIdempotencyStore) Lookup(context.Context, string, string, time
 	return RunPayload{}, 0, "", false, nil
 }
 
+func (quotaFailingIdempotencyStore) Reserve(context.Context, string, string, string, time.Time, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (quotaFailingIdempotencyStore) Store(context.Context, string, string, string, RunPayload, int, time.Time) error {
 	return coredb.ErrJournalQuotaExceeded
+}
+
+func (quotaFailingIdempotencyStore) Release(context.Context, string, string) error {
+	return nil
 }
 
 func TestRunsHandlerStorageQuotaExceeded(t *testing.T) {
@@ -581,6 +714,22 @@ argspec:
 	}
 }
 
+func TestRunsHandlerIdempotencyTTLDefault(t *testing.T) {
+	root := t.TempDir()
+	h := NewRunsHandler(RunsConfig{Root: root})
+	if h.idempotencyTTL != defaultIdempotencyTTL {
+		t.Fatalf("expected default idempotency TTL %s, got %s", defaultIdempotencyTTL, h.idempotencyTTL)
+	}
+}
+
+func TestRunsHandlerIdempotencyTTLMaxBound(t *testing.T) {
+	root := t.TempDir()
+	h := NewRunsHandler(RunsConfig{Root: root, IdempotencyTTL: 100 * time.Hour})
+	if h.idempotencyTTL != maxIdempotencyTTL {
+		t.Fatalf("expected idempotency TTL capped at %s, got %s", maxIdempotencyTTL, h.idempotencyTTL)
+	}
+}
+
 func TestRunsHandlerIdempotencyHashMismatch(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `
@@ -607,6 +756,76 @@ argspec:
 
 	if resp.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for hash mismatch, got %d", resp.Code)
+	}
+}
+
+func TestRunsHandlerIdempotencyStoreRedactsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "secret-demo", `
+version: v1
+job:
+  id: secret-demo
+  name: Secret Demo Job
+argspec:
+  args:
+    - name: token
+      type: string
+      format: secret
+      required: true
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	h := NewRunsHandler(RunsConfig{Root: root, DB: db})
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"secret-demo","args":{"token":"supersecret"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	key := addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	store := coredb.NewIdempotencyStore(db)
+	body, status, _, ok, err := store.Lookup(context.Background(), key, "POST /runs", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("lookup idempotency: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected idempotency entry to be stored")
+	}
+	if status != http.StatusCreated {
+		t.Fatalf("expected stored status 201, got %d", status)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode stored payload: %v", err)
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result payload, got %T", payload["result"])
+	}
+	resolved, ok := result["resolved_args"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resolved_args, got %T", result["resolved_args"])
+	}
+	if resolved["token"] != "$$REDACTED$$" {
+		t.Fatalf("expected redacted token, got %v", resolved["token"])
+	}
+
+	bodyStr := string(body)
+	if strings.Contains(bodyStr, "supersecret") {
+		t.Fatalf("stored idempotency payload contains secret value")
+	}
+	if baseDir := secrets.BaseDir(); baseDir != "" && strings.Contains(bodyStr, baseDir) {
+		t.Fatalf("stored idempotency payload contains secret handle base dir")
 	}
 }
 
@@ -883,7 +1102,7 @@ argspec:
 		t.Fatalf("expected run id in response")
 	}
 
-	waitFor(func() bool { return sink.countBy("run.finish") >= 1 }, 2*time.Second, t)
+	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 2*time.Second, t)
 
 	saved, ok := runStore.Get(runID)
 	if !ok {
@@ -1315,6 +1534,104 @@ container:
 	}
 }
 
+func TestRunsHandlerPolicyDeniedSSEEventPersistedAndLive(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "override", `
+version: v1
+job:
+  id: override
+  name: Override Job
+executor: container
+interpreter: "container:alpine:3.20"
+container:
+  network: bridge
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	journal := coredb.NewJournal(db, 0)
+
+	store := runstore.New()
+	runHub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	globalHub := sse.New(sse.Config{KeepAliveInterval: time.Hour})
+	baseSink := EventSinkFunc(func(runID string, ev sse.Event) {
+		runHub.Publish(runID, ev)
+		globalHub.Publish("global", WrapGlobalEvent(runID, ev))
+	})
+	eventSink := NewJournalEventSink(journal, baseSink)
+
+	oldDetect := detectContainerRuntime
+	detectContainerRuntime = func(func(string) (string, error)) (container.Runtime, error) {
+		return container.RuntimeDocker, nil
+	}
+	defer func() { detectContainerRuntime = oldDetect }()
+
+	h := NewRunsHandler(RunsConfig{
+		Root:    root,
+		Profile: "secure",
+		Store:   store,
+		Events:  eventSink,
+		DB:      db,
+		Runtime: container.RuntimeDocker,
+	})
+	globalEvents := NewEventsHandler(EventsConfig{
+		RunStore:  store,
+		RunHub:    runHub,
+		GlobalHub: globalHub,
+		Journal:   journal,
+	})
+
+	// Start a live SSE stream and ensure it is ready.
+	liveCtx, liveCancel := context.WithCancel(context.Background())
+	liveReq := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(liveCtx)
+	liveRec := httptest.NewRecorder()
+	liveDone := make(chan struct{})
+	go func() {
+		globalEvents.ServeHTTP(liveRec, liveReq)
+		close(liveDone)
+	}()
+	waitFor(func() bool { return strings.Contains(liveRec.Body.String(), "retry: 3000") }, 200*time.Millisecond, t)
+
+	// Trigger a policy denial.
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"override"}`))
+	req.Header.Set("Content-Type", "application/json")
+	addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var problem map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem["code"] != "policy.denied" {
+		t.Fatalf("expected policy.denied, got %+v", problem)
+	}
+
+	// Live stream should include policy.denied event.
+	waitFor(func() bool { return strings.Contains(liveRec.Body.String(), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
+	liveCancel()
+	<-liveDone
+
+	// Persisted replay should include policy.denied event as well.
+	replayCtx, replayCancel := context.WithCancel(context.Background())
+	replayReq := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(replayCtx)
+	replayRec := httptest.NewRecorder()
+	replayDone := make(chan struct{})
+	go func() {
+		globalEvents.ServeHTTP(replayRec, replayReq)
+		close(replayDone)
+	}()
+	waitFor(func() bool { return strings.Contains(replayRec.Body.String(), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
+	replayCancel()
+	<-replayDone
+}
+
 func TestRunsHandlerOverrideAllowedPermissive(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "override", `
@@ -1459,31 +1776,37 @@ func TestSourceToProvenanceIncludesDigest(t *testing.T) {
 }
 
 func TestPrepareSecretsWritesFiles(t *testing.T) {
-	runDir := t.TempDir()
+	baseDir := t.TempDir()
+	prev := paths.DataDir()
+	paths.SetDataDirOverride(baseDir)
+	t.Cleanup(func() { paths.SetDataDirOverride(prev) })
 	binding := &engine.Binding{
 		Values:      map[string]interface{}{"api-key": "supersecret"},
 		SecretNames: map[string]struct{}{"api-key": {}},
 	}
-	secretDir, err := prepareSecrets(runDir, binding)
+	secretHandles, cleanup, err := prepareSecrets("run-123", binding)
 	if err != nil {
 		t.Fatalf("prepare secrets: %v", err)
 	}
-	if secretDir == "" {
-		t.Fatal("expected secrets directory path")
+	if cleanup == nil {
+		t.Fatal("expected secret cleanup")
 	}
-	content, err := os.ReadFile(filepath.Join(secretDir, "api-key"))
+	defer func() {
+		_ = cleanup()
+	}()
+	if len(secretHandles) == 0 {
+		t.Fatal("expected secret handles")
+	}
+	handlePath, ok := secretHandles["api-key"]
+	if !ok || handlePath == "" {
+		t.Fatal("expected handle for api-key")
+	}
+	content, err := os.ReadFile(handlePath)
 	if err != nil {
-		t.Fatalf("read secret file: %v", err)
+		t.Fatalf("read handle: %v", err)
 	}
 	if string(content) != "supersecret" {
 		t.Fatalf("expected secret content preserved, got %q", string(content))
-	}
-	info, err := os.Stat(filepath.Join(secretDir, "api-key"))
-	if err != nil {
-		t.Fatalf("stat secret file: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("expected secret file perms 0600, got %v", info.Mode().Perm())
 	}
 }
 

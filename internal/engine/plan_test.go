@@ -24,6 +24,12 @@ func TestBuildPlanRedactsSecrets(t *testing.T) {
 	if plan.JobID != "demo.job" {
 		t.Fatalf("unexpected job id %s", plan.JobID)
 	}
+	if plan.Outputs == nil {
+		t.Fatalf("expected outputs to be initialized")
+	}
+	if plan.Provenance == nil {
+		t.Fatalf("expected provenance to be initialized")
+	}
 	if plan.ExecutorPreview["interpreter"] != "/bin/bash" {
 		t.Fatalf("expected interpreter preview")
 	}

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowd-org/flowd/internal/server/requestctx"
+	"github.com/flowd-org/flowd/internal/observability/logctx"
 )
 
 // Attribute represents a key/value pair attached to a span.
@@ -83,7 +83,7 @@ func Start(ctx context.Context, name string, attrs ...Attribute) (context.Contex
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	logger := requestctx.Logger(ctx)
+	logger := logctx.Logger(ctx)
 	if logger == nil {
 		logger = slog.Default()
 	}

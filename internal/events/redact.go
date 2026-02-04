@@ -2,11 +2,11 @@ package events
 
 import "strings"
 
-const secretToken = "[secret]"
+const secretToken = "$$REDACTED$$"
 
 func SecretToken() string { return secretToken }
 
-// RedactSecrets returns a copy of the args map with secret values replaced by [secret].
+// RedactSecrets returns a copy of the args map with secret values replaced by $$REDACTED$$.
 func RedactSecrets(values map[string]interface{}, secretNames map[string]struct{}) map[string]interface{} {
 	if len(secretNames) == 0 || len(values) == 0 {
 		return values

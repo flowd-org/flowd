@@ -27,6 +27,8 @@ import (
 	"github.com/flowd-org/flowd/internal/executor"
 	"github.com/flowd-org/flowd/internal/executor/container"
 	"github.com/flowd-org/flowd/internal/indexer"
+	"github.com/flowd-org/flowd/internal/metrics"
+	"github.com/flowd-org/flowd/internal/observability/logctx"
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
@@ -38,14 +40,30 @@ import (
 	"github.com/flowd-org/flowd/internal/types"
 )
 
+func requestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if requestID, ok := requestctx.RequestID(ctx); ok {
+		return requestID
+	}
+	if requestID, ok := logctx.RequestID(ctx); ok {
+		return requestID
+	}
+	return ""
+}
+
 const (
 	defaultRunStatus          = "queued"
-	defaultIdempotencyTTL     = 10 * time.Minute
+	defaultIdempotencyTTL     = 24 * time.Hour
+	maxIdempotencyTTL         = 72 * time.Hour
 	defaultRunsPage           = 1
 	defaultRunsPerPage        = 50
 	maxRunsPerPage            = 200
-	storageQuotaProblemType   = "https://flowd.dev/problems/storage-quota-exceeded"
+	storageQuotaProblemType   = "https://flowd.org/problems/storage-quota-exceeded"
 	storageQuotaProblemDetail = "Core storage quota exceeded; free up space or increase the configured quota before retrying."
+	idempotencyMismatchType   = "https://flowd.org/problems/idempotency/mismatch"
+	idempotencyInFlightType   = "https://flowd.org/problems/scheduler/rejected"
 )
 
 var (
@@ -89,6 +107,7 @@ type RunsHandler struct {
 	idempotency    idempotencyStore
 	idempotencyTTL time.Duration
 	store          *runstore.Store
+	dbRuns         *coredb.RunStore
 	events         EventSink
 	resolveSrc     func(jobID string, ref *RunSourceRef) (map[string]any, bool)
 	sources        *sourcestore.Store
@@ -97,6 +116,14 @@ type RunsHandler struct {
 	verifier       verify.ImageVerifier
 	runtime        container.Runtime
 	running        sync.Map // runID -> *runExecutionContext
+}
+
+type staticConfigLoader struct {
+	cfg *types.Config
+}
+
+func (s staticConfigLoader) LoadConfig(scriptDir string) (*types.Config, error) {
+	return s.cfg, nil
 }
 
 // NewRunsHandler returns an HTTP handler for POST /runs.
@@ -121,6 +148,9 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 	if ttl <= 0 {
 		ttl = defaultIdempotencyTTL
 	}
+	if ttl > maxIdempotencyTTL {
+		ttl = maxIdempotencyTTL
+	}
 
 	store := cfg.Store
 	if store == nil {
@@ -134,6 +164,11 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 		idemStore = newMemoryIdempotencyCache(ttl)
 	}
 
+	var dbRuns *coredb.RunStore
+	if cfg.DB != nil {
+		dbRuns = coredb.NewRunStore(cfg.DB)
+	}
+
 	return &RunsHandler{
 		root:           root,
 		discover:       discoverFn,
@@ -142,6 +177,7 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 		idempotency:    idemStore,
 		idempotencyTTL: ttl,
 		store:          store,
+		dbRuns:         dbRuns,
 		events:         cfg.Events,
 		resolveSrc:     cfg.ResolveSource,
 		sources:        cfg.Sources,
@@ -166,7 +202,7 @@ func (h *RunsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	req, rawBody, err := decodeRunRequest(r.Body)
 	if err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	if req.JobID == "" {
@@ -176,7 +212,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	canonicalBody, err := canonicalizeJSON(rawBody)
 	if err != nil {
-		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	bodyHash := sha256.Sum256(canonicalBody)
@@ -190,7 +226,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if !strings.EqualFold(headerHash, bodyHashHex) {
 			response.Write(w, response.New(http.StatusConflict, "idempotency hash mismatch",
-				response.WithType("https://flowd.dev/problems/idempotency-key-conflict"),
+				response.WithType(idempotencyMismatchType),
 				response.WithDetail("request hash does not match stored hash"),
 				response.WithExtension("incoming_sha256", strings.ToLower(headerHash)),
 				response.WithExtension("computed_sha256", bodyHashHex),
@@ -214,25 +250,83 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	scopedKey := scopedIdempotencyKey(principal, idemKey)
 	endpoint := r.Method + " " + r.URL.Path
 	now := h.now()
+	reserved := false
+	idempotencyStored := false
+	var idempotencyExpiresAt time.Time
 	if h.idempotency != nil {
 		cached, status, storedHash, found, err := h.idempotency.Lookup(ctx, scopedKey, endpoint, now)
 		if err != nil {
-			response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(err.Error())))
+			response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
 		if found {
 			if storedHash != bodyHashHex {
+				metrics.RecordIdempotencyConflict()
 				response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
-					response.WithType("https://flowd.dev/problems/idempotency-key-conflict"),
+					response.WithType(idempotencyMismatchType),
 					response.WithExtension("stored_sha256", storedHash),
 					response.WithExtension("incoming_sha256", bodyHashHex),
 				))
 				return
 			}
+			if status == idempotencyStatusInFlight {
+				metrics.RecordIdempotencyInFlight()
+				response.Write(w, idempotencyInFlightProblem())
+				return
+			}
 			w.Header().Set("Idempotent-Replay", "true")
+			metrics.RecordIdempotencyReplay()
 			writeRunPayload(w, cached, status)
 			return
 		}
+		idempotencyExpiresAt = now.Add(h.idempotencyTTL)
+		reserved, err = h.idempotency.Reserve(ctx, scopedKey, endpoint, bodyHashHex, now, idempotencyExpiresAt)
+		if err != nil {
+			if coredb.IsQuotaExceeded(err) {
+				response.Write(w, storageQuotaExceededProblem())
+			} else {
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency reserve failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
+			}
+			return
+		}
+		if !reserved {
+			cached, status, storedHash, found, err = h.idempotency.Lookup(ctx, scopedKey, endpoint, now)
+			if err != nil {
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency lookup failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
+				return
+			}
+			if found {
+				if storedHash != bodyHashHex {
+					metrics.RecordIdempotencyConflict()
+					response.Write(w, response.New(http.StatusConflict, "idempotency key conflict",
+						response.WithType(idempotencyMismatchType),
+						response.WithExtension("stored_sha256", storedHash),
+						response.WithExtension("incoming_sha256", bodyHashHex),
+					))
+					return
+				}
+				if status == idempotencyStatusInFlight {
+					metrics.RecordIdempotencyInFlight()
+					response.Write(w, idempotencyInFlightProblem())
+					return
+				}
+				w.Header().Set("Idempotent-Replay", "true")
+				metrics.RecordIdempotencyReplay()
+				writeRunPayload(w, cached, status)
+				return
+			}
+		}
+	}
+	if h.idempotency != nil && reserved {
+		defer func() {
+			if idempotencyStored {
+				return
+			}
+			releaseErr := h.idempotency.Release(context.Background(), scopedKey, endpoint)
+			if releaseErr != nil && logger != nil {
+				logger.Error("idempotency release failed", slog.String("error", releaseErr.Error()))
+			}
+		}()
 	}
 
 	runRoot := h.root
@@ -244,11 +338,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		if h.sources != nil {
 			src, ok := h.sources.Get(req.Source.Name)
 			if !ok {
-				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(req.Source.Name)))
+				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(scrubProblemDetail(req.Source.Name, nil, nil, nil, nil))))
 				return
 			}
 			if src.LocalPath == "" {
-				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail("source "+req.Source.Name+" has no local checkout")))
+				response.Write(w, response.New(http.StatusBadRequest, "source not materialized", response.WithDetail(scrubProblemDetail("source "+req.Source.Name+" has no local checkout", nil, nil, nil, nil))))
 				return
 			}
 			runRoot = src.LocalPath
@@ -257,7 +351,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.discover(runRoot)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
@@ -331,18 +425,18 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			response.Write(w, *prob)
 			return
 		}
-		response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(requestedID)))
+		response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(scrubProblemDetail(requestedID, nil, nil, nil, nil))))
 		return
 	}
 
 	absScriptDir, err := filepath.Abs(scriptDir)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "resolve script directory", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "resolve script directory", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	absScriptsRoot, err := filepath.Abs(runRoot)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "resolve scripts root", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "resolve scripts root", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 	relJobPath, relErr := filepath.Rel(absScriptsRoot, absScriptDir)
@@ -355,29 +449,63 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.loadConfig(absScriptDir)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(err.Error())))
+		response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
 
 	spec := cfg.ArgSpec
-	var binding *engine.Binding
-	if spec != nil && len(spec.Args) > 0 {
-		bind, bindErr := validatePlanArgs(*spec, req.Args)
-		if bindErr != nil {
-			var argErr *engine.ArgError
-			if errors.As(bindErr, &argErr) {
-				response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
-					response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": argErr.Msg}})))
-				return
-			}
-			response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(bindErr.Error())))
-			return
-		}
-		binding = bind
-	} else if len(req.Args) > 0 {
+	if (spec == nil || len(spec.Args) == 0) && len(req.Args) > 0 {
 		response.Write(w, response.New(http.StatusBadRequest, "job does not accept arguments"))
 		return
 	}
+	orchestrator := engine.NewOrchestrator(engine.OrchestratorDeps{
+		ConfigLoader: staticConfigLoader{cfg: cfg},
+	})
+	startRes, err := orchestrator.StartRun(ctx, types.StartRunRequest{
+		JobID:     effectiveID,
+		ScriptDir: execScriptDir,
+		Args:      req.Args,
+		RequestID: requestIDFromContext(ctx),
+	})
+	if err != nil {
+		var argErr *engine.ArgError
+		if errors.As(err, &argErr) {
+			scrubber := newProblemScrubber(spec, req.Args, nil, nil)
+			safeMsg := scrubProblemDetail(argErr.Msg, scrubber, nil, nil, nil)
+			response.Write(w, response.New(http.StatusUnprocessableEntity, "argument validation failed",
+				response.WithExtension("errors", []map[string]string{{"arg": argErr.Arg, "message": safeMsg}})))
+			return
+		}
+		if errors.Is(err, engine.ErrSecretContainerUnsupported) {
+			metrics.RecordSecretContainerRejected()
+			response.Write(w, response.New(http.StatusUnprocessableEntity, "container execution does not support secret args",
+				response.WithExtension("code", "E_SECRET")))
+			return
+		}
+		response.Write(w, response.New(http.StatusBadRequest, "invalid arguments", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
+		return
+	}
+	effectiveID = startRes.EffectiveJobID
+	execScriptDir = startRes.ScriptDir
+	binding := startRes.Binding
+	plan := startRes.Plan
+	runID := startRes.RunID
+	secretHandles := startRes.SecretHandles
+	secretCleanup := startRes.SecretCleanup
+	logScrubber := newPersistenceScrubber(binding, secretHandles)
+	if logger != nil {
+		ctx = requestctx.WithScrubbedLogger(ctx, func(msg string) string {
+			return scrubProblemDetail(msg, logScrubber, binding, spec, req.Args)
+		})
+		logger = requestctx.Logger(ctx)
+		r = r.WithContext(ctx)
+	}
+	cleanupSecrets := true
+	defer func() {
+		if cleanupSecrets && secretCleanup != nil {
+			_ = secretCleanup()
+		}
+	}()
 
 	executorMode := strings.ToLower(cfg.Executor)
 	if strings.HasPrefix(cfg.Interpreter, "container:") && executorMode == "" {
@@ -428,13 +556,21 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Write(w, response.New(http.StatusUnprocessableEntity, "invalid security profile",
 			response.WithExtension("code", "E_POLICY"),
-			response.WithDetail(err.Error())))
+			response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 		return
 	}
 
 	policyCtx := h.policy
 	if policyCtx == nil {
 		policyCtx, _ = policy.NewContext(nil)
+	}
+	policyPayload := &RunPayload{
+		ID:              runID,
+		JobID:           effectiveID,
+		SecurityProfile: effProfile,
+		Executor:        executorMode,
+		Runtime:         runtimeStr,
+		Provenance:      provenance,
 	}
 
 	var findings []types.Finding
@@ -448,19 +584,21 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	image := containerImageFromConfig(cfg)
 	if image != "" {
 		if prob := enforceRegistryAllowList(ctx, image, policyCtx); prob != nil {
-			response.Write(w, *prob)
+			publishPolicyDenied(h.events, policyPayload, "container.image", policyProblemCode(prob), policyProblemDetail(prob))
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 		mode, err := policyCtx.VerifyModeForProfile(effProfile)
 		if err != nil {
 			response.Write(w, response.New(http.StatusUnprocessableEntity, "policy error",
 				response.WithExtension("code", "E_POLICY"),
-				response.WithDetail(err.Error())))
+				response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, spec, req.Args))))
 			return
 		}
 		outcome, prob := enforceImageVerification(ctx, image, mode, h.verifier)
 		if prob != nil {
-			response.Write(w, *prob)
+			publishPolicyDenied(h.events, policyPayload, "container.image", policyProblemCode(prob), policyProblemDetail(prob))
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 		if mode != policy.VerifyModeDisabled {
@@ -483,96 +621,133 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if prob := enforceResourceCeilings(ctx, cfg, policyCtx.ContainerCeilings()); prob != nil {
-			response.Write(w, *prob)
+			publishPolicyDenied(h.events, policyPayload, "container.resources", policyProblemCode(prob), policyProblemDetail(prob))
+			response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 			return
 		}
 	}
 	overrideFindings, decisions, prob := evaluateOverrides(ctx, cfg, effProfile, policyCtx)
 	if prob != nil {
 		if len(decisions) > 0 {
-			tempPayload := &RunPayload{
-				JobID:           effectiveID,
-				SecurityProfile: effProfile,
-				Executor:        executorMode,
-				Provenance:      provenance,
-			}
-			publishPolicyDecisions(h.events, tempPayload, decisions)
+			publishPolicyDecisions(h.events, policyPayload, decisions)
 		}
-		response.Write(w, *prob)
+		response.Write(w, scrubProblemResponse(prob, nil, nil, spec, req.Args))
 		return
 	}
 	if len(overrideFindings) > 0 {
 		findings = append(findings, overrideFindings...)
 	}
 
-	plan := engine.BuildPlan(effectiveID, cfg, spec, binding)
 	plan.SecurityProfile = effProfile
+	plan.RequestID = requestIDFromContext(ctx)
 	if len(findings) > 0 {
 		plan.PolicyFindings = findings
 	}
 	if trustPreview != nil {
 		plan.ImageTrust = trustPreview
 	}
-	runID := events.GenerateRunID()
 	if executorMode == "container" && runtime != "" {
 		if err := container.RemoveContainer(context.Background(), runtime, runID); err != nil {
-			response.Write(w, containerNameConflictProblem(err))
+			prob := containerNameConflictProblem(err)
+			response.Write(w, scrubProblemResponse(&prob, nil, nil, spec, req.Args))
 			return
 		}
+	}
+	if executorMode == "container" && binding != nil && len(binding.SecretNames) > 0 {
+		metrics.RecordSecretContainerRejected()
+		response.Write(w, response.New(http.StatusUnprocessableEntity, "container execution does not support secret args",
+			response.WithExtension("code", "E_SECRET")))
+		return
 	}
 	resp := newRunPayload(runID, effectiveID, defaultRunStatus, now)
 	resp.Executor = executorMode
 	resp.SecurityProfile = effProfile
+	resp.RequestID = requestIDFromContext(ctx)
 	if runtime != "" {
 		resp.Runtime = string(runtime)
 	}
+	resultPayload := map[string]any{}
 	if len(plan.ResolvedArgs) > 0 {
-		resp.Result = map[string]any{
-			"resolved_args": plan.ResolvedArgs,
-		}
+		resultPayload["resolved_args"] = plan.ResolvedArgs
+	}
+	if len(findings) > 0 {
+		resultPayload["policy_findings"] = findings
+	}
+	if len(resultPayload) > 0 {
+		resp.Result = resultPayload
 	}
 	resp.Provenance = provenance
 
+	scrubber := newPersistenceScrubber(binding, secretHandles)
+	respForPersistence := scrubRunPayload(resp, scrubber)
+
 	if h.idempotency != nil {
-		expiresAt := now.Add(h.idempotencyTTL)
-		if err := h.idempotency.Store(ctx, scopedKey, endpoint, bodyHashHex, resp, http.StatusCreated, expiresAt); err != nil {
+		if idempotencyExpiresAt.IsZero() {
+			idempotencyExpiresAt = now.Add(h.idempotencyTTL)
+		}
+		if err := h.idempotency.Store(ctx, scopedKey, endpoint, bodyHashHex, respForPersistence, http.StatusCreated, idempotencyExpiresAt); err != nil {
 			if logger != nil {
 				logger.Error("idempotency store failed", slog.String("error", err.Error()))
 			}
 			if coredb.IsQuotaExceeded(err) {
 				response.Write(w, storageQuotaExceededProblem())
 			} else {
-				response.Write(w, response.New(http.StatusInternalServerError, "idempotency store failed", response.WithDetail(err.Error())))
+				response.Write(w, response.New(http.StatusInternalServerError, "idempotency store failed", response.WithDetail(scrubProblemDetail(err.Error(), scrubber, nil, spec, req.Args))))
+			}
+			return
+		}
+		if reserved {
+			idempotencyStored = true
+		}
+	}
+
+	if h.dbRuns != nil {
+		record := runRecordFromPayload(resp)
+		record = scrubRunRecord(record, scrubber)
+		if err := h.dbRuns.Create(ctx, record); err != nil {
+			if logger != nil {
+				logger.Error("run store failed", slog.String("error", err.Error()))
+			}
+			if coredb.IsQuotaExceeded(err) {
+				response.Write(w, storageQuotaExceededProblem())
+			} else {
+				response.Write(w, response.New(http.StatusInternalServerError, "run store failed", response.WithDetail(scrubProblemDetail(err.Error(), scrubber, nil, spec, req.Args))))
 			}
 			return
 		}
 	}
 
 	h.store.Create(runstore.Run{
-		ID:         resp.ID,
-		JobID:      resp.JobID,
-		Status:     resp.Status,
-		StartedAt:  resp.StartedAt,
-		Result:     resp.Result,
-		Executor:   resp.Executor,
-		Runtime:    resp.Runtime,
-		Provenance: resp.Provenance,
+		ID:              respForPersistence.ID,
+		JobID:           respForPersistence.JobID,
+		Status:          respForPersistence.Status,
+		StartedAt:       respForPersistence.StartedAt,
+		Result:          respForPersistence.Result,
+		Executor:        respForPersistence.Executor,
+		Runtime:         respForPersistence.Runtime,
+		SecurityProfile: respForPersistence.SecurityProfile,
+		Provenance:      respForPersistence.Provenance,
+		RequestID:       respForPersistence.RequestID,
 	})
 
+	eventSink := newScrubbedEventSink(h.events, scrubber)
 	if len(decisions) > 0 {
-		publishPolicyDecisions(h.events, &resp, decisions)
+		publishPolicyDecisions(eventSink, &resp, decisions)
 	}
 	runCtx := &runExecutionContext{
-		ctx:        nil,
-		cancel:     nil,
-		runPayload: resp,
-		scriptDir:  execScriptDir,
-		config:     cfg,
-		spec:       spec,
-		binding:    binding,
-		plan:       plan,
-		executor:   executorMode,
-		runtime:    runtime,
+		ctx:           nil,
+		cancel:        nil,
+		runPayload:    resp,
+		scriptDir:     execScriptDir,
+		config:        cfg,
+		spec:          spec,
+		binding:       binding,
+		plan:          plan,
+		executor:      executorMode,
+		runtime:       runtime,
+		secretHandles: secretHandles,
+		secretCleanup: secretCleanup,
+		scrubber:      scrubber,
 	}
 	ctxWithCancel, cancel := context.WithCancel(context.Background())
 	runCtx.ctx = ctxWithCancel
@@ -598,6 +773,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		logger.Info("run.accepted", attrs...)
 	}
+	cleanupSecrets = false
 	go h.executeRun(runCtx)
 }
 
@@ -727,6 +903,27 @@ func (h *RunsHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runs := h.store.List()
+	if h.dbRuns != nil {
+		records, err := h.dbRuns.List(r.Context())
+		if err != nil {
+			response.Write(w, response.New(http.StatusInternalServerError, "list runs failed", response.WithDetail(err.Error())))
+			return
+		}
+		payloads := make([]RunPayload, len(records))
+		for i, record := range records {
+			payloads[i] = payloadFromRecord(record)
+		}
+		pageRuns := paginateRunPayloads(payloads, page, perPage)
+		data, err := json.Marshal(pageRuns)
+		if err != nil {
+			response.Write(w, response.New(http.StatusInternalServerError, "encode runs failed", response.WithDetail(err.Error())))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
 	start := (page - 1) * perPage
 	if start >= len(runs) {
 		runs = []runstore.Run{}
@@ -821,6 +1018,50 @@ func parseRunsPagination(r *http.Request) (int, int, error) {
 	return page, perPage, nil
 }
 
+func paginateRunPayloads(payloads []RunPayload, page, perPage int) []RunPayload {
+	start := (page - 1) * perPage
+	if start >= len(payloads) {
+		return []RunPayload{}
+	}
+	end := start + perPage
+	if end > len(payloads) {
+		end = len(payloads)
+	}
+	return payloads[start:end]
+}
+
+func runRecordFromPayload(payload RunPayload) coredb.RunRecord {
+	return coredb.RunRecord{
+		ID:              payload.ID,
+		JobID:           payload.JobID,
+		Status:          payload.Status,
+		StartedAt:       payload.StartedAt,
+		FinishedAt:      payload.FinishedAt,
+		Result:          payload.Result,
+		Executor:        payload.Executor,
+		Runtime:         payload.Runtime,
+		SecurityProfile: payload.SecurityProfile,
+		Provenance:      payload.Provenance,
+		RequestID:       payload.RequestID,
+	}
+}
+
+func runRecordFromStore(run runstore.Run) coredb.RunRecord {
+	return coredb.RunRecord{
+		ID:              run.ID,
+		JobID:           run.JobID,
+		Status:          run.Status,
+		StartedAt:       run.StartedAt,
+		FinishedAt:      run.FinishedAt,
+		Result:          run.Result,
+		Executor:        run.Executor,
+		Runtime:         run.Runtime,
+		SecurityProfile: run.SecurityProfile,
+		Provenance:      run.Provenance,
+		RequestID:       run.RequestID,
+	}
+}
+
 func encodeData(payload any) string {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -903,65 +1144,17 @@ func writePlanArtifact(plan types.Plan, runDir string) error {
 	return nil
 }
 
-func prepareSecrets(runDir string, binding *engine.Binding) (string, error) {
-	if binding == nil || len(binding.SecretNames) == 0 {
-		return "", nil
-	}
-	secretDir := filepath.Join(runDir, "secrets")
-	if err := os.MkdirAll(secretDir, 0o700); err != nil {
-		return "", fmt.Errorf("create secrets dir: %w", err)
-	}
-	for name := range binding.SecretNames {
-		safeName := sanitizeSecretName(name)
-		if safeName == "" {
-			safeName = "secret"
-		}
-		path := filepath.Join(secretDir, safeName)
-		value := ""
-		if raw, ok := binding.Values[name]; ok && raw != nil {
-			if s, ok := raw.(string); ok {
-				value = s
-			} else {
-				value = fmt.Sprint(raw)
-			}
-		}
-		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
-			return "", fmt.Errorf("write secret %s: %w", name, err)
-		}
-	}
-	return secretDir, nil
-}
-
-func sanitizeSecretName(name string) string {
-	if name == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
+// prepareSecrets kept for tests; prefer orchestrator-managed secret preparation.
+func prepareSecrets(runID string, binding *engine.Binding) (map[string]string, func() error, error) {
+	provider := engine.DefaultSecretProvider{}
+	return provider.Prepare(runID, binding)
 }
 
 func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []policyDecision) {
 	if sink == nil || payload == nil || len(decisions) == 0 {
 		return
 	}
-	base := map[string]any{
-		"run_id":           payload.ID,
-		"job_id":           payload.JobID,
-		"security_profile": payload.SecurityProfile,
-		"executor":         payload.Executor,
-		"runtime":          payload.Runtime,
-		"timestamp":        time.Now().UTC(),
-	}
-	if payload.Provenance != nil {
-		base["provenance"] = payload.Provenance
-	}
+	base := policyEventBase(payload)
 	for _, dec := range decisions {
 		data := make(map[string]any, len(base)+4)
 		for k, v := range base {
@@ -978,21 +1171,90 @@ func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []pol
 			bytes = []byte("{}")
 		}
 		sink.Publish(payload.ID, sse.Event{Event: "policy.decision", Data: string(bytes)})
+		if dec.Decision == "denied" {
+			publishPolicyDenied(sink, payload, dec.Subject, dec.Code, dec.Reason)
+		}
 	}
 }
 
+func publishPolicyDenied(sink EventSink, payload *RunPayload, subject, code, reason string) {
+	if sink == nil || payload == nil {
+		return
+	}
+	base := policyEventBase(payload)
+	data := make(map[string]any, len(base)+4)
+	for k, v := range base {
+		data[k] = v
+	}
+	if subject != "" {
+		data["subject"] = subject
+	}
+	if code != "" {
+		data["code"] = code
+	}
+	data["decision"] = "denied"
+	if reason != "" {
+		data["reason"] = reason
+	}
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		bytes = []byte("{}")
+	}
+	sink.Publish(payload.ID, sse.Event{Event: "policy.denied", Data: string(bytes)})
+}
+
+func policyEventBase(payload *RunPayload) map[string]any {
+	base := map[string]any{
+		"run_id":           payload.ID,
+		"job_id":           payload.JobID,
+		"security_profile": payload.SecurityProfile,
+		"executor":         payload.Executor,
+		"runtime":          payload.Runtime,
+		"timestamp":        time.Now().UTC(),
+	}
+	if payload.Provenance != nil {
+		base["provenance"] = payload.Provenance
+	}
+	return base
+}
+
+func policyProblemCode(prob *response.Problem) string {
+	if prob == nil || prob.Ext == nil {
+		return ""
+	}
+	if value, ok := prob.Ext["code"]; ok {
+		if code, ok := value.(string); ok {
+			return code
+		}
+	}
+	return ""
+}
+
+func policyProblemDetail(prob *response.Problem) string {
+	if prob == nil {
+		return ""
+	}
+	if prob.Detail != "" {
+		return prob.Detail
+	}
+	return prob.Title
+}
+
 type runExecutionContext struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	runPayload RunPayload
-	scriptDir  string
-	config     *types.Config
-	spec       *types.ArgSpec
-	binding    *engine.Binding
-	plan       types.Plan
-	executor   string
-	runtime    container.Runtime
-	sink       events.Sink
+	ctx           context.Context
+	cancel        context.CancelFunc
+	runPayload    RunPayload
+	scriptDir     string
+	config        *types.Config
+	spec          *types.ArgSpec
+	binding       *engine.Binding
+	plan          types.Plan
+	executor      string
+	runtime       container.Runtime
+	sink          events.Sink
+	secretHandles map[string]string
+	secretCleanup func() error
+	scrubber      *persistenceScrubber
 }
 
 func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
@@ -1023,10 +1285,11 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 		return
 	}
 
-	secretDir, err := prepareSecrets(runDir, execCtx.binding)
-	if err != nil {
-		h.failRun(runID, "failed", err)
-		return
+	secretHandles := execCtx.secretHandles
+	if execCtx.secretCleanup != nil {
+		defer func() {
+			_ = execCtx.secretCleanup()
+		}()
 	}
 
 	stdoutFile, err := os.OpenFile(filepath.Join(runDir, "stdout"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -1043,13 +1306,15 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	}
 	defer stderrFile.Close()
 
+	serverSink := newScrubbedEventSink(h.events, execCtx.scrubber)
 	sink := events.NewCompositeSink(
-		newSSESink(h.events, &execCtx.runPayload),
+		newSSESink(serverSink, &execCtx.runPayload),
 	)
 	execCtx.sink = sink
 
 	h.updateRunStatus(runID, "running", nil)
 	if sink != nil {
+		metrics.RecordRunStarted()
 		sink.EmitRunStart(runID, jobID)
 	}
 
@@ -1083,8 +1348,8 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 			}
 		}
 	}
-	if secretDir != "" {
-		execCfg.SecretsDir = secretDir
+	if len(secretHandles) > 0 {
+		execCfg.SecretHandles = secretHandles
 	}
 
 	runCtx := execCtx.ctx
@@ -1117,6 +1382,7 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	execCtx.runPayload.FinishedAt = &finished
 	execCtx.runPayload.Status = status
 	if sink != nil {
+		metrics.RecordRunFinished(status)
 		sink.EmitRunFinish(runID, status, runErr)
 	}
 	prevStatus := ""
@@ -1144,6 +1410,11 @@ func (h *RunsHandler) updateRunStatus(runID, status string, finished *time.Time)
 		current.FinishedAt = finished
 	}
 	h.store.Update(current)
+	if h.dbRuns != nil {
+		record := runRecordFromStore(current)
+		record = scrubRunRecord(record, newPersistenceScrubber(nil, nil))
+		_ = h.dbRuns.Update(context.Background(), record)
+	}
 }
 
 func (h *RunsHandler) failRun(runID string, status string, err error) {
@@ -1155,7 +1426,7 @@ func (h *RunsHandler) failRun(runID string, status string, err error) {
 			payload["error"] = err.Error()
 		}
 		h.events.Publish(runID, sse.Event{
-			Event: "run.finish",
+			Event: "run.finished",
 			Data:  encodeData(payload),
 		})
 	}
@@ -1203,6 +1474,13 @@ func storageQuotaExceededProblem() response.Problem {
 	return response.New(http.StatusTooManyRequests, "storage quota exceeded",
 		response.WithType(storageQuotaProblemType),
 		response.WithDetail(storageQuotaProblemDetail),
+	)
+}
+
+func idempotencyInFlightProblem() response.Problem {
+	return response.New(http.StatusTooManyRequests, "idempotency key in use",
+		response.WithType(idempotencyInFlightType),
+		response.WithDetail("a request with the same Idempotency-Key is still processing"),
 	)
 }
 
