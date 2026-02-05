@@ -21,7 +21,8 @@ func resolveTenant(ctx context.Context, requestTenant string) (string, *response
 		if reqTenant != "" && reqTenant != principalTenant {
 			detail := fmt.Sprintf("request tenant %q does not match principal tenant %q", reqTenant, principalTenant)
 			prob := response.New(http.StatusForbidden, "tenant mismatch",
-				response.WithExtension("code", "tenant.mismatch"),
+				response.WithType(response.ProblemTypeTenantMismatch),
+				response.WithExtension("code", response.ProblemCodeTenantMismatch),
 				response.WithDetail(detail),
 				response.WithExtension("request_tenant", reqTenant),
 				response.WithExtension("principal_tenant", principalTenant),

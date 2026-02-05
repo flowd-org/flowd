@@ -13,6 +13,7 @@ func discoveryProblem(err error) (*response.Problem, bool) {
 	var dual *configloader.DualConfigError
 	if errors.As(err, &dual) {
 		prob := response.New(http.StatusConflict, "invalid job configuration",
+			response.WithType(response.ProblemTypeJobConfigDualSentinel),
 			response.WithExtension("code", configloader.DualConfigCode),
 			response.WithDetail(dual.Error()),
 			response.WithExtension("primary_path", dual.PrimaryPath),

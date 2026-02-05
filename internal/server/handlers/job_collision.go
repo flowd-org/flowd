@@ -119,7 +119,8 @@ func jobIDCollisionProblem(canonicalID string, contenders []jobCollisionContende
 		detail = "multiple job definitions resolve to canonical id \"" + canonicalID + "\""
 	}
 	return response.New(http.StatusConflict, "job id collision",
-		response.WithExtension("code", "job_id.collision"),
+		response.WithType(response.ProblemTypeJobIDCollision),
+		response.WithExtension("code", response.ProblemCodeJobIDCollision),
 		response.WithDetail(detail),
 		response.WithExtension("canonical_job_id", canonicalID),
 		response.WithExtension("contenders", contenders),

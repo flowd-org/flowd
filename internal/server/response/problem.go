@@ -6,6 +6,14 @@ import (
 	"net/http"
 )
 
+const (
+	ProblemTypeJobIDCollision        = "https://flowd.org/problems/job-id-collision"
+	ProblemTypeJobConfigDualSentinel = "https://flowd.org/problems/job-config/dual-sentinel"
+	ProblemTypeTenantMismatch        = "https://flowd.org/problems/tenant-mismatch"
+	ProblemCodeJobIDCollision        = "job_id.collision"
+	ProblemCodeTenantMismatch        = "tenant.mismatch"
+)
+
 // Problem represents an RFC7807 problem response with optional custom extensions.
 type Problem struct {
 	Type     string
