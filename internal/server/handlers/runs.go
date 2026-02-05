@@ -352,6 +352,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		runRoot = "scripts"
 	}
 
+	var runSource *sourcestore.Source
 	if req.Source != nil && req.Source.Name != "" {
 		if h.sources != nil {
 			src, ok := h.sources.Get(req.Source.Name)
@@ -364,6 +365,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			runRoot = src.LocalPath
+			runSource = &src
 		}
 	}
 
@@ -374,6 +376,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
+		return
+	}
+	if canonicalID, contenders, ok := findJobIDCollision(buildCollisionCandidates(result.Jobs, runRoot, runSource)); ok {
+		response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
 		return
 	}
 
@@ -426,6 +432,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if scriptDir == "" {
 		if req.Source != nil && req.Source.Name != "" && runRoot != h.root {
 			if alt, err := h.discover(h.root); err == nil {
+				if canonicalID, contenders, ok := findJobIDCollision(buildCollisionCandidates(alt.Jobs, h.root, nil)); ok {
+					response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
+					return
+				}
 				mergeJobInfo(jobMap, alt)
 				lookup.merge(alt)
 				if aliasUsed == nil {

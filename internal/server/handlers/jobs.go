@@ -89,6 +89,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			allJobs  []indexer.JobInfo
 			errorCnt int
 		)
+		var collisionCandidates []jobCollisionContender
 
 		aliasSets := make([]indexer.AliasSet, 0)
 		aliasSources := make(map[string]struct{})
@@ -139,8 +140,14 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				}
 				allViews = append(allViews, view)
 				allJobs = append(allJobs, job)
+				collisionCandidates = append(collisionCandidates, buildJobCollisionContender(job, target.root, target.source))
 			}
 			errorCnt += len(discovered.Errors)
+		}
+
+		if canonicalID, contenders, ok := findJobIDCollision(collisionCandidates); ok {
+			response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
+			return
 		}
 
 		aliasIndex, aliasErrs := indexer.BuildAliasIndex(allJobs, aliasSets)
