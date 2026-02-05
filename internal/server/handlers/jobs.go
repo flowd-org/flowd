@@ -35,12 +35,19 @@ type JobsConfig struct {
 type jobView struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
+	Tenant      string        `json:"tenant"`
+	Origin      jobOrigin     `json:"origin"`
 	Description string        `json:"description,omitempty"`
 	Args        []interface{} `json:"args,omitempty"`
 	Extends     []string      `json:"extends,omitempty"`
 	Source      *jobSource    `json:"source,omitempty"`
 	AliasOf     string        `json:"alias_of,omitempty"`
 	AliasDetail string        `json:"alias_detail,omitempty"`
+}
+
+type jobOrigin struct {
+	SourceKind string `json:"source_kind"`
+	SourceName string `json:"source_name"`
 }
 
 type jobSource struct {
@@ -78,6 +85,12 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			return
 		}
 
+		resolvedTenant, prob := resolveTenant(r.Context(), "")
+		if prob != nil {
+			response.Write(w, *prob)
+			return
+		}
+
 		targets, err := resolveJobTargets(cfg.Root, cfg.Sources)
 		if err != nil {
 			response.Write(w, response.New(http.StatusInternalServerError, "resolve sources failed", response.WithDetail(err.Error())))
@@ -100,7 +113,21 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			aliasSets = append(aliasSets, indexer.AliasSet{Source: "", Aliases: aliases})
 		}
 
+		sourceKindByName := make(map[string]string)
 		for _, target := range targets {
+			if target.source != nil {
+				sourceKindByName[target.source.Name] = mapSourceKind(target.source.Type)
+			}
+		}
+
+		for _, target := range targets {
+			origin := defaultJobOrigin()
+			if target.source != nil {
+				origin = jobOrigin{
+					SourceKind: mapSourceKind(target.source.Type),
+					SourceName: target.source.Name,
+				}
+			}
 			if target.source != nil && len(target.source.Aliases) > 0 {
 				if _, ok := aliasSources[target.source.Name]; !ok {
 					aliasSets = append(aliasSets, indexer.AliasSet{Source: target.source.Name, Aliases: target.source.Aliases})
@@ -108,7 +135,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				}
 			}
 			if target.source != nil && strings.EqualFold(target.source.Type, "oci") {
-				ociViews, ociErrors := discoverOCIJobs(*target.source)
+				ociViews, ociErrors := discoverOCIJobs(*target.source, resolvedTenant, origin)
 				allViews = append(allViews, ociViews...)
 				for _, view := range ociViews {
 					allJobs = append(allJobs, indexer.JobInfo{ID: view.ID, Name: view.Name})
@@ -130,6 +157,8 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				view := jobView{
 					ID:          job.ID,
 					Name:        job.Name,
+					Tenant:      resolvedTenant,
+					Origin:      origin,
 					Description: job.Summary,
 				}
 				if target.source != nil {
@@ -165,9 +194,17 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 					continue
 				}
 				seenAliases[key] = struct{}{}
+				origin := defaultJobOrigin()
+				if alias.Source != "" {
+					if kind, ok := sourceKindByName[alias.Source]; ok {
+						origin = jobOrigin{SourceKind: kind, SourceName: alias.Source}
+					}
+				}
 				aliasView := jobView{
 					ID:      alias.Name,
 					Name:    alias.Name,
+					Tenant:  resolvedTenant,
+					Origin:  origin,
 					AliasOf: alias.TargetPath,
 				}
 				aliasView.Description = fmt.Sprintf("[alias] %s", alias.TargetPath)
@@ -320,7 +357,7 @@ func resolveJobTargets(defaultRoot string, store *sourcestore.Store) ([]jobTarge
 	return targets, nil
 }
 
-func discoverOCIJobs(src sourcestore.Source) ([]jobView, []indexer.DiscoveryError) {
+func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([]jobView, []indexer.DiscoveryError) {
 	manifest, err := loadAddonManifestFromSource(src)
 	if err != nil {
 		return nil, []indexer.DiscoveryError{{
@@ -344,6 +381,8 @@ func discoverOCIJobs(src sourcestore.Source) ([]jobView, []indexer.DiscoveryErro
 		view := jobView{
 			ID:          id,
 			Name:        name,
+			Tenant:      tenant,
+			Origin:      origin,
 			Description: job.Summary,
 			Source: &jobSource{
 				Name: src.Name,
@@ -353,4 +392,15 @@ func discoverOCIJobs(src sourcestore.Source) ([]jobView, []indexer.DiscoveryErro
 		views = append(views, view)
 	}
 	return views, nil
+}
+
+func defaultJobOrigin() jobOrigin {
+	return jobOrigin{SourceKind: "fs", SourceName: "local"}
+}
+
+func mapSourceKind(sourceType string) string {
+	if strings.EqualFold(sourceType, "local") {
+		return "fs"
+	}
+	return strings.ToLower(strings.TrimSpace(sourceType))
 }
