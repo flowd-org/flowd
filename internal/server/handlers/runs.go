@@ -385,6 +385,8 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	jobMap := make(map[string]indexer.JobInfo, len(result.Jobs))
 	mergeJobInfo(jobMap, result)
+	originByID := make(map[string]jobOrigin, len(result.Jobs))
+	mergeJobOrigins(originByID, result.Jobs, runSource)
 	lookup := newAliasLookup()
 	lookup.merge(result)
 
@@ -395,10 +397,16 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var aliasUsed *indexer.AliasInfo
 
 	var scriptDir string
+	var runOrigin jobOrigin
+	originSet := false
 	setScriptDir := func(id string) bool {
 		if job, ok := jobMap[strings.ToLower(id)]; ok {
 			scriptDir = job.Path
 			effectiveID = job.ID
+			if origin, ok := originByID[strings.ToLower(job.ID)]; ok {
+				runOrigin = origin
+				originSet = true
+			}
 			return true
 		}
 		return false
@@ -437,6 +445,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				mergeJobInfo(jobMap, alt)
+				mergeJobOrigins(originByID, alt.Jobs, nil)
 				lookup.merge(alt)
 				if aliasUsed == nil {
 					if resolveAlias() {
@@ -462,6 +471,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(scrubProblemDetail(requestedID, nil, nil, nil, nil))))
 		return
+	}
+
+	if !originSet {
+		if runSource != nil {
+			runOrigin = jobOrigin{SourceKind: mapSourceKind(runSource.Type), SourceName: runSource.Name}
+		} else {
+			runOrigin = defaultJobOrigin()
+		}
 	}
 
 	absScriptDir, err := filepath.Abs(scriptDir)
@@ -573,6 +590,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if provenance == nil {
 		provenance = map[string]any{}
 	}
+	provenance = setRunIdentityInProvenance(provenance, resolvedTenant, runOrigin)
 	provenance["canonical_id"] = effectiveID
 	canonicalPath := indexer.DotJobIDToSlash(effectiveID)
 	if aliasUsed != nil {
@@ -699,6 +717,8 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := newRunPayload(runID, effectiveID, defaultRunStatus, now)
+	resp.Tenant = resolvedTenant
+	resp.Origin = runOrigin
 	resp.Executor = executorMode
 	resp.SecurityProfile = effProfile
 	resp.RequestID = requestIDFromContext(ctx)
