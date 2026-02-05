@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/flowd-org/flowd/internal/configloader"
 	"github.com/flowd-org/flowd/internal/indexer"
 	"github.com/flowd-org/flowd/internal/server/headers"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 )
@@ -91,6 +93,8 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			return
 		}
 
+		logger := requestctx.Logger(r.Context())
+
 		targets, err := resolveJobTargets(cfg.Root, cfg.Sources)
 		if err != nil {
 			response.Write(w, response.New(http.StatusInternalServerError, "resolve sources failed", response.WithDetail(err.Error())))
@@ -139,6 +143,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				allViews = append(allViews, ociViews...)
 				for _, view := range ociViews {
 					allJobs = append(allJobs, indexer.JobInfo{ID: view.ID, Name: view.Name})
+					logJobEvent(logger, "job.discovered", resolvedTenant, view.ID, view.Origin)
 				}
 				errorCnt += len(ociErrors)
 				continue
@@ -167,6 +172,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 						Type: target.source.Type,
 					}
 				}
+				logJobEvent(logger, "job.discovered", resolvedTenant, job.ID, origin)
 				allViews = append(allViews, view)
 				allJobs = append(allJobs, job)
 				collisionCandidates = append(collisionCandidates, buildJobCollisionContender(job, target.root, target.source))
@@ -254,6 +260,10 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				end = len(allViews)
 			}
 			views = allViews[start:end]
+		}
+
+		for _, view := range views {
+			logJobEvent(logger, "job.listed", resolvedTenant, view.ID, view.Origin)
 		}
 
 		payload, err := json.Marshal(views)
@@ -403,4 +413,18 @@ func mapSourceKind(sourceType string) string {
 		return "fs"
 	}
 	return strings.ToLower(strings.TrimSpace(sourceType))
+}
+
+func logJobEvent(logger *slog.Logger, msg, tenant, jobID string, origin jobOrigin) {
+	if logger == nil {
+		return
+	}
+	logger.Info(msg,
+		slog.String("tenant", tenant),
+		slog.String("job_id", jobID),
+		slog.Group("origin",
+			slog.String("source_kind", origin.SourceKind),
+			slog.String("source_name", origin.SourceName),
+		),
+	)
 }

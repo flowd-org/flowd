@@ -817,6 +817,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		attrs := []any{
 			slog.String("run_id", runID),
 			slog.String("job_id", effectiveID),
+			slog.String("tenant", resolvedTenant),
+			slog.Group("origin",
+				slog.String("source_kind", runOrigin.SourceKind),
+				slog.String("source_name", runOrigin.SourceName),
+			),
 			slog.String("status", resp.Status),
 			slog.String("executor", executorMode),
 			slog.String("security_profile", effProfile),

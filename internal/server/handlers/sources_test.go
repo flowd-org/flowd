@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,9 +19,53 @@ import (
 	"github.com/flowd-org/flowd/internal/policy"
 	policyverify "github.com/flowd-org/flowd/internal/policy/verify"
 	"github.com/flowd-org/flowd/internal/server/metrics"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/types"
 )
+
+type captureHandler struct {
+	records []string
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	var b strings.Builder
+	b.WriteString(r.Message)
+	r.Attrs(func(attr slog.Attr) bool {
+		appendAttrString(&b, attr)
+		return true
+	})
+	h.records = append(h.records, b.String())
+	return nil
+}
+
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler {
+	return h
+}
+
+func (h *captureHandler) WithGroup(string) slog.Handler {
+	return h
+}
+
+func appendAttrString(b *strings.Builder, attr slog.Attr) {
+	attr.Value = attr.Value.Resolve()
+	switch attr.Value.Kind() {
+	case slog.KindString:
+		b.WriteString(attr.Value.String())
+	case slog.KindAny:
+		if value, ok := attr.Value.Any().(string); ok {
+			b.WriteString(value)
+		}
+	case slog.KindGroup:
+		for _, child := range attr.Value.Group() {
+			appendAttrString(b, child)
+		}
+	}
+}
 
 func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	root := t.TempDir()
@@ -74,6 +119,37 @@ func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	}
 	if prov, ok := list[0]["provenance"].(map[string]any); !ok || prov["resolved_path"] == "" {
 		t.Fatalf("expected provenance in list response, got %+v", list[0]["provenance"])
+	}
+}
+
+func TestSourcesHandlerListDoesNotLogSecrets(t *testing.T) {
+	secret := "supersecret"
+	store := sourcestore.New()
+	store.Upsert(sourcestore.Source{
+		Name: "git",
+		Type: "git",
+		URL:  "https://user:" + secret + "@example.com/repo.git",
+		Ref:  "main",
+	})
+	h := NewSourcesHandler(SourcesConfig{Store: store})
+
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
+	req = req.WithContext(requestctx.WithLogger(req.Context(), logger))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for list, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(handler.records) == 0 {
+		t.Fatalf("expected log entries to be captured")
+	}
+	for _, entry := range handler.records {
+		if strings.Contains(entry, secret) {
+			t.Fatalf("expected logs to exclude secret substring, got %q", entry)
+		}
 	}
 }
 

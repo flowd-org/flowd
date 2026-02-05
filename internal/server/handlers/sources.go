@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -433,6 +434,16 @@ func handleListSources(w http.ResponseWriter, r *http.Request, cfg SourcesConfig
 		}
 		items[i] = sanitizeSourceForResponse(items[i], includeAliases)
 		views = append(views, buildSourceView(items[i], resolvedTenant))
+	}
+	logger := requestctx.Logger(r.Context())
+	if logger != nil {
+		for _, view := range views {
+			logger.Info("source.listed",
+				slog.String("tenant", resolvedTenant),
+				slog.String("source_id", view.ID),
+				slog.String("source_kind", view.Kind),
+			)
+		}
 	}
 	data, err := json.Marshal(views)
 	if err != nil {
