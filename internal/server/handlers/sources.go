@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/flowd-org/flowd/internal/configloader"
+	"github.com/flowd-org/flowd/internal/events"
 	"github.com/flowd-org/flowd/internal/executor/container"
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
@@ -51,6 +52,29 @@ type sourceRequest struct {
 	Trust            map[string]interface{} `json:"trust"`
 	Expose           string                 `json:"expose"`
 	VerifySignatures bool                   `json:"verify_signatures"`
+}
+
+type sourceView struct {
+	ID               string               `json:"id"`
+	Tenant           string               `json:"tenant"`
+	Kind             string               `json:"kind"`
+	MountPath        string               `json:"mountPath"`
+	Layout           string               `json:"layout"`
+	PullPolicy       string               `json:"pull_policy"`
+	Config           map[string]any       `json:"config"`
+	Name             string               `json:"name"`
+	Type             string               `json:"type"`
+	Ref              string               `json:"ref,omitempty"`
+	ResolvedRef      string               `json:"resolved_ref,omitempty"`
+	ResolvedCommit   string               `json:"resolved_commit,omitempty"`
+	URL              string               `json:"url,omitempty"`
+	Trust            map[string]any       `json:"trust,omitempty"`
+	Aliases          []types.CommandAlias `json:"aliases,omitempty"`
+	Metadata         map[string]any       `json:"metadata,omitempty"`
+	Digest           string               `json:"digest,omitempty"`
+	VerifySignatures bool                 `json:"verify_signatures,omitempty"`
+	Provenance       map[string]any       `json:"provenance,omitempty"`
+	Expose           string               `json:"expose,omitempty"`
 }
 
 var (
@@ -108,6 +132,202 @@ func sanitizeSourceForResponse(src sourcestore.Source, includeAliases bool) sour
 		clone.Aliases = nil
 	}
 	return clone
+}
+
+func buildSourceView(src sourcestore.Source, tenant string) sourceView {
+	kind := sourceKindForView(src.Type)
+	mountPath := sourceMountPath(src)
+	layout := sourceLayoutForView(kind, mountPath)
+	pullPolicy := sourcePullPolicyForView(src.PullPolicy)
+	config := sourceConfigForView(src, pullPolicy)
+
+	return sourceView{
+		ID:               src.Name,
+		Tenant:           tenant,
+		Kind:             kind,
+		MountPath:        mountPath,
+		Layout:           layout,
+		PullPolicy:       pullPolicy,
+		Config:           config,
+		Name:             src.Name,
+		Type:             src.Type,
+		Ref:              src.Ref,
+		ResolvedRef:      src.ResolvedRef,
+		ResolvedCommit:   src.ResolvedCommit,
+		URL:              src.URL,
+		Trust:            src.Trust,
+		Aliases:          src.Aliases,
+		Metadata:         src.Metadata,
+		Digest:           src.Digest,
+		VerifySignatures: src.VerifySignatures,
+		Provenance:       src.Provenance,
+		Expose:           src.Expose,
+	}
+}
+
+func sourceKindForView(sourceType string) string {
+	switch strings.ToLower(strings.TrimSpace(sourceType)) {
+	case "local":
+		return "fs"
+	case "git":
+		return "git"
+	case "oci":
+		return "oci"
+	default:
+		return strings.ToLower(strings.TrimSpace(sourceType))
+	}
+}
+
+func sourceMountPath(src sourcestore.Source) string {
+	if src.LocalPath != "" {
+		return src.LocalPath
+	}
+	if src.Metadata != nil {
+		if resolved, ok := src.Metadata["resolved_path"].(string); ok && resolved != "" {
+			return resolved
+		}
+		if checkout, ok := src.Metadata["checkout_path"].(string); ok && checkout != "" {
+			return checkout
+		}
+		if manifestPath, ok := src.Metadata["manifest_path"].(string); ok && manifestPath != "" {
+			return filepath.Dir(manifestPath)
+		}
+	}
+	return ""
+}
+
+func sourceLayoutForView(kind string, mountPath string) string {
+	if kind == "fs" || kind == "git" {
+		if mountPath != "" {
+			return "tree-v1"
+		}
+	}
+	return ""
+}
+
+func sourcePullPolicyForView(pullPolicy string) string {
+	if strings.TrimSpace(pullPolicy) == "" {
+		return "always"
+	}
+	return pullPolicy
+}
+
+func sourceConfigForView(src sourcestore.Source, pullPolicy string) map[string]any {
+	config := map[string]any{}
+	switch strings.ToLower(strings.TrimSpace(src.Type)) {
+	case "local":
+		if src.Ref != "" {
+			config["path"] = src.Ref
+		}
+	case "git":
+		if src.URL != "" {
+			config["url"] = sanitizeSourceURL(src.URL)
+		}
+		if src.Ref != "" {
+			config["ref"] = src.Ref
+		}
+	case "oci":
+		if src.Ref != "" {
+			config["ref"] = src.Ref
+		}
+		if src.Digest != "" {
+			config["digest"] = src.Digest
+		}
+		if pullPolicy != "" {
+			config["pull_policy"] = pullPolicy
+		}
+		if src.VerifySignatures {
+			config["verify_signatures"] = true
+		}
+	}
+	if len(config) == 0 {
+		return map[string]any{}
+	}
+	return redactSourceConfig(config)
+}
+
+func sanitizeSourceURL(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return cleaned
+	}
+	parsed, err := url.Parse(cleaned)
+	if err != nil {
+		return cleaned
+	}
+	if parsed.User != nil {
+		parsed.User = nil
+	}
+	return parsed.String()
+}
+
+func redactSourceConfig(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return values
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		if isSecretConfigKey(key) {
+			out[key] = events.SecretToken()
+			continue
+		}
+		out[key] = redactSourceConfigValue(value)
+	}
+	return out
+}
+
+func redactSourceConfigValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return redactSourceConfig(v)
+	case map[string]string:
+		out := make(map[string]any, len(v))
+		for key, val := range v {
+			if isSecretConfigKey(key) {
+				out[key] = events.SecretToken()
+				continue
+			}
+			out[key] = val
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, elem := range v {
+			out[i] = redactSourceConfigValue(elem)
+		}
+		return out
+	case []string:
+		out := make([]any, len(v))
+		for i, elem := range v {
+			out[i] = elem
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func isSecretConfigKey(key string) bool {
+	clean := strings.ToLower(strings.TrimSpace(key))
+	if clean == "" {
+		return false
+	}
+	if clean == "token" || clean == "password" || clean == "secret" || clean == "apikey" || clean == "api_key" {
+		return true
+	}
+	if clean == "access_key" || clean == "access_key_id" || clean == "secret_key" || clean == "secret_access_key" {
+		return true
+	}
+	if clean == "private_key" || clean == "ssh_key" || clean == "ssh_key_path" {
+		return true
+	}
+	if strings.Contains(clean, "token") || strings.Contains(clean, "password") || strings.Contains(clean, "secret") {
+		return true
+	}
+	if strings.Contains(clean, "credential") || strings.Contains(clean, "private_key") || strings.Contains(clean, "access_key") {
+		return true
+	}
+	return false
 }
 
 func buildSourceProvenance(src sourcestore.Source) map[string]any {
@@ -199,15 +419,22 @@ func handleListSources(w http.ResponseWriter, r *http.Request, cfg SourcesConfig
 	if store == nil {
 		store = sourcestore.New()
 	}
+	resolvedTenant, prob := resolveTenant(r.Context(), "")
+	if prob != nil {
+		response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
+		return
+	}
 	items := store.List()
 	includeAliases := shouldExposeAliases(r, cfg)
+	views := make([]sourceView, 0, len(items))
 	for i := range items {
 		if items[i].Provenance == nil {
 			items[i].Provenance = buildSourceProvenance(items[i])
 		}
 		items[i] = sanitizeSourceForResponse(items[i], includeAliases)
+		views = append(views, buildSourceView(items[i], resolvedTenant))
 	}
-	data, err := json.Marshal(items)
+	data, err := json.Marshal(views)
 	if err != nil {
 		response.Write(w, response.New(http.StatusInternalServerError, "encode sources failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
@@ -238,7 +465,7 @@ func handleUpsertSource(ctx context.Context, w http.ResponseWriter, r *http.Requ
 
 	switch req.Type {
 	case "local":
-		handleLocalSource(w, req, cfg)
+		handleLocalSource(ctx, w, req, cfg)
 	case "git":
 		handleGitSource(ctx, w, req, cfg)
 	case "oci":
@@ -255,7 +482,7 @@ func shouldExposeAliases(r *http.Request, cfg SourcesConfig) bool {
 	return cfg.AliasesPublic
 }
 
-func handleLocalSource(w http.ResponseWriter, req sourceRequest, cfg SourcesConfig) {
+func handleLocalSource(ctx context.Context, w http.ResponseWriter, req sourceRequest, cfg SourcesConfig) {
 	if req.Ref == "" {
 		response.Write(w, response.New(http.StatusBadRequest, "ref is required for local sources"))
 		return
@@ -323,7 +550,7 @@ func handleLocalSource(w http.ResponseWriter, req sourceRequest, cfg SourcesConf
 	}
 
 	created := cfg.Store.Upsert(src)
-	writeSourceResponse(w, sanitizeSourceForResponse(src, true), created)
+	writeSourceResponse(ctx, w, sanitizeSourceForResponse(src, true), created)
 }
 
 func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceRequest, cfg SourcesConfig) {
@@ -442,7 +669,7 @@ func handleGitSource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	}
 
 	created := cfg.Store.Upsert(src)
-	writeSourceResponse(w, sanitizeSourceForResponse(src, true), created)
+	writeSourceResponse(ctx, w, sanitizeSourceForResponse(src, true), created)
 }
 
 func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceRequest, cfg SourcesConfig) {
@@ -683,11 +910,17 @@ func handleOCISource(ctx context.Context, w http.ResponseWriter, req sourceReque
 	if created {
 		metrics.Default.RecordSourceAdded(src.Type)
 	}
-	writeSourceResponse(w, sanitizeSourceForResponse(src, true), created)
+	writeSourceResponse(ctx, w, sanitizeSourceForResponse(src, true), created)
 }
 
-func writeSourceResponse(w http.ResponseWriter, src sourcestore.Source, created bool) {
-	data, err := json.Marshal(src)
+func writeSourceResponse(ctx context.Context, w http.ResponseWriter, src sourcestore.Source, created bool) {
+	resolvedTenant, prob := resolveTenant(ctx, "")
+	if prob != nil {
+		response.Write(w, scrubProblemResponse(prob, nil, nil, nil, nil))
+		return
+	}
+	view := buildSourceView(src, resolvedTenant)
+	data, err := json.Marshal(view)
 	if err != nil {
 		response.Write(w, response.New(http.StatusInternalServerError, "encode source failed", response.WithDetail(err.Error())))
 		return
@@ -726,7 +959,7 @@ func NewSourceGetHandler(cfg SourcesConfig) http.Handler {
 			if src.Provenance == nil {
 				src.Provenance = buildSourceProvenance(src)
 			}
-			writeSourceResponse(w, src, false)
+			writeSourceResponse(r.Context(), w, src, false)
 		case http.MethodDelete:
 			if deleted := store.Delete(name); !deleted {
 				response.Write(w, response.New(http.StatusNotFound, "source not found", response.WithDetail(name)))
