@@ -9,10 +9,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/flowd-org/flowd/internal/configloader"
 	"github.com/flowd-org/flowd/internal/indexer"
 	"github.com/flowd-org/flowd/internal/server/headers"
+	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 )
 
@@ -182,5 +185,128 @@ func TestJobsHandlerAliasVisibilityPolicy(t *testing.T) {
 	}
 	if !foundAlias {
 		t.Fatalf("expected alias entry hello-demo in job list: %#v", jobs)
+	}
+}
+
+func TestJobsHandlerDualConfigProblem(t *testing.T) {
+	handler := NewJobsHandler(JobsConfig{
+		Discover: func(string) (indexer.Result, error) {
+			return indexer.Result{}, &configloader.DualConfigError{
+				ScriptDir:   "/tmp/scripts/demo",
+				PrimaryPath: "/tmp/scripts/demo/config.yaml",
+				LegacyPath:  "/tmp/scripts/demo/config.d/config.yaml",
+			}
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	contentType := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/problem+json") {
+		t.Fatalf("expected problem+json content type, got %s", contentType)
+	}
+
+	var prob map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob["code"] != configloader.DualConfigCode {
+		t.Fatalf("expected code %q, got %+v", configloader.DualConfigCode, prob["code"])
+	}
+	if prob["type"] != response.ProblemTypeJobConfigDualSentinel {
+		t.Fatalf("expected type %q, got %+v", response.ProblemTypeJobConfigDualSentinel, prob["type"])
+	}
+}
+
+func TestJobsHandlerCollisionDeterministicOrder(t *testing.T) {
+	root := t.TempDir()
+	localDir := filepath.Join(root, "demo")
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		t.Fatalf("mkdir local: %v", err)
+	}
+	config := `version: v1
+job:
+  name: Demo
+`
+	if err := os.WriteFile(filepath.Join(localDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write local config: %v", err)
+	}
+
+	remoteRoot := t.TempDir()
+	remoteDir := filepath.Join(remoteRoot, "demo")
+	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+		t.Fatalf("mkdir remote: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write remote config: %v", err)
+	}
+
+	store := sourcestore.New()
+	store.Upsert(sourcestore.Source{
+		Name:      "alpha",
+		Type:      "git",
+		LocalPath: remoteRoot,
+	})
+
+	handler := NewJobsHandler(JobsConfig{
+		Root:    root,
+		Sources: store,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	contentType := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/problem+json") {
+		t.Fatalf("expected problem+json content type, got %s", contentType)
+	}
+
+	var prob map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob["code"] != response.ProblemCodeJobIDCollision {
+		t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDCollision, prob["code"])
+	}
+	if prob["canonical_job_id"] != "demo" {
+		t.Fatalf("expected canonical_job_id demo, got %+v", prob["canonical_job_id"])
+	}
+	contendersRaw, ok := prob["contenders"].([]any)
+	if !ok {
+		t.Fatalf("expected contenders array, got %+v", prob["contenders"])
+	}
+	if len(contendersRaw) != 2 {
+		t.Fatalf("expected 2 contenders, got %d", len(contendersRaw))
+	}
+	first, ok := contendersRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected contender map, got %+v", contendersRaw[0])
+	}
+	second, ok := contendersRaw[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected contender map, got %+v", contendersRaw[1])
+	}
+	firstOrigin, ok := first["origin"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected origin map, got %+v", first["origin"])
+	}
+	secondOrigin, ok := second["origin"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected origin map, got %+v", second["origin"])
+	}
+	if firstOrigin["source_kind"] != "fs" || firstOrigin["source_name"] != "local" {
+		t.Fatalf("expected local fs contender first, got %+v", firstOrigin)
+	}
+	if secondOrigin["source_kind"] != "git" || secondOrigin["source_name"] != "alpha" {
+		t.Fatalf("expected git contender second, got %+v", secondOrigin)
 	}
 }
