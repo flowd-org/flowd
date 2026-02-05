@@ -237,6 +237,139 @@ argspec:
 	}
 }
 
+func TestRunsHandlerJobRefForms(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+	writeJobConfig(t, root, filepath.Join("Demo", "Child"), `
+version: v1
+job:
+  id: demo/child
+  name: Demo Child Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	flwdYaml := `aliases:
+- from: demo
+  to: quick
+  description: Quick demo alias
+`
+	if err := os.WriteFile(filepath.Join(root, "flwd.yaml"), []byte(flwdYaml), 0o644); err != nil {
+		t.Fatalf("write flwd.yaml: %v", err)
+	}
+
+	h := NewRunsHandler(RunsConfig{Root: root, Store: runstore.New()})
+
+	cases := []struct {
+		name              string
+		jobID             string
+		wantStatus        int
+		wantJobID         string
+		wantAlias         bool
+		wantInvokedPath   string
+		wantCanonicalID   string
+		wantCanonicalPath string
+	}{
+		{
+			name:              "direct id",
+			jobID:             "demo",
+			wantStatus:        http.StatusCreated,
+			wantJobID:         "demo",
+			wantCanonicalID:   "demo",
+			wantCanonicalPath: "demo",
+		},
+		{
+			name:              "alias input",
+			jobID:             "QuIcK",
+			wantStatus:        http.StatusCreated,
+			wantJobID:         "demo",
+			wantAlias:         true,
+			wantInvokedPath:   "QuIcK",
+			wantCanonicalID:   "demo",
+			wantCanonicalPath: "demo",
+		},
+		{
+			name:              "case-insensitive slash",
+			jobID:             "DeMo/ChIlD",
+			wantStatus:        http.StatusCreated,
+			wantJobID:         "DeMo/ChIlD",
+			wantCanonicalID:   "DeMo/ChIlD",
+			wantCanonicalPath: "DeMo/ChIlD",
+		},
+		{
+			name:       "legacy dot form",
+			jobID:      "demo.child",
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := fmt.Sprintf(`{"job_id":"%s","args":{"name":"Alice"}}`, tc.jobID)
+			req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			addIdempotencyHeader(req)
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+
+			if resp.Code != tc.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", tc.wantStatus, resp.Code, resp.Body.String())
+			}
+			if tc.wantStatus != http.StatusCreated {
+				return
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body["job_id"] != tc.wantJobID {
+				t.Fatalf("expected job_id %q, got %v", tc.wantJobID, body["job_id"])
+			}
+
+			prov, ok := body["provenance"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected provenance map, got %T", body["provenance"])
+			}
+			if tc.wantAlias {
+				if _, ok := prov["alias"].(map[string]any); !ok {
+					t.Fatalf("expected alias metadata, got %T", prov["alias"])
+				}
+			} else if _, ok := prov["alias"]; ok {
+				t.Fatalf("expected no alias metadata, got %v", prov["alias"])
+			}
+			if tc.wantInvokedPath != "" {
+				if prov["invoked_path"] != tc.wantInvokedPath {
+					t.Fatalf("expected invoked_path %q, got %v", tc.wantInvokedPath, prov["invoked_path"])
+				}
+			}
+			if tc.wantCanonicalID != "" {
+				if prov["canonical_id"] != tc.wantCanonicalID {
+					t.Fatalf("expected canonical_id %q, got %v", tc.wantCanonicalID, prov["canonical_id"])
+				}
+			}
+			if tc.wantCanonicalPath != "" {
+				if prov["canonical_path"] != tc.wantCanonicalPath {
+					t.Fatalf("expected canonical_path %q, got %v", tc.wantCanonicalPath, prov["canonical_path"])
+				}
+			}
+		})
+	}
+}
+
 func TestRunsHandlerEmitsRunStartEvent(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `
