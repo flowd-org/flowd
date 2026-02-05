@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strconv"
 	"time"
@@ -39,7 +40,11 @@ func (s *journalEventSink) Publish(runID string, ev sse.Event) {
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
-	entry, err := s.journal.Append(context.Background(), runID, ev.Event, []byte(ev.Data), ts)
+	data := ev.Data
+	if data != "" {
+		data = ensureJournalIdentityPayload(data, ev.Tenant)
+	}
+	entry, err := s.journal.Append(context.Background(), runID, ev.Event, []byte(data), ts)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("persist run event", slog.String("run_id", runID), slog.String("event", ev.Event), slog.String("error", err.Error()))
@@ -54,4 +59,33 @@ func (s *journalEventSink) Publish(runID string, ev sse.Event) {
 	if s.next != nil {
 		s.next.Publish(runID, ev)
 	}
+}
+
+func ensureJournalIdentityPayload(data string, tenant string) string {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(data), &payload); err != nil || len(payload) == 0 {
+		return data
+	}
+
+	if tenant != "" {
+		if _, ok := payload["tenant"]; !ok {
+			payload["tenant"] = tenant
+		}
+	}
+
+	if _, ok := payload["origin"]; !ok {
+		provenance, ok := payload["provenance"].(map[string]any)
+		if ok {
+			_, origin, found := runIdentityFromProvenance(provenance)
+			if found && (origin.SourceKind != "" || origin.SourceName != "") {
+				payload["origin"] = origin
+			}
+		}
+	}
+
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return string(bytes)
 }
