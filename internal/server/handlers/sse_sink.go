@@ -79,6 +79,12 @@ func (s *sseSink) basePayload() map[string]any {
 	if s.run != nil {
 		payload["run_id"] = s.run.ID
 		payload["job_id"] = s.run.JobID
+		if s.run.Tenant != "" {
+			payload["tenant"] = s.run.Tenant
+		}
+		if s.run.Origin.SourceKind != "" || s.run.Origin.SourceName != "" {
+			payload["origin"] = s.run.Origin
+		}
 		if !s.run.StartedAt.IsZero() {
 			payload["started_at"] = s.run.StartedAt
 		}
@@ -103,5 +109,9 @@ func (s *sseSink) publish(event string, payload map[string]any) {
 	if err != nil {
 		bytes = []byte("{}")
 	}
-	s.sink.Publish(s.run.ID, sse.Event{Event: event, Data: string(bytes)})
+	ev := sse.Event{Event: event, Data: string(bytes)}
+	if s.run != nil {
+		ev.Tenant = s.run.Tenant
+	}
+	s.sink.Publish(s.run.ID, ev)
 }

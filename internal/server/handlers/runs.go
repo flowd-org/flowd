@@ -1235,7 +1235,7 @@ func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []pol
 		if err != nil {
 			bytes = []byte("{}")
 		}
-		sink.Publish(payload.ID, sse.Event{Event: "policy.decision", Data: string(bytes)})
+		sink.Publish(payload.ID, sse.Event{Event: "policy.decision", Data: string(bytes), Tenant: payload.Tenant})
 		if dec.Decision == "denied" {
 			publishPolicyDenied(sink, payload, dec.Subject, dec.Code, dec.Reason)
 		}
@@ -1265,7 +1265,7 @@ func publishPolicyDenied(sink EventSink, payload *RunPayload, subject, code, rea
 	if err != nil {
 		bytes = []byte("{}")
 	}
-	sink.Publish(payload.ID, sse.Event{Event: "policy.denied", Data: string(bytes)})
+	sink.Publish(payload.ID, sse.Event{Event: "policy.denied", Data: string(bytes), Tenant: payload.Tenant})
 }
 
 func policyEventBase(payload *RunPayload) map[string]any {
@@ -1276,6 +1276,12 @@ func policyEventBase(payload *RunPayload) map[string]any {
 		"executor":         payload.Executor,
 		"runtime":          payload.Runtime,
 		"timestamp":        time.Now().UTC(),
+	}
+	if payload.Tenant != "" {
+		base["tenant"] = payload.Tenant
+	}
+	if payload.Origin.SourceKind != "" || payload.Origin.SourceName != "" {
+		base["origin"] = payload.Origin
 	}
 	if payload.Provenance != nil {
 		base["provenance"] = payload.Provenance
@@ -1487,12 +1493,28 @@ func (h *RunsHandler) failRun(runID string, status string, err error) {
 	h.updateRunStatus(runID, status, &stamp)
 	if h.events != nil {
 		payload := map[string]any{"status": status}
+		var tenant string
+		var origin jobOrigin
+		if run, ok := h.store.Get(runID); ok {
+			view := payloadFromStore(run)
+			payload["run_id"] = view.ID
+			payload["job_id"] = view.JobID
+			tenant = view.Tenant
+			origin = view.Origin
+		}
 		if err != nil {
 			payload["error"] = err.Error()
 		}
+		if tenant != "" {
+			payload["tenant"] = tenant
+		}
+		if origin.SourceKind != "" || origin.SourceName != "" {
+			payload["origin"] = origin
+		}
 		h.events.Publish(runID, sse.Event{
-			Event: "run.finished",
-			Data:  encodeData(payload),
+			Event:  "run.finished",
+			Data:   encodeData(payload),
+			Tenant: tenant,
 		})
 	}
 }
@@ -1501,26 +1523,33 @@ func (h *RunsHandler) publishRunCanceled(run runstore.Run, finished time.Time, r
 	if h.events == nil {
 		return
 	}
+	view := payloadFromStore(run)
 	payload := map[string]any{
-		"run_id":    run.ID,
-		"job_id":    run.JobID,
+		"run_id":    view.ID,
+		"job_id":    view.JobID,
 		"status":    "canceled",
 		"timestamp": finished,
 	}
 	if reason != "" {
 		payload["reason"] = reason
 	}
-	if run.Provenance != nil {
-		payload["provenance"] = run.Provenance
+	if view.Provenance != nil {
+		payload["provenance"] = view.Provenance
 	}
-	if run.Runtime != "" {
-		payload["runtime"] = run.Runtime
+	if view.Runtime != "" {
+		payload["runtime"] = view.Runtime
+	}
+	if view.Tenant != "" {
+		payload["tenant"] = view.Tenant
+	}
+	if view.Origin.SourceKind != "" || view.Origin.SourceName != "" {
+		payload["origin"] = view.Origin
 	}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		bytes = []byte("{}")
 	}
-	h.events.Publish(run.ID, sse.Event{Event: "run.canceled", Data: string(bytes)})
+	h.events.Publish(run.ID, sse.Event{Event: "run.canceled", Data: string(bytes), Tenant: view.Tenant})
 }
 
 func isTerminalStatus(status string) bool {
