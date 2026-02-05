@@ -71,11 +71,11 @@ var (
 	sha256Pattern         = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
 
-func scopedIdempotencyKey(principal, key string) string {
-	if principal == "" {
+func scopedIdempotencyKey(tenant, key string) string {
+	if tenant == "" {
 		return key
 	}
-	sum := sha256.Sum256([]byte(principal))
+	sum := sha256.Sum256([]byte(tenant))
 	return hex.EncodeToString(sum[:]) + ":" + key
 }
 
@@ -237,8 +237,8 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	logger := requestctx.Logger(ctx)
-	principal, _ := requestctx.Principal(ctx)
-	if _, prob := resolveTenant(ctx, req.Tenant); prob != nil {
+	resolvedTenant, prob := resolveTenant(ctx, req.Tenant)
+	if prob != nil {
 		response.Write(w, *prob)
 		return
 	}
@@ -251,7 +251,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid Idempotency-Key header"))
 		return
 	}
-	scopedKey := scopedIdempotencyKey(principal, idemKey)
+	scopedKey := scopedIdempotencyKey(resolvedTenant, idemKey)
 	endpoint := r.Method + " " + r.URL.Path
 	now := h.now()
 	reserved := false

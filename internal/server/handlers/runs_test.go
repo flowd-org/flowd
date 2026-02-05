@@ -893,7 +893,7 @@ argspec:
 	}
 
 	store := coredb.NewIdempotencyStore(db)
-	body, status, _, ok, err := store.Lookup(context.Background(), key, "POST /runs", time.Now().UTC())
+	body, status, _, ok, err := store.Lookup(context.Background(), scopedIdempotencyKey(defaultTenant, key), "POST /runs", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("lookup idempotency: %v", err)
 	}
@@ -929,7 +929,7 @@ argspec:
 	}
 }
 
-func TestRunsHandlerIdempotencyScopedByPrincipal(t *testing.T) {
+func TestRunsHandlerIdempotencyScopedByTenant(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `
 version: v1
@@ -949,12 +949,12 @@ argspec:
 
 	req1 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"demo","args":{"name":"Alice"}}`))
 	req1.Header.Set("Content-Type", "application/json")
-	req1 = req1.WithContext(requestctx.WithPrincipal(req1.Context(), "tenant-A"))
+	req1 = req1.WithContext(requestctx.WithTenant(req1.Context(), "tenant-A"))
 	setSpecificIdempotencyKey(req1, key)
 	resp1 := httptest.NewRecorder()
 	h.ServeHTTP(resp1, req1)
 	if resp1.Code != http.StatusCreated {
-		t.Fatalf("expected 201 for first principal, got %d", resp1.Code)
+		t.Fatalf("expected 201 for first tenant, got %d", resp1.Code)
 	}
 	if resp1.Header().Get("Idempotent-Replay") != "" {
 		t.Fatalf("did not expect replay header on first request")
@@ -962,15 +962,15 @@ argspec:
 
 	req2 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"demo","args":{"name":"Alice"}}`))
 	req2.Header.Set("Content-Type", "application/json")
-	req2 = req2.WithContext(requestctx.WithPrincipal(req2.Context(), "tenant-B"))
+	req2 = req2.WithContext(requestctx.WithTenant(req2.Context(), "tenant-B"))
 	setSpecificIdempotencyKey(req2, key)
 	resp2 := httptest.NewRecorder()
 	h.ServeHTTP(resp2, req2)
 	if resp2.Code != http.StatusCreated {
-		t.Fatalf("expected 201 for different principal, got %d", resp2.Code)
+		t.Fatalf("expected 201 for different tenant, got %d", resp2.Code)
 	}
 	if resp2.Header().Get("Idempotent-Replay") == "true" {
-		t.Fatalf("did not expect replay for different principal")
+		t.Fatalf("did not expect replay for different tenant")
 	}
 }
 
