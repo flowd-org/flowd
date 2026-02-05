@@ -238,6 +238,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := requestctx.Logger(ctx)
 	principal, _ := requestctx.Principal(ctx)
+	if _, prob := resolveTenant(ctx, req.Tenant); prob != nil {
+		response.Write(w, *prob)
+		return
+	}
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
 		response.Write(w, response.New(http.StatusBadRequest, "Idempotency-Key header required"))
@@ -867,6 +871,7 @@ func (h *RunsHandler) resolveProvenance(jobID string, src *RunSourceRef, scriptD
 
 type runRequest struct {
 	JobID                    string         `json:"job_id"`
+	Tenant                   string         `json:"tenant,omitempty"`
 	Args                     map[string]any `json:"args"`
 	RequestedSecurityProfile string         `json:"requested_security_profile"`
 	Source                   *RunSourceRef  `json:"source"`

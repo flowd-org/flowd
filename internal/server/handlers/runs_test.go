@@ -137,6 +137,106 @@ argspec:
 	}
 }
 
+func TestRunsHandlerTenantResolution(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	h := NewRunsHandler(RunsConfig{Root: root, Store: runstore.New()})
+
+	baseBody := `{"job_id":"demo","args":{"name":"Alice"}}`
+	bodyWithTenant := func(tenant string) string {
+		return fmt.Sprintf(`{"job_id":"demo","args":{"name":"Alice"},"tenant":"%s"}`, tenant)
+	}
+
+	principalTenantCtx := requestctx.WithTenant(requestctx.WithPrincipal(context.Background(), "user-1"), "acme")
+	principalOnlyCtx := requestctx.WithPrincipal(context.Background(), "user-2")
+
+	cases := []struct {
+		name       string
+		ctx        context.Context
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "principal tenant, no request tenant",
+			ctx:        principalTenantCtx,
+			body:       baseBody,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "principal tenant, matching request tenant",
+			ctx:        principalTenantCtx,
+			body:       bodyWithTenant("acme"),
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "principal without tenant claim, request tenant absent",
+			ctx:        principalOnlyCtx,
+			body:       baseBody,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "no principal, request tenant present",
+			ctx:        context.Background(),
+			body:       bodyWithTenant("acme"),
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "no principal, request tenant absent",
+			ctx:        context.Background(),
+			body:       baseBody,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "principal tenant mismatch",
+			ctx:        principalTenantCtx,
+			body:       bodyWithTenant("other"),
+			wantStatus: http.StatusForbidden,
+			wantCode:   "tenant.mismatch",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			addIdempotencyHeader(req)
+			req = req.WithContext(tc.ctx)
+			resp := httptest.NewRecorder()
+
+			h.ServeHTTP(resp, req)
+
+			if resp.Code != tc.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", tc.wantStatus, resp.Code, resp.Body.String())
+			}
+			if tc.wantCode == "" {
+				return
+			}
+			if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
+				t.Fatalf("expected application/problem+json, got %q", ct)
+			}
+			var problem map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+				t.Fatalf("decode problem: %v", err)
+			}
+			if problem["code"] != tc.wantCode {
+				t.Fatalf("expected code %q, got %+v", tc.wantCode, problem)
+			}
+		})
+	}
+}
+
 func TestRunsHandlerEmitsRunStartEvent(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `
