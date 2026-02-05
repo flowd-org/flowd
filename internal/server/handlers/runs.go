@@ -79,6 +79,16 @@ func scopedIdempotencyKey(tenant, key string) string {
 	return hex.EncodeToString(sum[:]) + ":" + key
 }
 
+func normalizeJobRefInput(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return ""
+	}
+	normalized := indexer.DotJobIDToSlash(trimmed)
+	normalized = strings.Trim(normalized, "/")
+	return normalized
+}
+
 var detectContainerRuntime = container.DetectRuntime
 
 // RunsConfig configures the run handler.
@@ -200,12 +210,16 @@ func (h *RunsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
-	req, rawBody, err := decodeRunRequest(r.Body)
+	req, rawBody, jobIDPresent, err := decodeRunRequest(r.Body)
 	if err != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
-	if req.JobID == "" {
+	if !jobIDPresent {
+		response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
+		return
+	}
+	if strings.TrimSpace(req.JobID) == "" && req.JobID != "" {
 		response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
 		return
 	}
@@ -368,14 +382,17 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	lookup := newAliasLookup()
 	lookup.merge(result)
 
-	requestedID := req.JobID
-	effectiveID := req.JobID
+	rawRequestedID := req.JobID
+	requestedID := strings.TrimSpace(req.JobID)
+	normalizedID := normalizeJobRefInput(requestedID)
+	effectiveID := normalizedID
 	var aliasUsed *indexer.AliasInfo
 
 	var scriptDir string
 	setScriptDir := func(id string) bool {
 		if job, ok := jobMap[strings.ToLower(id)]; ok {
 			scriptDir = job.Path
+			effectiveID = job.ID
 			return true
 		}
 		return false
@@ -547,7 +564,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		provenance = map[string]any{}
 	}
 	provenance["canonical_id"] = effectiveID
-	canonicalPath := strings.ReplaceAll(effectiveID, ".", "/")
+	canonicalPath := indexer.DotJobIDToSlash(effectiveID)
 	if aliasUsed != nil {
 		canonicalPath = aliasUsed.TargetPath
 		aliasMeta := map[string]any{
@@ -560,7 +577,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			aliasMeta["description"] = aliasUsed.Description
 		}
 		provenance["alias"] = aliasMeta
-		provenance["invoked_path"] = requestedID
+		provenance["invoked_path"] = rawRequestedID
 	}
 	provenance["canonical_path"] = canonicalPath
 
@@ -890,22 +907,27 @@ type RunSourceRef struct {
 	Name string `json:"name"`
 }
 
-func decodeRunRequest(body io.ReadCloser) (runRequest, []byte, error) {
+func decodeRunRequest(body io.ReadCloser) (runRequest, []byte, bool, error) {
 	defer body.Close()
 	var req runRequest
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return req, nil, err
+		return req, nil, false, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		return req, data, err
+		return req, data, false, err
 	}
 	if req.Args == nil {
 		req.Args = map[string]any{}
 	}
-	return req, data, nil
+	jobIDPresent := false
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err == nil {
+		_, jobIDPresent = raw["job_id"]
+	}
+	return req, data, jobIDPresent, nil
 }
 
 func (h *RunsHandler) handleList(w http.ResponseWriter, r *http.Request) {
