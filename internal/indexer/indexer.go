@@ -14,8 +14,8 @@ import (
 )
 
 // JobInfo summarizes a discovered local job.
-// Path refers to the directory containing config.d/config.yaml.
-// ID defaults to the relative path when not provided explicitly.
+// Path refers to the job directory containing the config sentinel.
+// ID uses canonical slash format derived from the job directory path.
 // Summary is optional and may be empty.
 type JobInfo struct {
 	ID      string `json:"id"`
@@ -39,8 +39,8 @@ type Result struct {
 	Errors          []DiscoveryError           `json:"errors,omitempty"`
 }
 
-// Discover scans root (typically "scripts") for config.d/config.yaml files
-// and returns job metadata according to the Runner specification.
+// Discover scans root (typically "scripts") for config.yaml (primary)
+// and config.d/config.yaml (legacy) sentinels and returns job metadata.
 func Discover(root string) (Result, error) {
 	var res Result
 
@@ -55,14 +55,33 @@ func Discover(root string) (Result, error) {
 		return res, fmt.Errorf("root %s is not a directory", root)
 	}
 
-	var cfgPaths []string
+	type sentinelPaths struct {
+		primary string
+		legacy  string
+	}
+
+	cfgByDir := make(map[string]*sentinelPaths)
 	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if !d.IsDir() && strings.EqualFold(d.Name(), "config.yaml") {
-			if filepath.Base(filepath.Dir(path)) == "config.d" {
-				cfgPaths = append(cfgPaths, path)
+			dir := filepath.Dir(path)
+			jobDir := dir
+			legacy := false
+			if filepath.Base(dir) == "config.d" {
+				legacy = true
+				jobDir = filepath.Dir(dir)
+			}
+			sentinel := cfgByDir[jobDir]
+			if sentinel == nil {
+				sentinel = &sentinelPaths{}
+				cfgByDir[jobDir] = sentinel
+			}
+			if legacy {
+				sentinel.legacy = path
+			} else {
+				sentinel.primary = path
 			}
 		}
 		return nil
@@ -71,11 +90,33 @@ func Discover(root string) (Result, error) {
 		return res, fmt.Errorf("walk root: %w", walkErr)
 	}
 
-	sort.Strings(cfgPaths)
-	for _, cfgPath := range cfgPaths {
-		jobs, err := parseConfig(root, cfgPath)
+	jobDirs := make([]string, 0, len(cfgByDir))
+	for jobDir, sentinels := range cfgByDir {
+		if sentinels.primary != "" && sentinels.legacy != "" {
+			return res, &configloader.DualConfigError{
+				ScriptDir:   jobDir,
+				PrimaryPath: sentinels.primary,
+				LegacyPath:  sentinels.legacy,
+			}
+		}
+		jobDirs = append(jobDirs, jobDir)
+	}
+
+	sort.Strings(jobDirs)
+	for _, jobDir := range jobDirs {
+		sentinels := cfgByDir[jobDir]
+		cfgPath := sentinels.primary
+		if cfgPath == "" {
+			cfgPath = sentinels.legacy
+		}
+		jobs, err := parseConfig(root, jobDir, cfgPath)
 		if err != nil {
-			res.Errors = append(res.Errors, DiscoveryError{Path: cfgPath, Err: err.Error()})
+			errPath := cfgPath
+			var idErr JobIDError
+			if errors.As(err, &idErr) {
+				errPath = jobDir
+			}
+			res.Errors = append(res.Errors, DiscoveryError{Path: errPath, Err: err.Error()})
 			continue
 		}
 		res.Jobs = append(res.Jobs, jobs...)
@@ -121,10 +162,15 @@ type jobBlock struct {
 	Summary string `yaml:"summary"`
 }
 
-func parseConfig(root, cfgPath string) ([]JobInfo, error) {
+func parseConfig(root, jobDir, cfgPath string) ([]JobInfo, error) {
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	canonicalID, err := canonicalJobIDFromDir(root, jobDir)
+	if err != nil {
+		return nil, err
 	}
 
 	var cfg singleJob
@@ -140,44 +186,37 @@ func parseConfig(root, cfgPath string) ([]JobInfo, error) {
 		blocks = append(blocks, cfg.Jobs...)
 	}
 	if len(blocks) == 0 {
-		derived := deriveID(root, cfgPath)
 		return []JobInfo{{
-			ID:   derived,
-			Name: derived,
-			Path: filepath.Dir(cfgPath),
+			ID:   canonicalID,
+			Name: canonicalID,
+			Path: jobDir,
 		}}, nil
 	}
 
 	jobs := make([]JobInfo, 0, len(blocks))
 	for _, block := range blocks {
-		id := block.ID
-		if id == "" {
-			id = deriveID(root, cfgPath)
-		}
 		name := block.Name
 		if name == "" {
-			name = id
+			name = canonicalID
 		}
 		jobs = append(jobs, JobInfo{
-			ID:      id,
+			ID:      canonicalID,
 			Name:    name,
 			Summary: block.Summary,
-			Path:    filepath.Dir(cfgPath),
+			Path:    jobDir,
 		})
 	}
 	return jobs, nil
 }
 
-func deriveID(root, cfgPath string) string {
-	jobDir := filepath.Dir(filepath.Dir(cfgPath)) // strip config.d/config.yaml
+func canonicalJobIDFromDir(root, jobDir string) (string, error) {
 	rel, err := filepath.Rel(root, jobDir)
 	if err != nil {
-		return filepath.ToSlash(jobDir)
+		rel = jobDir
 	}
 	rel = filepath.ToSlash(rel)
-	rel = strings.Trim(rel, "/")
 	if rel == "" {
-		return filepath.Base(jobDir)
+		rel = "."
 	}
-	return strings.ReplaceAll(rel, "/", ".")
+	return CanonicalJobID(".", rel)
 }

@@ -3,6 +3,7 @@
 package configloader
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,8 +16,46 @@ import (
 
 // fullConfig retained for potential future extended parsing; current path decodes directly into types.Config
 
+const DualConfigCode = "job.config.dual_sentinel"
+
+// DualConfigError indicates that both primary and legacy config sentinels exist.
+type DualConfigError struct {
+	ScriptDir   string
+	PrimaryPath string
+	LegacyPath  string
+}
+
+func (e *DualConfigError) Error() string {
+	return fmt.Sprintf("both config.yaml and config.d/config.yaml exist in %s", e.ScriptDir)
+}
+
+func (e *DualConfigError) Code() string {
+	return DualConfigCode
+}
+
 func LoadConfig(scriptDir string) (*types.Config, error) {
-	configPath := filepath.Join(scriptDir, "config.d", "config.yaml")
+	primaryPath := filepath.Join(scriptDir, "config.yaml")
+	legacyPath := filepath.Join(scriptDir, "config.d", "config.yaml")
+	primaryExists, err := fileExists(primaryPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat config: %w", err)
+	}
+	legacyExists, err := fileExists(legacyPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat legacy config: %w", err)
+	}
+	if primaryExists && legacyExists {
+		return nil, &DualConfigError{
+			ScriptDir:   scriptDir,
+			PrimaryPath: primaryPath,
+			LegacyPath:  legacyPath,
+		}
+	}
+
+	configPath := legacyPath
+	if primaryExists {
+		configPath = primaryPath
+	}
 
 	f, err := os.Open(configPath)
 	if err != nil {
@@ -100,4 +139,15 @@ func LoadConfig(scriptDir string) (*types.Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func fileExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err == nil {
+		return !info.IsDir(), nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }

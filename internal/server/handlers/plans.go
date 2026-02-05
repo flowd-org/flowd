@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -96,6 +95,10 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		result, err := discoverFn(discoverRoot)
 		if err != nil {
+			if prob, ok := discoveryProblem(err); ok {
+				response.Write(w, *prob)
+				return
+			}
 			response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}
@@ -112,7 +115,7 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		var jobPath string
 		setJobPath := func(id string) bool {
 			if job, ok := jobMap[strings.ToLower(id)]; ok {
-				jobPath = filepath.Dir(job.Path)
+				jobPath = job.Path
 				return true
 			}
 			return false
@@ -221,6 +224,10 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 
 		cfgObj, err := loadConfig(jobPath)
 		if err != nil {
+			if prob, ok := discoveryProblem(err); ok {
+				response.Write(w, *prob)
+				return
+			}
 			response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 			return
 		}

@@ -355,6 +355,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.discover(runRoot)
 	if err != nil {
+		if prob, ok := discoveryProblem(err); ok {
+			response.Write(w, *prob)
+			return
+		}
 		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
@@ -371,7 +375,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var scriptDir string
 	setScriptDir := func(id string) bool {
 		if job, ok := jobMap[strings.ToLower(id)]; ok {
-			scriptDir = filepath.Dir(job.Path)
+			scriptDir = job.Path
 			return true
 		}
 		return false
@@ -453,6 +457,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.loadConfig(absScriptDir)
 	if err != nil {
+		if prob, ok := discoveryProblem(err); ok {
+			response.Write(w, *prob)
+			return
+		}
 		response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}

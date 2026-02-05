@@ -118,6 +118,10 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 
 			discovered, dErr := discoverFn(target.root)
 			if dErr != nil {
+				if prob, ok := discoveryProblem(dErr); ok {
+					response.Write(w, *prob)
+					return
+				}
 				response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(dErr.Error())))
 				return
 			}
