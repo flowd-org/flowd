@@ -305,14 +305,17 @@ argspec:
 			name:              "case-insensitive slash",
 			jobID:             "DeMo/ChIlD",
 			wantStatus:        http.StatusCreated,
-			wantJobID:         "DeMo/ChIlD",
-			wantCanonicalID:   "DeMo/ChIlD",
-			wantCanonicalPath: "DeMo/ChIlD",
+			wantJobID:         "demo/child",
+			wantCanonicalID:   "demo/child",
+			wantCanonicalPath: "demo/child",
 		},
 		{
-			name:       "legacy dot form",
-			jobID:      "demo.child",
-			wantStatus: http.StatusNotFound,
+			name:              "legacy dot form",
+			jobID:             "demo.child",
+			wantStatus:        http.StatusCreated,
+			wantJobID:         "demo/child",
+			wantCanonicalID:   "demo/child",
+			wantCanonicalPath: "demo/child",
 		},
 	}
 
@@ -509,7 +512,7 @@ func TestRunsHandlerGitSource(t *testing.T) {
 		Sources: sourceStore,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"gitjob","args":{"name":"Dana"},"source":{"name":"git-remote"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"scripts/gitjob","args":{"name":"Dana"},"source":{"name":"git-remote"}}`))
 	req.Header.Set("Content-Type", "application/json")
 	addIdempotencyHeader(req)
 	resp := httptest.NewRecorder()

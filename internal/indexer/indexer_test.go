@@ -35,7 +35,7 @@ job:
 		t.Fatalf("expected 1 job, got %d", len(res.Jobs))
 	}
 	job := res.Jobs[0]
-	if job.ID != "demo.hello" {
+	if job.ID != "demo/hello" {
 		t.Fatalf("unexpected id %s", job.ID)
 	}
 	if res.AliasCollisions != nil {
@@ -55,13 +55,13 @@ job:
 func TestDiscoverIncludesAliases(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
-	jobDir := filepath.Join(scriptsDir, "demo")
+	jobDir := filepath.Join(scriptsDir, "demo", "build")
 	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
 job:
-  id: demo.build
+  id: demo/build
   name: Demo Build
 `
 	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o644); err != nil {
@@ -87,8 +87,8 @@ job:
 	if alias.Name != "build-demo" {
 		t.Fatalf("expected alias name build-demo, got %s", alias.Name)
 	}
-	if alias.TargetID != "demo.build" {
-		t.Fatalf("expected target id demo.build, got %s", alias.TargetID)
+	if alias.TargetID != "demo/build" {
+		t.Fatalf("expected target id demo/build, got %s", alias.TargetID)
 	}
 	if alias.TargetPath != "demo/build" {
 		t.Fatalf("expected target path demo/build, got %s", alias.TargetPath)
