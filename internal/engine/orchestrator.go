@@ -58,7 +58,7 @@ var ErrSecretContainerUnsupported = errors.New("container execution does not sup
 func (o *Orchestrator) StartRun(ctx context.Context, req types.StartRunRequest) (StartRunResult, error) {
 	_ = ctx
 	var res StartRunResult
-	if req.JobID == "" {
+	if req.JobID == "" && req.ScriptDir == "" {
 		return res, errors.New("job_id required")
 	}
 
