@@ -155,7 +155,7 @@ func buildSourceView(src sourcestore.Source, tenant string) sourceView {
 		Ref:              src.Ref,
 		ResolvedRef:      src.ResolvedRef,
 		ResolvedCommit:   src.ResolvedCommit,
-		URL:              src.URL,
+		URL:              sanitizeSourceURL(src.URL),
 		Trust:            src.Trust,
 		Aliases:          src.Aliases,
 		Metadata:         src.Metadata,
@@ -343,7 +343,7 @@ func buildSourceProvenance(src sourcestore.Source) map[string]any {
 		out["ref"] = src.Ref
 	}
 	if src.URL != "" {
-		out["url"] = src.URL
+		out["url"] = sanitizeSourceURL(src.URL)
 	}
 	if src.ResolvedCommit != "" {
 		out["resolved_commit"] = src.ResolvedCommit

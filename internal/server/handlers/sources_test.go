@@ -153,6 +153,139 @@ func TestSourcesHandlerListDoesNotLogSecrets(t *testing.T) {
 	}
 }
 
+func TestSourcesHandlerListCoreViewAndRedaction(t *testing.T) {
+	secret := "supersecret"
+	store := sourcestore.New()
+	localRoot := t.TempDir()
+	gitRoot := t.TempDir()
+	ociRoot := t.TempDir()
+
+	store.Upsert(sourcestore.Source{
+		Name:      "local",
+		Type:      "local",
+		Ref:       "demo",
+		LocalPath: localRoot,
+		Expose:    "read",
+	})
+	store.Upsert(sourcestore.Source{
+		Name:           "git",
+		Type:           "git",
+		Ref:            "main",
+		ResolvedRef:    "deadbeef",
+		ResolvedCommit: "deadbeef",
+		URL:            "https://user:" + secret + "@example.com/repo.git",
+		LocalPath:      gitRoot,
+		Expose:         "read",
+	})
+	store.Upsert(sourcestore.Source{
+		Name:             "addon",
+		Type:             "oci",
+		Ref:              "ghcr.io/example/addon:1.0",
+		Digest:           "sha256:abc123",
+		PullPolicy:       "always",
+		VerifySignatures: true,
+		LocalPath:        ociRoot,
+		Expose:           "read",
+	})
+
+	h := NewSourcesHandler(SourcesConfig{Store: store})
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
+	req = req.WithContext(requestctx.WithLogger(req.Context(), logger))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for list, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatalf("expected response to exclude secret substring")
+	}
+	for _, entry := range handler.records {
+		if strings.Contains(entry, secret) {
+			t.Fatalf("expected logs to exclude secret substring, got %q", entry)
+		}
+	}
+
+	var list []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("expected three sources, got %d", len(list))
+	}
+
+	local, ok := sourceByID(list, "local")
+	if !ok {
+		t.Fatalf("expected local source in response")
+	}
+	assertCoreViewFields(t, local, "local", "fs", localRoot, "tree-v1")
+	localConfig, _ := local["config"].(map[string]any)
+	if localConfig["path"] != "demo" {
+		t.Fatalf("expected local config path demo, got %+v", localConfig)
+	}
+
+	git, ok := sourceByID(list, "git")
+	if !ok {
+		t.Fatalf("expected git source in response")
+	}
+	assertCoreViewFields(t, git, "git", "git", gitRoot, "tree-v1")
+	gitConfig, _ := git["config"].(map[string]any)
+	if gitConfig["url"] != "https://example.com/repo.git" {
+		t.Fatalf("expected sanitized git url, got %+v", gitConfig)
+	}
+	if git["name"] != "git" || git["type"] != "git" || git["ref"] != "main" || git["resolved_ref"] != "deadbeef" {
+		t.Fatalf("expected legacy fields present, got %+v", git)
+	}
+
+	oci, ok := sourceByID(list, "addon")
+	if !ok {
+		t.Fatalf("expected oci source in response")
+	}
+	if oci["kind"] != "oci" {
+		t.Fatalf("expected oci kind, got %+v", oci["kind"])
+	}
+	ociConfig, _ := oci["config"].(map[string]any)
+	if ociConfig["ref"] != "ghcr.io/example/addon:1.0" || ociConfig["digest"] != "sha256:abc123" {
+		t.Fatalf("expected oci config ref/digest, got %+v", ociConfig)
+	}
+}
+
+func sourceByID(list []map[string]any, id string) (map[string]any, bool) {
+	for _, item := range list {
+		if value, ok := item["id"].(string); ok && value == id {
+			return item, true
+		}
+	}
+	return nil, false
+}
+
+func assertCoreViewFields(t *testing.T, payload map[string]any, id, kind, mountPath, layout string) {
+	t.Helper()
+	if payload["id"] != id {
+		t.Fatalf("expected id %s, got %+v", id, payload["id"])
+	}
+	if payload["tenant"] != "default" {
+		t.Fatalf("expected default tenant, got %+v", payload["tenant"])
+	}
+	if payload["kind"] != kind {
+		t.Fatalf("expected kind %s, got %+v", kind, payload["kind"])
+	}
+	if payload["mountPath"] != mountPath {
+		t.Fatalf("expected mountPath %s, got %+v", mountPath, payload["mountPath"])
+	}
+	if payload["layout"] != layout {
+		t.Fatalf("expected layout %s, got %+v", layout, payload["layout"])
+	}
+	if payload["pull_policy"] != "always" {
+		t.Fatalf("expected pull_policy always, got %+v", payload["pull_policy"])
+	}
+	if _, ok := payload["config"]; !ok {
+		t.Fatalf("expected config to be present, got %+v", payload)
+	}
+}
+
 func TestSourcesHandlerGitHostBlocked(t *testing.T) {
 	store := sourcestore.New()
 	h := NewSourcesHandler(SourcesConfig{
