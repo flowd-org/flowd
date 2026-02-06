@@ -90,6 +90,8 @@ See [Add-on Manifests]({{< ref "addon-manifests" >}}) for details on OCI add-ons
 
 The **tree-v1** layout organizes jobs in a hierarchical directory structure where each directory containing a `config.yaml` file defines a job.
 
+During PR1, flwd also accepts a legacy sentinel file at `config.d/config.yaml` as a temporary compatibility bridge. If **both** `config.yaml` and `config.d/config.yaml` exist in the same job directory, discovery fails with a 409 RFC7807 error (dual-config invalidity).
+
 ### Basic Structure
 
 ```
@@ -112,7 +114,12 @@ jobs/                    # Source root
 
 ### Job ID Resolution
 
-Job IDs are derived from the directory path relative to the source root:
+Job IDs are derived from the directory path relative to the source root and always emitted as canonical slash IDs.
+
+Canonicalization rules:
+- `mountPath` is a **prefix** for job IDs. If `mountPath` is `.`, the prefix is empty.
+- Job directory paths are normalized to lowercase kebab-case per path segment.
+- Outputs, persistence, and events use canonical slash IDs only.
 
 ```
 Source mountPath: "ops"
@@ -147,8 +154,8 @@ flwd discovers jobs using the following process:
 
 1. **Mount sources**: Each source is mounted at its `mountPath` under the tenant's scripts root
 2. **Walk directories**: Recursively walk the directory tree
-3. **Identify jobs**: Any directory containing `config.yaml` is a job
-4. **Resolve IDs**: Job ID = `mountPath` + relative directory path
+3. **Identify jobs**: Any directory containing `config.yaml` is a job (legacy `config.d/config.yaml` is accepted during PR1)
+4. **Resolve IDs**: Job ID = `mountPath` + relative directory path (canonical slash IDs only)
 5. **Check collisions**: Fail if multiple jobs resolve to the same ID
 
 ### Discovery Example
@@ -190,14 +197,23 @@ sources:
 
 ## Job Collision Detection
 
-If two or more jobs resolve to the same job ID, discovery fails with an error:
+If two or more jobs resolve to the same job ID, discovery fails with an RFC7807 **409 Conflict** error that includes a deterministic `contenders` list to help you identify the colliding jobs.
 
 ```
-Error: Job ID collision detected
-Job ID: ops/backup/daily
-Sources:
-  - local-ops (mountPath: ops, path: backup/daily)
-  - remote-ops (mountPath: ops, path: backup/daily)
+type: https://flowd.org/problems/job-id-collision
+status: 409
+code: job_id.collision
+detail: Multiple job definitions resolve to the same canonical job_id
+canonical_job_id: ops/backup/daily
+contenders:
+  - source_kind: fs
+    source_name: local-ops
+    mountPath: ops
+    job_dir: backup/daily
+  - source_kind: git
+    source_name: remote-ops
+    mountPath: ops
+    job_dir: backup/daily
 ```
 
 **Resolution:**

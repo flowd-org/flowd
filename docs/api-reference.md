@@ -35,6 +35,8 @@ GET /api/v1/jobs
 
 Returns a list of all discovered jobs across all sources.
 
+Job IDs are always returned as canonical slash IDs. When a job is defined at the source root and `mountPath` is `.`, the canonical job ID is the empty string (`""`).
+
 **Query Parameters:**
 - `source` (optional): Filter by source name
 - `namespace` (optional): Filter by namespace
@@ -49,6 +51,11 @@ Returns a list of all discovered jobs across all sources.
       "namespace": "backup",
       "version": "1.0.0",
       "description": "Daily backup job",
+      "tenant": "default",
+      "origin": {
+        "source_kind": "fs",
+        "source_name": "local-fs"
+      },
       "source": "local-fs"
     }
   ]
@@ -71,6 +78,11 @@ Returns detailed information about a specific job, including its configuration a
   "namespace": "backup",
   "version": "1.0.0",
   "description": "Daily backup job",
+  "tenant": "default",
+  "origin": {
+    "source_kind": "fs",
+    "source_name": "local-fs"
+  },
   "args": {
     "type": "object",
     "properties": {
@@ -95,6 +107,8 @@ POST /api/v1/runs
 
 Creates and executes a new run of a job.
 
+Job references are input-compatible (aliases, existing dot-form IDs, and case-insensitive slash IDs), but responses, persistence, SSE, and journal entries always use canonical slash IDs.
+
 ##### Idempotency
 
 `POST /api/v1/runs` requires an idempotency key so clients can safely retry without duplicate effects.
@@ -112,6 +126,9 @@ Creates and executes a new run of a job.
 
 **Replay behavior**
 - If the same `Idempotency-Key` and request body are replayed after a successful run creation, the server returns the cached response and sets `Idempotent-Replay: true`.
+
+**Tenant scoping**
+- Idempotency keys are scoped by the resolved tenant. The same key in different tenants does not collide.
 
 **Failure modes (RFC7807)**
 - **409 Conflict** — key reuse with a different request body or hash mismatch:
@@ -132,11 +149,25 @@ Creates and executes a new run of a job.
 }
 ```
 
+**Tenant resolution rules (summary)**
+- If a principal tenant claim is present, it is authoritative.
+- If both a principal tenant and a request `tenant` are present and differ, the request is rejected (RFC7807).
+- If no principal tenant is available, `tenant` defaults to `default` when omitted.
+- If the principal exists but has no tenant claim, treat it as "no principal tenant" for resolution.
+
+**Root job aliases**
+- If the resolved canonical job ID is `""`, `job_id` may be sent as `""`, `"."`, or `"/"` and will be normalized to `""`.
+
 **Response:**
 ```json
 {
   "run_id": "run_01HX...",
   "job_id": "backup/daily",
+  "tenant": "default",
+  "origin": {
+    "source_kind": "fs",
+    "source_name": "local-fs"
+  },
   "status": "running",
   "created_at": "2024-01-15T10:30:00Z"
 }
@@ -163,6 +194,11 @@ Returns a list of all runs.
     {
       "run_id": "run_01HX...",
       "job_id": "backup/daily",
+      "tenant": "default",
+      "origin": {
+        "source_kind": "fs",
+        "source_name": "local-fs"
+      },
       "status": "success",
       "created_at": "2024-01-15T10:30:00Z",
       "finished_at": "2024-01-15T10:35:00Z"
@@ -185,6 +221,11 @@ Returns detailed information about a specific run.
 {
   "run_id": "run_01HX...",
   "job_id": "backup/daily",
+  "tenant": "default",
+  "origin": {
+    "source_kind": "fs",
+    "source_name": "local-fs"
+  },
   "status": "success",
   "created_at": "2024-01-15T10:30:00Z",
   "finished_at": "2024-01-15T10:35:00Z",
@@ -367,7 +408,7 @@ All SSE endpoints use a single `flowd` envelope and a fixed retry hint:
 event: flowd
 retry: 3000
 id: 42
-data: {"seq":42,"ts":"2026-01-10T10:00:15Z","type":"run.output","run_id":"run_01HX...","tenant":"default","data":{...}}
+data: {"seq":42,"ts":"2026-01-10T10:00:15Z","type":"run.output","run_id":"run_01HX...","tenant":"default","origin":{"source_kind":"fs","source_name":"local-fs"},"data":{...}}
 ```
 
 Heartbeat comments are emitted at least every 15 seconds in the form:

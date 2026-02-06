@@ -24,6 +24,8 @@ When a source is configured, its jobs appear in `/jobs` and are available to the
 CLI and TUI. API calls to `/plans` and `/runs` can optionally include a `source`
 hint to resolve ambiguous names.
 
+`GET /sources` returns a Core-aligned view of sources, including `tenant`, `kind`, `mountPath`, `layout`, `pull_policy`, and `config`. The `kind` value `oci` is a flowd extension to the Core source kind set. Secret-shaped values inside `config` are redacted (rendered as `REDACTED`).
+
 ## Add a local source (API)
 
 Assuming `flwd :serve` is running:
@@ -41,6 +43,43 @@ $ curl -s -X POST http://127.0.0.1:8080/sources \
 
 After this, any jobs discovered under `/home/me/tools` are visible via `/jobs`
 and can be run like any other job.
+
+```bash
+$ curl -s -H 'Authorization: Bearer dev-token' http://127.0.0.1:8080/sources | jq
+```
+
+Example response (redacted):
+
+```json
+{
+  "sources": [
+    {
+      "id": "local-tools",
+      "tenant": "default",
+      "kind": "fs",
+      "mountPath": "tools",
+      "layout": "tree-v1",
+      "pull_policy": "manual",
+      "config": {
+        "path": "/home/me/tools",
+        "watch": true
+      }
+    },
+    {
+      "id": "backup-addon",
+      "tenant": "default",
+      "kind": "oci",
+      "mountPath": "addons/backup",
+      "layout": "tree-v1",
+      "pull_policy": "on-run",
+      "config": {
+        "image": "ghcr.io/org/backup-tools:v1.0.0@sha256:...",
+        "token": "REDACTED"
+      }
+    }
+  ]
+}
+```
 
 ## Add a Git source (API)
 
