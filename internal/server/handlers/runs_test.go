@@ -534,6 +534,142 @@ argspec:
 	waitFor(func() bool { return sink.countBy("run.finished") >= 1 }, 500*time.Millisecond, t)
 }
 
+func TestRunsHandlerSSEJournalIdentityConsistency(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	ctx := context.Background()
+	db, err := coredb.Open(ctx, coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	journal := coredb.NewJournal(db, 0)
+
+	store := runstore.New()
+	sink := &recordingSink{}
+	eventSink := NewJournalEventSink(journal, sink)
+	h := NewRunsHandler(RunsConfig{Root: root, Store: store, Events: eventSink, DB: db})
+	getHandler := NewRunGetHandler(RunGetConfig{Store: store, DB: db})
+
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"demo","args":{"name":"Alice"},"tenant":"acme"}`))
+	req.Header.Set("Content-Type", "application/json")
+	addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	runID, ok := created["id"].(string)
+	if !ok || runID == "" {
+		t.Fatalf("expected run id, got %v", created["id"])
+	}
+	if created["tenant"] != "acme" {
+		t.Fatalf("expected tenant acme, got %v", created["tenant"])
+	}
+	assertOrigin(t, created["origin"], "fs", "local")
+
+	getReq := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	getResp := httptest.NewRecorder()
+	getHandler.ServeHTTP(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("expected GET /runs/{id} 200, got %d: %s", getResp.Code, getResp.Body.String())
+	}
+	var fetched map[string]any
+	if err := json.NewDecoder(getResp.Body).Decode(&fetched); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if fetched["tenant"] != "acme" {
+		t.Fatalf("expected fetched tenant acme, got %v", fetched["tenant"])
+	}
+	assertOrigin(t, fetched["origin"], "fs", "local")
+
+	waitFor(func() bool { return sink.countBy("run.started") >= 1 }, 500*time.Millisecond, t)
+	var runStarted recordedEvent
+	for _, evt := range sink.snapshot() {
+		if evt.event.Event == "run.started" {
+			runStarted = evt
+			break
+		}
+	}
+	if runStarted.event.Event != "run.started" {
+		t.Fatal("expected run.started event")
+	}
+	if runStarted.event.Tenant != "acme" {
+		t.Fatalf("expected SSE tenant acme, got %q", runStarted.event.Tenant)
+	}
+	var ssePayload map[string]any
+	if err := json.Unmarshal([]byte(runStarted.event.Data), &ssePayload); err != nil {
+		t.Fatalf("decode SSE payload: %v", err)
+	}
+	if ssePayload["tenant"] != "acme" {
+		t.Fatalf("expected SSE tenant acme, got %v", ssePayload["tenant"])
+	}
+	if ssePayload["job_id"] != "demo" {
+		t.Fatalf("expected SSE job_id demo, got %v", ssePayload["job_id"])
+	}
+	assertOrigin(t, ssePayload["origin"], "fs", "local")
+
+	waitFor(func() bool {
+		earliest, _, err := journal.Bounds(context.Background(), runID)
+		return err == nil && earliest > 0
+	}, 500*time.Millisecond, t)
+
+	found := false
+	if err := journal.ForEach(context.Background(), runID, 0, func(entry coredb.JournalEntry) error {
+		if entry.EventType != "run.started" && entry.EventType != "run.finished" {
+			return nil
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+			return fmt.Errorf("decode journal payload: %w", err)
+		}
+		if payload["tenant"] != "acme" {
+			return fmt.Errorf("expected journal tenant acme, got %v", payload["tenant"])
+		}
+		if payload["job_id"] != "demo" {
+			return fmt.Errorf("expected journal job_id demo, got %v", payload["job_id"])
+		}
+		assertOrigin(t, payload["origin"], "fs", "local")
+		found = true
+		return nil
+	}); err != nil {
+		t.Fatalf("journal scan: %v", err)
+	}
+	if !found {
+		t.Fatal("expected journal run.started/run.finished event")
+	}
+}
+
+func assertOrigin(t *testing.T, value any, wantKind, wantName string) {
+	t.Helper()
+	origin, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected origin map, got %T", value)
+	}
+	if origin["source_kind"] != wantKind {
+		t.Fatalf("expected origin source_kind %q, got %v", wantKind, origin["source_kind"])
+	}
+	if origin["source_name"] != wantName {
+		t.Fatalf("expected origin source_name %q, got %v", wantName, origin["source_name"])
+	}
+}
+
 func TestRunsHandlerProvenanceFromResolver(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `
