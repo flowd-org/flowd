@@ -167,36 +167,42 @@ argspec:
 		body       string
 		wantStatus int
 		wantCode   string
+		wantTenant string
 	}{
 		{
 			name:       "principal tenant, no request tenant",
 			ctx:        principalTenantCtx,
 			body:       baseBody,
 			wantStatus: http.StatusCreated,
+			wantTenant: "acme",
 		},
 		{
 			name:       "principal tenant, matching request tenant",
 			ctx:        principalTenantCtx,
 			body:       bodyWithTenant("acme"),
 			wantStatus: http.StatusCreated,
+			wantTenant: "acme",
 		},
 		{
 			name:       "principal without tenant claim, request tenant absent",
 			ctx:        principalOnlyCtx,
 			body:       baseBody,
 			wantStatus: http.StatusCreated,
+			wantTenant: defaultTenant,
 		},
 		{
 			name:       "no principal, request tenant present",
 			ctx:        context.Background(),
 			body:       bodyWithTenant("acme"),
 			wantStatus: http.StatusCreated,
+			wantTenant: "acme",
 		},
 		{
 			name:       "no principal, request tenant absent",
 			ctx:        context.Background(),
 			body:       baseBody,
 			wantStatus: http.StatusCreated,
+			wantTenant: defaultTenant,
 		},
 		{
 			name:       "principal tenant mismatch",
@@ -221,6 +227,13 @@ argspec:
 				t.Fatalf("expected %d, got %d: %s", tc.wantStatus, resp.Code, resp.Body.String())
 			}
 			if tc.wantCode == "" {
+				var payload map[string]any
+				if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if payload["tenant"] != tc.wantTenant {
+					t.Fatalf("expected tenant %q, got %v", tc.wantTenant, payload["tenant"])
+				}
 				return
 			}
 			if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
@@ -232,6 +245,102 @@ argspec:
 			}
 			if problem["code"] != tc.wantCode {
 				t.Fatalf("expected code %q, got %+v", tc.wantCode, problem)
+			}
+		})
+	}
+}
+
+func TestRunsHandlerRootJobAliases(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, ".", `
+version: v1
+job:
+  id: root
+  name: Root Job
+`)
+
+	cases := []struct {
+		name  string
+		jobID string
+	}{
+		{
+			name:  "empty job id",
+			jobID: "",
+		},
+		{
+			name:  "dot alias",
+			jobID: ".",
+		},
+		{
+			name:  "slash alias",
+			jobID: "/",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := runstore.New()
+			sink := &recordingSink{}
+			h := NewRunsHandler(RunsConfig{Root: root, Store: store, Events: sink})
+
+			payload := fmt.Sprintf(`{"job_id":"%s"}`, tc.jobID)
+			req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			addIdempotencyHeader(req)
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", resp.Code, resp.Body.String())
+			}
+			var body map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body["job_id"] != "" {
+				t.Fatalf("expected empty job_id, got %v", body["job_id"])
+			}
+			prov, ok := body["provenance"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected provenance map, got %T", body["provenance"])
+			}
+			if prov["canonical_id"] != "" {
+				t.Fatalf("expected canonical_id empty, got %v", prov["canonical_id"])
+			}
+			if prov["canonical_path"] != "" {
+				t.Fatalf("expected canonical_path empty, got %v", prov["canonical_path"])
+			}
+
+			runID, _ := body["id"].(string)
+			saved, ok := store.Get(runID)
+			if !ok {
+				t.Fatalf("expected stored run for %s", runID)
+			}
+			if saved.JobID != "" {
+				t.Fatalf("expected stored job_id empty, got %q", saved.JobID)
+			}
+
+			waitFor(func() bool { return sink.countBy("run.started") >= 1 }, 500*time.Millisecond, t)
+			events := sink.snapshot()
+			if len(events) == 0 {
+				t.Fatalf("expected at least one event")
+			}
+			var started recordedEvent
+			for _, ev := range events {
+				if ev.event.Event == "run.started" {
+					started = ev
+					break
+				}
+			}
+			if started.event.Event != "run.started" {
+				t.Fatalf("expected run.started event")
+			}
+			var eventPayload map[string]any
+			if err := json.Unmarshal([]byte(started.event.Data), &eventPayload); err != nil {
+				t.Fatalf("decode event payload: %v", err)
+			}
+			if eventPayload["job_id"] != "" {
+				t.Fatalf("expected event job_id empty, got %v", eventPayload["job_id"])
 			}
 		})
 	}
@@ -860,6 +969,98 @@ argspec:
 	}
 	if problem["type"] != idempotencyMismatchType {
 		t.Fatalf("expected conflict type %s, got %+v", idempotencyMismatchType, problem)
+	}
+}
+
+func TestRunsHandlerIdempotencyTenantScopedInFlight(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store := runstore.New()
+	sink := &recordingSink{}
+	blocked := make(chan struct{})
+	unblock := make(chan struct{})
+	var discoverCalls int32
+	discover := func(root string) (indexer.Result, error) {
+		if atomic.AddInt32(&discoverCalls, 1) == 1 {
+			close(blocked)
+			<-unblock
+		}
+		return indexer.Discover(root)
+	}
+	h := NewRunsHandler(RunsConfig{
+		Root:     root,
+		Store:    store,
+		Events:   sink,
+		DB:       db,
+		Discover: discover,
+	})
+	key := "eeeeeeeeeeeeeeeeeeee"
+	payload := `{"job_id":"demo","args":{"name":"Alice"}}`
+
+	first := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req1.Header.Set("Content-Type", "application/json")
+	req1 = req1.WithContext(requestctx.WithTenant(req1.Context(), "tenant-A"))
+	setSpecificIdempotencyKey(req1, key)
+	firstDone := make(chan struct{})
+	go func() {
+		h.ServeHTTP(first, req1)
+		close(firstDone)
+	}()
+
+	waitFor(func() bool {
+		select {
+		case <-blocked:
+			return true
+		default:
+			return false
+		}
+	}, 500*time.Millisecond, t)
+
+	second := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req2.Header.Set("Content-Type", "application/json")
+	req2 = req2.WithContext(requestctx.WithTenant(req2.Context(), "tenant-B"))
+	setSpecificIdempotencyKey(req2, key)
+	h.ServeHTTP(second, req2)
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for different tenant, got %d", second.Code)
+	}
+	if second.Header().Get("Idempotent-Replay") == "true" {
+		t.Fatalf("did not expect replay for different tenant")
+	}
+
+	third := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+	req3.Header.Set("Content-Type", "application/json")
+	req3 = req3.WithContext(requestctx.WithTenant(req3.Context(), "tenant-A"))
+	setSpecificIdempotencyKey(req3, key)
+	h.ServeHTTP(third, req3)
+	if third.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for in-flight idempotency, got %d", third.Code)
+	}
+
+	close(unblock)
+	<-firstDone
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first request 201, got %d", first.Code)
 	}
 }
 
