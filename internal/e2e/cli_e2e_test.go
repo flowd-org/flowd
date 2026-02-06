@@ -253,7 +253,12 @@ func TestCLIServeMode(t *testing.T) {
 		t.Fatalf("GET /jobs status=%d body=%s", jobsResp.StatusCode, string(body))
 	}
 	var jobs []struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Tenant string `json:"tenant"`
+		Origin struct {
+			SourceKind string `json:"source_kind"`
+			SourceName string `json:"source_name"`
+		} `json:"origin"`
 	}
 	if err := json.NewDecoder(jobsResp.Body).Decode(&jobs); err != nil {
 		t.Fatalf("decode jobs: %v", err)
@@ -262,6 +267,12 @@ func TestCLIServeMode(t *testing.T) {
 	for _, job := range jobs {
 		if job.ID == "demo" {
 			foundDemo = true
+			if job.Tenant != "default" {
+				t.Fatalf("expected demo tenant default, got %q", job.Tenant)
+			}
+			if job.Origin.SourceKind != "fs" || job.Origin.SourceName != "local" {
+				t.Fatalf("expected demo origin fs/local, got %s/%s", job.Origin.SourceKind, job.Origin.SourceName)
+			}
 			break
 		}
 	}
@@ -311,12 +322,23 @@ func TestCLIServeMode(t *testing.T) {
 	var runPayload struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
+		Tenant string `json:"tenant"`
+		Origin struct {
+			SourceKind string `json:"source_kind"`
+			SourceName string `json:"source_name"`
+		} `json:"origin"`
 	}
 	if err := json.NewDecoder(runResp.Body).Decode(&runPayload); err != nil {
 		t.Fatalf("decode run: %v", err)
 	}
 	if runPayload.ID == "" {
 		t.Fatalf("expected run id in response")
+	}
+	if runPayload.Tenant != "default" {
+		t.Fatalf("expected run tenant default, got %q", runPayload.Tenant)
+	}
+	if runPayload.Origin.SourceKind != "fs" || runPayload.Origin.SourceName != "local" {
+		t.Fatalf("expected run origin fs/local, got %s/%s", runPayload.Origin.SourceKind, runPayload.Origin.SourceName)
 	}
 
 	runStatus := awaitRunCompletion(t, client, addr, runPayload.ID)
@@ -555,6 +577,11 @@ func TestCLIServeConformanceErrors(t *testing.T) {
 	var runPayload struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
+		Tenant string `json:"tenant"`
+		Origin struct {
+			SourceKind string `json:"source_kind"`
+			SourceName string `json:"source_name"`
+		} `json:"origin"`
 	}
 	if err := json.NewDecoder(respRun.Body).Decode(&runPayload); err != nil {
 		respRun.Body.Close()
@@ -563,6 +590,12 @@ func TestCLIServeConformanceErrors(t *testing.T) {
 	respRun.Body.Close()
 	if runPayload.ID == "" {
 		t.Fatalf("expected run id in response")
+	}
+	if runPayload.Tenant != "default" {
+		t.Fatalf("expected run tenant default, got %q", runPayload.Tenant)
+	}
+	if runPayload.Origin.SourceKind != "fs" || runPayload.Origin.SourceName != "local" {
+		t.Fatalf("expected run origin fs/local, got %s/%s", runPayload.Origin.SourceKind, runPayload.Origin.SourceName)
 	}
 
 	// 409 — same key, different body.
