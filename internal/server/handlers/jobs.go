@@ -149,7 +149,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				continue
 			}
 
-			discovered, dErr := discoverFn(target.root)
+			discovered, dErr := discoverJobsWithMountPath(target, discoverFn)
 			if dErr != nil {
 				if prob, ok := discoveryProblem(dErr); ok {
 					response.Write(w, *prob)
@@ -365,6 +365,17 @@ func resolveJobTargets(defaultRoot string, store *sourcestore.Store) ([]jobTarge
 	}
 
 	return targets, nil
+}
+
+func discoverJobsWithMountPath(target jobTarget, discoverFn func(string) (indexer.Result, error)) (indexer.Result, error) {
+	if target.source == nil {
+		return discoverFn(target.root)
+	}
+	mountPath := sourceMountPath(*target.source)
+	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
+		return discoverFn(target.root)
+	}
+	return indexer.DiscoverWithMountPath(target.root, mountPath)
 }
 
 func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([]jobView, []indexer.DiscoveryError) {

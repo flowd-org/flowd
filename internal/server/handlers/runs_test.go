@@ -757,7 +757,15 @@ func TestRunsHandlerGitSource(t *testing.T) {
 		Sources: sourceStore,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"scripts/gitjob","args":{"name":"Dana"},"source":{"name":"git-remote"}}`))
+	src, ok := sourceStore.Get("git-remote")
+	if !ok {
+		t.Fatal("expected git source in store")
+	}
+	jobID, err := indexer.CanonicalJobID(sourceMountPath(src), filepath.ToSlash(filepath.Join("scripts", "gitjob")))
+	if err != nil {
+		t.Fatalf("canonical job id: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(fmt.Sprintf(`{"job_id":%q,"args":{"name":"Dana"},"source":{"name":"git-remote"}}`, jobID)))
 	req.Header.Set("Content-Type", "application/json")
 	addIdempotencyHeader(req)
 	resp := httptest.NewRecorder()
@@ -821,7 +829,11 @@ argspec:
 	})
 
 	h := NewRunsHandler(RunsConfig{Root: defaultRoot, Store: store, Sources: ss})
-	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"remote","args":{"name":"Bob"},"source":{"name":"external"}}`))
+	jobID, err := indexer.CanonicalJobID(sourceRoot, "remote")
+	if err != nil {
+		t.Fatalf("canonical job id: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(fmt.Sprintf(`{"job_id":%q,"args":{"name":"Bob"},"source":{"name":"external"}}`, jobID)))
 	req.Header.Set("Content-Type", "application/json")
 	addIdempotencyHeader(req)
 	resp := httptest.NewRecorder()

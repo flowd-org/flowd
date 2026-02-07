@@ -294,3 +294,32 @@ job:
 		t.Fatalf("expected tools job id, got %+v", res.Jobs)
 	}
 }
+
+func TestDiscoverWithMountPathPrefix(t *testing.T) {
+	root := t.TempDir()
+	jobDir := filepath.Join(root, "Demo")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := `version: v1
+job:
+  name: Demo
+`
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := DiscoverWithMountPath(root, "Scripts")
+	if err != nil {
+		t.Fatalf("DiscoverWithMountPath error: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("unexpected errors: %+v", res.Errors)
+	}
+	if len(res.Jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(res.Jobs))
+	}
+	if res.Jobs[0].ID != "scripts/demo" {
+		t.Fatalf("expected prefixed job id scripts/demo, got %s", res.Jobs[0].ID)
+	}
+}

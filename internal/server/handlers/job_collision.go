@@ -49,14 +49,19 @@ func buildJobCollisionContender(job indexer.JobInfo, root string, src *sourcesto
 		SourceKind: normalizeJobCollisionSourceKind(""),
 		SourceName: "local",
 	}
+	mountPath := "."
 	if src != nil {
 		origin.SourceKind = normalizeJobCollisionSourceKind(src.Type)
 		origin.SourceName = src.Name
+		mountPath = sourceMountPath(*src)
+		if strings.TrimSpace(mountPath) == "" {
+			mountPath = "."
+		}
 	}
 	return jobCollisionContender{
 		CanonicalJobID: job.ID,
 		Origin:         origin,
-		MountPath:      ".",
+		MountPath:      mountPath,
 		JobDir:         jobDir,
 	}
 }

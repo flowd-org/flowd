@@ -369,7 +369,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.discover(runRoot)
+	result, err := h.discoverWithMountPath(runRoot, runSource)
 	if err != nil {
 		if prob, ok := discoveryProblem(err); ok {
 			response.Write(w, *prob)
@@ -871,6 +871,17 @@ func (h *RunsHandler) ociRunUnsupported(jobID string) *response.Problem {
 		}
 	}
 	return nil
+}
+
+func (h *RunsHandler) discoverWithMountPath(root string, src *sourcestore.Source) (indexer.Result, error) {
+	if src == nil {
+		return h.discover(root)
+	}
+	mountPath := sourceMountPath(*src)
+	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
+		return h.discover(root)
+	}
+	return indexer.DiscoverWithMountPath(root, mountPath)
 }
 
 func resolveEffectiveProfile(requested, cfgProfile string) (string, error) {

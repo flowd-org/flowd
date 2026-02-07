@@ -42,6 +42,20 @@ type Result struct {
 // Discover scans root (typically "scripts") for config.yaml (primary)
 // and config.d/config.yaml (legacy) sentinels and returns job metadata.
 func Discover(root string) (Result, error) {
+	return discoverWithMountPath(root, ".")
+}
+
+// DiscoverWithMountPath scans root for job sentinels and applies mountPath
+// as the canonical ID prefix (Core SoT 1.5).
+func DiscoverWithMountPath(root, mountPath string) (Result, error) {
+	mountPath = strings.TrimSpace(mountPath)
+	if mountPath == "" {
+		mountPath = "."
+	}
+	return discoverWithMountPath(root, mountPath)
+}
+
+func discoverWithMountPath(root, mountPath string) (Result, error) {
 	var res Result
 
 	info, err := os.Stat(root)
@@ -109,7 +123,7 @@ func Discover(root string) (Result, error) {
 		if cfgPath == "" {
 			cfgPath = sentinels.legacy
 		}
-		jobs, err := parseConfig(root, jobDir, cfgPath)
+		jobs, err := parseConfig(root, jobDir, cfgPath, mountPath)
 		if err != nil {
 			errPath := cfgPath
 			var idErr JobIDError
@@ -162,13 +176,13 @@ type jobBlock struct {
 	Summary string `yaml:"summary"`
 }
 
-func parseConfig(root, jobDir, cfgPath string) ([]JobInfo, error) {
+func parseConfig(root, jobDir, cfgPath, mountPath string) ([]JobInfo, error) {
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
-	canonicalID, err := canonicalJobIDFromDir(root, jobDir)
+	canonicalID, err := canonicalJobIDFromDir(root, jobDir, mountPath)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +223,7 @@ func parseConfig(root, jobDir, cfgPath string) ([]JobInfo, error) {
 	return jobs, nil
 }
 
-func canonicalJobIDFromDir(root, jobDir string) (string, error) {
+func canonicalJobIDFromDir(root, jobDir, mountPath string) (string, error) {
 	rel, err := filepath.Rel(root, jobDir)
 	if err != nil {
 		rel = jobDir
@@ -218,5 +232,5 @@ func canonicalJobIDFromDir(root, jobDir string) (string, error) {
 	if rel == "" {
 		rel = "."
 	}
-	return CanonicalJobID(".", rel)
+	return CanonicalJobID(mountPath, rel)
 }

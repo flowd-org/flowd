@@ -225,25 +225,26 @@ func TestJobsHandlerDualConfigProblem(t *testing.T) {
 
 func TestJobsHandlerCollisionDeterministicOrder(t *testing.T) {
 	root := t.TempDir()
-	localDir := filepath.Join(root, "demo")
-	if err := os.MkdirAll(localDir, 0o755); err != nil {
-		t.Fatalf("mkdir local: %v", err)
-	}
 	config := `version: v1
 job:
   name: Demo
 `
-	if err := os.WriteFile(filepath.Join(localDir, "config.yaml"), []byte(config), 0o644); err != nil {
-		t.Fatalf("write local config: %v", err)
-	}
 
 	remoteRoot := t.TempDir()
-	remoteDir := filepath.Join(remoteRoot, "demo")
-	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
-		t.Fatalf("mkdir remote: %v", err)
+	remoteBase := filepath.Join(remoteRoot, "demo")
+	if err := os.MkdirAll(remoteBase, 0o755); err != nil {
+		t.Fatalf("mkdir remote base: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(remoteDir, "config.yaml"), []byte(config), 0o644); err != nil {
-		t.Fatalf("write remote config: %v", err)
+	if err := os.WriteFile(filepath.Join(remoteBase, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write remote base config: %v", err)
+	}
+
+	remoteAlt := filepath.Join(remoteRoot, "demo!")
+	if err := os.MkdirAll(remoteAlt, 0o755); err != nil {
+		t.Fatalf("mkdir remote alt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteAlt, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write remote alt config: %v", err)
 	}
 
 	store := sourcestore.New()
@@ -277,8 +278,12 @@ job:
 	if prob["code"] != response.ProblemCodeJobIDCollision {
 		t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDCollision, prob["code"])
 	}
-	if prob["canonical_job_id"] != "demo" {
-		t.Fatalf("expected canonical_job_id demo, got %+v", prob["canonical_job_id"])
+	expectedID, err := indexer.CanonicalJobID(remoteRoot, "demo")
+	if err != nil {
+		t.Fatalf("canonical id: %v", err)
+	}
+	if prob["canonical_job_id"] != expectedID {
+		t.Fatalf("expected canonical_job_id %s, got %+v", expectedID, prob["canonical_job_id"])
 	}
 	contendersRaw, ok := prob["contenders"].([]any)
 	if !ok {
@@ -303,10 +308,16 @@ job:
 	if !ok {
 		t.Fatalf("expected origin map, got %+v", second["origin"])
 	}
-	if firstOrigin["source_kind"] != "fs" || firstOrigin["source_name"] != "local" {
-		t.Fatalf("expected local fs contender first, got %+v", firstOrigin)
+	if firstOrigin["source_kind"] != "git" || firstOrigin["source_name"] != "alpha" {
+		t.Fatalf("expected git contender first, got %+v", firstOrigin)
 	}
 	if secondOrigin["source_kind"] != "git" || secondOrigin["source_name"] != "alpha" {
 		t.Fatalf("expected git contender second, got %+v", secondOrigin)
+	}
+	if first["mountPath"] != remoteRoot || second["mountPath"] != remoteRoot {
+		t.Fatalf("expected contenders mountPath %s, got %+v and %+v", remoteRoot, first["mountPath"], second["mountPath"])
+	}
+	if first["job_dir"] != "demo" || second["job_dir"] != "demo!" {
+		t.Fatalf("expected deterministic job_dir order demo then demo!, got %+v and %+v", first["job_dir"], second["job_dir"])
 	}
 }
