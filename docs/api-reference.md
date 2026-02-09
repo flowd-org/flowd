@@ -43,23 +43,22 @@ Job IDs are always returned as canonical slash IDs. When a job is defined at the
 
 **Response:**
 ```json
-{
-  "jobs": [
-    {
-      "id": "backup/daily",
-      "name": "daily",
-      "namespace": "backup",
-      "version": "1.0.0",
-      "description": "Daily backup job",
-      "tenant": "default",
-      "origin": {
-        "source_kind": "fs",
-        "source_name": "local-fs"
-      },
-      "source": "local-fs"
+[
+  {
+    "id": "backup/daily",
+    "name": "backup/daily",
+    "tenant": "default",
+    "origin": {
+      "source_kind": "fs",
+      "source_name": "local"
+    },
+    "description": "Daily backup job",
+    "source": {
+      "name": "local-fs",
+      "type": "local"
     }
-  ]
-}
+  }
+]
 ```
 
 #### Get Job Details
@@ -161,7 +160,7 @@ Job references are input-compatible (aliases, existing dot-form IDs, and case-in
 **Response:**
 ```json
 {
-  "run_id": "run_01HX...",
+  "id": "run_01HX...",
   "job_id": "backup/daily",
   "tenant": "default",
   "origin": {
@@ -169,7 +168,7 @@ Job references are input-compatible (aliases, existing dot-form IDs, and case-in
     "source_name": "local-fs"
   },
   "status": "running",
-  "created_at": "2024-01-15T10:30:00Z"
+  "started_at": "2024-01-15T10:30:00Z"
 }
 ```
 
@@ -189,23 +188,20 @@ Returns a list of all runs.
 
 **Response:**
 ```json
-{
-  "runs": [
-    {
-      "run_id": "run_01HX...",
-      "job_id": "backup/daily",
-      "tenant": "default",
-      "origin": {
-        "source_kind": "fs",
-        "source_name": "local-fs"
-      },
-      "status": "success",
-      "created_at": "2024-01-15T10:30:00Z",
-      "finished_at": "2024-01-15T10:35:00Z"
-    }
-  ],
-  "total": 42
-}
+[
+  {
+    "id": "run_01HX...",
+    "job_id": "backup/daily",
+    "tenant": "default",
+    "origin": {
+      "source_kind": "fs",
+      "source_name": "local-fs"
+    },
+    "status": "success",
+    "started_at": "2024-01-15T10:30:00Z",
+    "finished_at": "2024-01-15T10:35:00Z"
+  }
+]
 ```
 
 #### Get Run Details
@@ -219,7 +215,7 @@ Returns detailed information about a specific run.
 **Response:**
 ```json
 {
-  "run_id": "run_01HX...",
+  "id": "run_01HX...",
   "job_id": "backup/daily",
   "tenant": "default",
   "origin": {
@@ -227,11 +223,8 @@ Returns detailed information about a specific run.
     "source_name": "local-fs"
   },
   "status": "success",
-  "created_at": "2024-01-15T10:30:00Z",
+  "started_at": "2024-01-15T10:30:00Z",
   "finished_at": "2024-01-15T10:35:00Z",
-  "args": {
-    "target": "/mnt/backup"
-  },
   "result": {
     "value": {
       "files_backed_up": 1234,

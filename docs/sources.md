@@ -51,34 +51,32 @@ $ curl -s -H 'Authorization: Bearer dev-token' http://127.0.0.1:8080/sources | j
 Example response (redacted):
 
 ```json
-{
-  "sources": [
-    {
-      "id": "local-tools",
-      "tenant": "default",
-      "kind": "fs",
-      "mountPath": "tools",
-      "layout": "tree-v1",
-      "pull_policy": "manual",
-      "config": {
-        "path": "/home/me/tools",
-        "watch": true
-      }
-    },
-    {
-      "id": "backup-addon",
-      "tenant": "default",
-      "kind": "oci",
-      "mountPath": "addons/backup",
-      "layout": "tree-v1",
-      "pull_policy": "on-run",
-      "config": {
-        "image": "ghcr.io/org/backup-tools:v1.0.0@sha256:...",
-        "token": "REDACTED"
-      }
+[
+  {
+    "id": "local-tools",
+    "tenant": "default",
+    "kind": "fs",
+    "mountPath": "/home/me/tools",
+    "layout": "tree-v1",
+    "pull_policy": "always",
+    "config": {
+      "path": "/home/me/tools"
     }
-  ]
-}
+  },
+  {
+    "id": "backup-addon",
+    "tenant": "default",
+    "kind": "oci",
+    "mountPath": "/var/lib/flwd/sources/oci/backup-addon",
+    "layout": "",
+    "pull_policy": "ifNotPresent",
+    "config": {
+      "ref": "ghcr.io/org/backup-tools:v1.0.0",
+      "pull_policy": "ifNotPresent",
+      "registry_password": "REDACTED"
+    }
+  }
+]
 ```
 
 ## Add a Git source (API)
