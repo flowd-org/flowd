@@ -90,40 +90,35 @@ func CanonicalJobID(mountPath, jobDirRel string) (string, error) {
 
 // DotJobIDToSlash normalizes legacy dot-delimited job IDs into slash-delimited paths.
 func DotJobIDToSlash(input string) string {
-	trimmed := normalizePathInput(input)
-	if trimmed == "" {
+	segments := splitJobIDSegments(input)
+	if len(segments) == 0 {
 		return ""
 	}
-	trimmed = strings.ReplaceAll(trimmed, ".", "/")
-	return compactSlashPath(trimmed)
+	return strings.Join(segments, "/")
 }
 
 // SlashJobIDToDot derives a dot-delimited identifier from a slash path.
 func SlashJobIDToDot(input string) string {
-	trimmed := normalizePathInput(input)
-	if trimmed == "" {
+	segments := splitJobIDSegments(input)
+	if len(segments) == 0 {
 		return ""
 	}
-	trimmed = compactSlashPath(trimmed)
-	if trimmed == "" {
-		return ""
-	}
-	return strings.ReplaceAll(trimmed, "/", ".")
+	return strings.Join(segments, ".")
 }
 
-func compactSlashPath(input string) string {
-	if input == "" {
-		return ""
+func splitJobIDSegments(input string) []string {
+	normalized := normalizePathInput(input)
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return nil
 	}
-	segments := strings.Split(strings.Trim(input, "/"), "/")
-	filtered := segments[:0]
-	for _, seg := range segments {
-		if seg == "" {
-			continue
-		}
-		filtered = append(filtered, seg)
+	normalized = strings.Trim(normalized, "./")
+	if normalized == "" {
+		return nil
 	}
-	return strings.Join(filtered, "/")
+	return strings.FieldsFunc(normalized, func(r rune) bool {
+		return r == '/' || r == '.'
+	})
 }
 
 func normalizePathInput(value string) string {
