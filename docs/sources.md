@@ -26,6 +26,8 @@ hint to resolve ambiguous names.
 
 `GET /sources` returns a Core-aligned view of sources, including `tenant`, `kind`, `mountPath`, `layout`, `pull_policy`, and `config`. The `kind` value `oci` is a flowd extension to the Core source kind set. Secret-shaped values inside `config` are redacted (rendered as `REDACTED`).
 
+This response is additive for compatibility: legacy fields such as `name`, `type`, `ref`, `url`, `resolved_ref`, `resolved_commit`, `provenance`, `expose`, and `aliases` (when enabled) may also appear.
+
 `mountPath` in this view reflects the local materialized path for the source (for example, a checked-out git directory or cached OCI manifest directory).
 
 ## Add a local source (API)
@@ -56,6 +58,9 @@ Example response (redacted):
 [
   {
     "id": "local-tools",
+    "name": "local-tools",
+    "type": "local",
+    "ref": "/home/me/tools",
     "tenant": "default",
     "kind": "fs",
     "mountPath": "/home/me/tools",
@@ -63,20 +68,33 @@ Example response (redacted):
     "pull_policy": "always",
     "config": {
       "path": "/home/me/tools"
+    },
+    "provenance": {
+      "type": "local",
+      "ref": "/home/me/tools"
     }
   },
   {
     "id": "backup-addon",
+    "name": "backup-addon",
+    "type": "oci",
+    "ref": "ghcr.io/org/backup-tools:v1.0.0",
     "tenant": "default",
     "kind": "oci",
     "mountPath": "/var/lib/flwd/sources/oci/backup-addon",
     "layout": "",
     "pull_policy": "ifNotPresent",
+    "digest": "sha256:...",
     "config": {
       "ref": "ghcr.io/org/backup-tools:v1.0.0",
       "digest": "sha256:...",
-      "pull_policy": "ifNotPresent",
-      "registry_password": "REDACTED"
+      "pull_policy": "ifNotPresent"
+    },
+    "provenance": {
+      "type": "oci",
+      "ref": "ghcr.io/org/backup-tools:v1.0.0",
+      "digest": "sha256:...",
+      "pull_policy": "ifNotPresent"
     }
   }
 ]
