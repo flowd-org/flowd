@@ -427,6 +427,16 @@ argspec:
 			wantCanonicalID:   "demo/child",
 			wantCanonicalPath: "demo/child",
 		},
+		{
+			name:       "leading slash rejected",
+			jobID:      "/demo",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "trailing slash rejected",
+			jobID:      "demo/",
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tc := range cases {
@@ -762,7 +772,7 @@ func TestRunsHandlerGitSource(t *testing.T) {
 	if !ok {
 		t.Fatal("expected git source in store")
 	}
-	jobID, err := indexer.CanonicalJobID(sourceMountPath(src), filepath.ToSlash(filepath.Join("scripts", "gitjob")))
+	jobID, err := indexer.CanonicalJobID(sourceNameMountPath(src), filepath.ToSlash(filepath.Join("scripts", "gitjob")))
 	if err != nil {
 		t.Fatalf("canonical job id: %v", err)
 	}
@@ -830,7 +840,7 @@ argspec:
 	})
 
 	h := NewRunsHandler(RunsConfig{Root: defaultRoot, Store: store, Sources: ss})
-	jobID, err := indexer.CanonicalJobID(sourceRoot, "remote")
+	jobID, err := indexer.CanonicalJobID("external", "remote")
 	if err != nil {
 		t.Fatalf("canonical job id: %v", err)
 	}

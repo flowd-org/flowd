@@ -84,9 +84,13 @@ func normalizeJobRefInput(input string) string {
 	if trimmed == "" {
 		return ""
 	}
-	normalized := indexer.DotJobIDToSlash(trimmed)
-	normalized = strings.Trim(normalized, "/")
-	return normalized
+	if trimmed == "/" || trimmed == "." {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "/") || strings.HasSuffix(trimmed, "/") {
+		return trimmed
+	}
+	return indexer.DotJobIDToSlash(trimmed)
 }
 
 var detectContainerRuntime = container.DetectRuntime
@@ -884,7 +888,7 @@ func (h *RunsHandler) discoverWithMountPath(root string, src *sourcestore.Source
 	if src == nil {
 		return h.discover(root)
 	}
-	mountPath := sourceMountPath(*src)
+	mountPath := sourceNameMountPath(*src)
 	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
 		return h.discover(root)
 	}
