@@ -322,7 +322,7 @@ job:
 	if prob["code"] != response.ProblemCodeJobIDCollision {
 		t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDCollision, prob["code"])
 	}
-	expectedID, err := indexer.CanonicalJobID(remoteRoot, "demo")
+	expectedID, err := indexer.CanonicalJobID("alpha", "demo")
 	if err != nil {
 		t.Fatalf("canonical id: %v", err)
 	}

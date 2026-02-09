@@ -369,11 +369,19 @@ func discoverJobsWithMountPath(target jobTarget, discoverFn func(string) (indexe
 	if target.source == nil {
 		return discoverFn(target.root)
 	}
-	mountPath := sourceMountPath(*target.source)
+	mountPath := sourceNameMountPath(*target.source)
 	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
 		return discoverFn(target.root)
 	}
 	return indexer.DiscoverWithMountPath(target.root, mountPath)
+}
+
+func sourceNameMountPath(src sourcestore.Source) string {
+	name := strings.TrimSpace(src.Name)
+	if name == "" {
+		return "."
+	}
+	return name
 }
 
 func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([]jobView, []indexer.DiscoveryError) {
