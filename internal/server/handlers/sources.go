@@ -437,13 +437,11 @@ func handleListSources(w http.ResponseWriter, r *http.Request, cfg SourcesConfig
 	}
 	logger := requestctx.Logger(r.Context())
 	if logger != nil {
-		for _, view := range views {
-			logger.Info("source.listed",
-				slog.String("tenant", resolvedTenant),
-				slog.String("source_id", view.ID),
-				slog.String("source_kind", view.Kind),
-			)
-		}
+		logger.Info("sources.listed",
+			slog.String("tenant", resolvedTenant),
+			slog.Int("sources_total", len(views)),
+			slog.Bool("aliases_exposed", includeAliases),
+		)
 	}
 	data, err := json.Marshal(views)
 	if err != nil {
