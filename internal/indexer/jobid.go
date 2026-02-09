@@ -112,13 +112,27 @@ func splitJobIDSegments(input string) []string {
 	if normalized == "" {
 		return nil
 	}
-	normalized = strings.Trim(normalized, "./")
-	if normalized == "" {
+
+	var segments []string
+	var current strings.Builder
+	for _, r := range normalized {
+		switch r {
+		case '/', '.':
+			if current.Len() > 0 {
+				segments = append(segments, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if current.Len() > 0 {
+		segments = append(segments, current.String())
+	}
+	if len(segments) == 0 {
 		return nil
 	}
-	return strings.FieldsFunc(normalized, func(r rune) bool {
-		return r == '/' || r == '.'
-	})
+	return segments
 }
 
 func normalizePathInput(value string) string {
