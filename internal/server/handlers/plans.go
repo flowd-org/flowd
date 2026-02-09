@@ -467,7 +467,7 @@ func discoverPlans(root string, src *sourcestore.Source, discoverFn func(string)
 	if src == nil {
 		return discoverFn(root)
 	}
-	mountPath := sourceMountPath(*src)
+	mountPath := sourceNameMountPath(*src)
 	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
 		return discoverFn(root)
 	}
