@@ -223,6 +223,50 @@ func TestJobsHandlerDualConfigProblem(t *testing.T) {
 	}
 }
 
+func TestJobsHandlerInvalidJobIDProblem(t *testing.T) {
+	root := t.TempDir()
+	jobDir := filepath.Join(root, "!!!")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatalf("mkdir job dir: %v", err)
+	}
+	config := `version: v1
+job:
+  name: Bad Job
+`
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	handler := NewJobsHandler(JobsConfig{Root: root})
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	contentType := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/problem+json") {
+		t.Fatalf("expected problem+json content type, got %s", contentType)
+	}
+	var prob map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob["code"] != response.ProblemCodeJobIDInvalidSegment {
+		t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDInvalidSegment, prob["code"])
+	}
+	if prob["type"] != response.ProblemTypeJobIDInvalidSegment {
+		t.Fatalf("expected type %q, got %+v", response.ProblemTypeJobIDInvalidSegment, prob["type"])
+	}
+	if seg, ok := prob["segment"].(string); !ok || seg == "" {
+		t.Fatalf("expected segment string, got %+v", prob["segment"])
+	}
+	if path, ok := prob["path"].(string); !ok || path == "" {
+		t.Fatalf("expected path string, got %+v", prob["path"])
+	}
+}
+
 func TestJobsHandlerCollisionDeterministicOrder(t *testing.T) {
 	root := t.TempDir()
 	config := `version: v1

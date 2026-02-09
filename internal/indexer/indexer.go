@@ -128,7 +128,12 @@ func discoverWithMountPath(root, mountPath string) (Result, error) {
 			errPath := cfgPath
 			var idErr JobIDError
 			if errors.As(err, &idErr) {
-				errPath = jobDir
+				return res, InvalidJobIDError{
+					JobDir:  jobDir,
+					Path:    idErr.Path,
+					Segment: idErr.Segment,
+					Reason:  idErr.Reason,
+				}
 			}
 			res.Errors = append(res.Errors, DiscoveryError{Path: errPath, Err: err.Error()})
 			continue

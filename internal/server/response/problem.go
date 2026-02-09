@@ -8,9 +8,11 @@ import (
 
 const (
 	ProblemTypeJobIDCollision        = "https://flowd.org/problems/job-id-collision"
+	ProblemTypeJobIDInvalidSegment   = "https://flowd.org/problems/job-id-invalid-segment"
 	ProblemTypeJobConfigDualSentinel = "https://flowd.org/problems/job-config/dual-sentinel"
 	ProblemTypeTenantMismatch        = "https://flowd.org/problems/tenant-mismatch"
 	ProblemCodeJobIDCollision        = "job_id.collision"
+	ProblemCodeJobIDInvalidSegment   = "job_id.invalid_segment"
 	ProblemCodeTenantMismatch        = "tenant.mismatch"
 )
 

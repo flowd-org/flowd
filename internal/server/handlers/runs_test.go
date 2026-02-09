@@ -25,6 +25,7 @@ import (
 	"github.com/flowd-org/flowd/internal/policy/verify"
 	"github.com/flowd-org/flowd/internal/secrets"
 	"github.com/flowd-org/flowd/internal/server/requestctx"
+	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/runstore"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/server/sse"
@@ -912,6 +913,45 @@ argspec:
 	}
 	if _, ok := problem["errors"].([]any); !ok {
 		t.Fatalf("expected errors field, got %v", problem["errors"])
+	}
+}
+
+func TestRunsHandlerInvalidJobIDProblem(t *testing.T) {
+	root := t.TempDir()
+	jobDir := filepath.Join(root, "!!!")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatalf("mkdir job dir: %v", err)
+	}
+	config := `version: v1
+job:
+  name: Bad Job
+`
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	h := NewRunsHandler(RunsConfig{Root: root, Store: runstore.New()})
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"bad"}`))
+	req.Header.Set("Content-Type", "application/json")
+	addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if !strings.HasPrefix(resp.Header().Get("Content-Type"), "application/problem+json") {
+		t.Fatalf("expected problem response, got %q", resp.Header().Get("Content-Type"))
+	}
+	var problem map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem["code"] != response.ProblemCodeJobIDInvalidSegment {
+		t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDInvalidSegment, problem["code"])
+	}
+	if problem["type"] != response.ProblemTypeJobIDInvalidSegment {
+		t.Fatalf("expected type %q, got %+v", response.ProblemTypeJobIDInvalidSegment, problem["type"])
 	}
 }
 

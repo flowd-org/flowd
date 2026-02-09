@@ -160,6 +160,33 @@ func TestDiscoverInvalidYaml(t *testing.T) {
 	}
 }
 
+func TestDiscoverInvalidJobIDSegment(t *testing.T) {
+	root := t.TempDir()
+	jobDir := filepath.Join(root, "!!!")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := `version: v1
+job:
+  name: Bad Job
+`
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Discover(root)
+	if err == nil {
+		t.Fatal("expected invalid job id error, got nil")
+	}
+	var invalid InvalidJobIDError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected InvalidJobIDError, got %v", err)
+	}
+	if invalid.Segment == "" {
+		t.Fatalf("expected invalid segment to be set")
+	}
+}
+
 func TestDiscoverPrimaryAndLegacySentinels(t *testing.T) {
 	root := t.TempDir()
 	primaryDir := filepath.Join(root, "alpha", "one")

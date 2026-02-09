@@ -25,6 +25,26 @@ func (e JobIDError) Error() string {
 	return fmt.Sprintf("invalid job id segment %q in %q: %s", e.Segment, e.Path, e.Reason)
 }
 
+// InvalidJobIDError reports a canonical job ID normalization failure for discovery.
+type InvalidJobIDError struct {
+	JobDir  string
+	Path    string
+	Segment string
+	Reason  string
+}
+
+func (e InvalidJobIDError) Error() string {
+	base := JobIDError{Path: e.Path, Segment: e.Segment, Reason: e.Reason}.Error()
+	if e.JobDir == "" {
+		return base
+	}
+	return fmt.Sprintf("%s (job dir %s)", base, e.JobDir)
+}
+
+func (e InvalidJobIDError) Unwrap() error {
+	return JobIDError{Path: e.Path, Segment: e.Segment, Reason: e.Reason}
+}
+
 type segmentError struct {
 	Segment string
 	Reason  string
