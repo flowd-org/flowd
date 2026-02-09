@@ -377,6 +377,10 @@ func discoverJobsWithMountPath(target jobTarget, discoverFn func(string) (indexe
 }
 
 func sourceNameMountPath(src sourcestore.Source) string {
+	return sourceLogicalMountPath(src)
+}
+
+func sourceLogicalMountPath(src sourcestore.Source) string {
 	name := strings.TrimSpace(src.Name)
 	if name == "" {
 		return "."

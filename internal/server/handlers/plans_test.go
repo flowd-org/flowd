@@ -325,7 +325,7 @@ argspec:
 	if !ok {
 		t.Fatalf("expected external source in store")
 	}
-	discovered, err := indexer.DiscoverWithMountPath(source.LocalPath, sourceNameMountPath(source))
+	discovered, err := indexer.DiscoverWithMountPath(source.LocalPath, sourceLogicalMountPath(source))
 	if err != nil {
 		t.Fatalf("discover source jobs: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestPlansHandlerUsesGitSource(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected git source in store")
 	}
-	discovered, err := indexer.DiscoverWithMountPath(source.LocalPath, sourceNameMountPath(source))
+	discovered, err := indexer.DiscoverWithMountPath(source.LocalPath, sourceLogicalMountPath(source))
 	if err != nil {
 		t.Fatalf("discover source jobs: %v", err)
 	}
