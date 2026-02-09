@@ -888,7 +888,7 @@ func (h *RunsHandler) discoverWithMountPath(root string, src *sourcestore.Source
 	if src == nil {
 		return h.discover(root)
 	}
-	mountPath := sourceNameMountPath(*src)
+	mountPath := sourceLogicalMountPath(*src)
 	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
 		return h.discover(root)
 	}
