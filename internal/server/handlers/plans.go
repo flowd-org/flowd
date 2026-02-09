@@ -71,10 +71,12 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		})
 		r = r.WithContext(ctx)
 
-		discoverRoot := cfg.Root
-		if discoverRoot == "" {
-			discoverRoot = "scripts"
+		defaultDiscoverRoot := cfg.Root
+		if defaultDiscoverRoot == "" {
+			defaultDiscoverRoot = "scripts"
 		}
+		discoverRoot := defaultDiscoverRoot
+		var discoverSource *sourcestore.Source
 
 		if req.Source != nil && req.Source.Name != "" {
 			if cfg.Sources == nil {
@@ -91,15 +93,20 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 				return
 			}
 			discoverRoot = source.LocalPath
+			discoverSource = &source
 		}
 
-		result, err := discoverFn(discoverRoot)
+		result, err := discoverPlans(discoverRoot, discoverSource, discoverFn)
 		if err != nil {
 			if prob, ok := discoveryProblem(err); ok {
 				response.Write(w, *prob)
 				return
 			}
 			response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
+			return
+		}
+		if canonicalID, contenders, ok := findJobIDCollision(buildCollisionCandidates(result.Jobs, discoverRoot, discoverSource)); ok {
+			response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
 			return
 		}
 
@@ -180,8 +187,12 @@ func NewPlansHandler(cfg PlansConfig) http.Handler {
 		}
 
 		if jobPath == "" {
-			if req.Source != nil && req.Source.Name != "" && discoverRoot != cfg.Root {
-				if alt, err := discoverFn(cfg.Root); err == nil {
+			if req.Source != nil && req.Source.Name != "" && discoverRoot != defaultDiscoverRoot {
+				if alt, err := discoverFn(defaultDiscoverRoot); err == nil {
+					if canonicalID, contenders, ok := findJobIDCollision(buildCollisionCandidates(alt.Jobs, defaultDiscoverRoot, nil)); ok {
+						response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
+						return
+					}
 					mergeJobInfo(jobMap, alt)
 					lookup.merge(alt)
 					if aliasUsed == nil {
@@ -450,6 +461,17 @@ func decodePlanRequest(body io.ReadCloser) (planRequest, error) {
 		req.Args = map[string]interface{}{}
 	}
 	return req, nil
+}
+
+func discoverPlans(root string, src *sourcestore.Source, discoverFn func(string) (indexer.Result, error)) (indexer.Result, error) {
+	if src == nil {
+		return discoverFn(root)
+	}
+	mountPath := sourceMountPath(*src)
+	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
+		return discoverFn(root)
+	}
+	return indexer.DiscoverWithMountPath(root, mountPath)
 }
 
 // resolveEffectiveProfile is defined in runs.go for the handlers package.
