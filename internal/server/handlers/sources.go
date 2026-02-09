@@ -252,6 +252,7 @@ func sanitizeSourceURL(raw string) string {
 	if cleaned == "" {
 		return cleaned
 	}
+	cleaned = stripURLQueryFragment(cleaned)
 	parsed, err := url.Parse(cleaned)
 	if err != nil {
 		return cleaned
@@ -262,6 +263,19 @@ func sanitizeSourceURL(raw string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+func stripURLQueryFragment(value string) string {
+	if value == "" {
+		return value
+	}
+	if hash := strings.Index(value, "#"); hash >= 0 {
+		value = value[:hash]
+	}
+	if question := strings.Index(value, "?"); question >= 0 {
+		value = value[:question]
+	}
+	return value
 }
 
 func redactSourceConfig(values map[string]any) map[string]any {
