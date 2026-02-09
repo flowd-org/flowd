@@ -46,7 +46,7 @@ $ curl -s -X POST http://127.0.0.1:8080/plans \
     -H 'Authorization: Bearer dev-token' \
     -H 'Content-Type: application/json' \
     -d '{
-          "job":"addon/hello-world",
+          "job_id":"addon/hello-world",
           "args":{"name":"Alice"}
         }'
 ```

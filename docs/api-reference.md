@@ -53,10 +53,10 @@ Job IDs are always returned as canonical slash IDs. When a job is defined at the
       "source_name": "local"
     },
     "description": "Daily backup job",
-    "source": {
-      "name": "local-fs",
-      "type": "local"
-    }
+  "source": {
+    "name": "local-fs",
+    "type": "local"
+  }
   }
 ]
 ```
@@ -92,7 +92,9 @@ Returns detailed information about a specific job, including its configuration a
     },
     "required": ["target"]
   },
-  "source": "local-fs"
+  "source": {
+    "name": "local-fs"
+  }
 }
 ```
 
@@ -144,7 +146,7 @@ Job references are input-compatible (aliases, existing dot-form IDs, and case-in
     "target": "/mnt/backup"
   },
   "tenant": "default",
-  "async": true
+  "source": {"name": "local-fs"}
 }
 ```
 
@@ -361,8 +363,8 @@ Returns system information and configuration.
   "sources": [
     {
       "name": "local-fs",
-      "type": "fs",
-      "path": "/opt/flwd/jobs"
+      "type": "local",
+      "ref": "/opt/flwd/jobs"
     }
   ],
   "extensions": ["tui", "mcp"]

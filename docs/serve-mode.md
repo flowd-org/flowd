@@ -46,7 +46,7 @@ Plan a job:
 $ curl -s -X POST http://127.0.0.1:8080/plans \
     -H 'Authorization: Bearer dev-token' \
     -H 'Content-Type: application/json' \
-    -d '{"job":"hello-world","args":{"name":"Alice"}}' | jq
+    -d '{"job_id":"hello-world","args":{"name":"Alice"}}' | jq
 ```
 
 Submit a run:
@@ -55,7 +55,7 @@ Submit a run:
 $ curl -s -X POST http://127.0.0.1:8080/runs \
     -H 'Authorization: Bearer dev-token' \
     -H 'Content-Type: application/json' \
-    -d '{"job":"hello-world","args":{"name":"Alice"}}' | jq
+    -d '{"job_id":"hello-world","args":{"name":"Alice"}}' | jq
 ```
 
 Stream events for a run:

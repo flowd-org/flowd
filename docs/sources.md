@@ -26,6 +26,8 @@ hint to resolve ambiguous names.
 
 `GET /sources` returns a Core-aligned view of sources, including `tenant`, `kind`, `mountPath`, `layout`, `pull_policy`, and `config`. The `kind` value `oci` is a flowd extension to the Core source kind set. Secret-shaped values inside `config` are redacted (rendered as `REDACTED`).
 
+`mountPath` in this view reflects the local materialized path for the source (for example, a checked-out git directory or cached OCI manifest directory).
+
 ## Add a local source (API)
 
 Assuming `flwd :serve` is running:
@@ -35,9 +37,9 @@ $ curl -s -X POST http://127.0.0.1:8080/sources \
     -H 'Authorization: Bearer dev-token' \
     -H 'Content-Type: application/json' \
     -d '{
-          "type":"fs",
+          "type":"local",
           "name":"local-tools",
-          "path":"/home/me/tools"
+          "ref":"/home/me/tools"
         }'
 ```
 
@@ -72,6 +74,7 @@ Example response (redacted):
     "pull_policy": "ifNotPresent",
     "config": {
       "ref": "ghcr.io/org/backup-tools:v1.0.0",
+      "digest": "sha256:...",
       "pull_policy": "ifNotPresent",
       "registry_password": "REDACTED"
     }
@@ -116,8 +119,8 @@ $ curl -s -X POST http://127.0.0.1:8080/plans \
     -H 'Authorization: Bearer dev-token' \
     -H 'Content-Type: application/json' \
     -d '{
-          "job":"hello-world",
-          "source":"tools",
+          "job_id":"hello-world",
+          "source":{"name":"tools"},
           "args":{"name":"Alice"}
         }'
 ```
