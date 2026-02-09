@@ -143,7 +143,6 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				allViews = append(allViews, ociViews...)
 				for _, view := range ociViews {
 					allJobs = append(allJobs, indexer.JobInfo{ID: view.ID, Name: view.Name})
-					logJobEvent(logger, "job.discovered", resolvedTenant, view.ID, view.Origin)
 				}
 				errorCnt += len(ociErrors)
 				continue
@@ -172,13 +171,14 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 						Type: target.source.Type,
 					}
 				}
-				logJobEvent(logger, "job.discovered", resolvedTenant, job.ID, origin)
 				allViews = append(allViews, view)
 				allJobs = append(allJobs, job)
 				collisionCandidates = append(collisionCandidates, buildJobCollisionContender(job, target.root, target.source))
 			}
 			errorCnt += len(discovered.Errors)
 		}
+
+		logJobsDiscoverySummary(logger, resolvedTenant, len(allJobs), len(targets), errorCnt)
 
 		if canonicalID, contenders, ok := findJobIDCollision(collisionCandidates); ok {
 			response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
@@ -262,9 +262,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			views = allViews[start:end]
 		}
 
-		for _, view := range views {
-			logJobEvent(logger, "job.listed", resolvedTenant, view.ID, view.Origin)
-		}
+		logJobsListedSummary(logger, resolvedTenant, page, perPage, len(allViews), len(views), errorCnt)
 
 		payload, err := json.Marshal(views)
 		if err != nil {
@@ -426,16 +424,28 @@ func mapSourceKind(sourceType string) string {
 	return strings.ToLower(strings.TrimSpace(sourceType))
 }
 
-func logJobEvent(logger *slog.Logger, msg, tenant, jobID string, origin jobOrigin) {
+func logJobsDiscoverySummary(logger *slog.Logger, tenant string, discovered, targets, discoveryErrors int) {
 	if logger == nil {
 		return
 	}
-	logger.Info(msg,
+	logger.Info("jobs.discovered",
 		slog.String("tenant", tenant),
-		slog.String("job_id", jobID),
-		slog.Group("origin",
-			slog.String("source_kind", origin.SourceKind),
-			slog.String("source_name", origin.SourceName),
-		),
+		slog.Int("discovered", discovered),
+		slog.Int("targets", targets),
+		slog.Int("discovery_errors", discoveryErrors),
+	)
+}
+
+func logJobsListedSummary(logger *slog.Logger, tenant string, page, perPage, total, returned, discoveryErrors int) {
+	if logger == nil {
+		return
+	}
+	logger.Info("jobs.listed",
+		slog.String("tenant", tenant),
+		slog.Int("page", page),
+		slog.Int("per_page", perPage),
+		slog.Int("total", total),
+		slog.Int("returned", returned),
+		slog.Int("discovery_errors", discoveryErrors),
 	)
 }
