@@ -67,20 +67,23 @@ func ensureJournalIdentityPayload(data string, tenant string) string {
 		return data
 	}
 
-	if tenant != "" {
-		if _, ok := payload["tenant"]; !ok {
-			payload["tenant"] = tenant
-		}
+	var (
+		provenanceTenant string
+		provenanceOrigin jobOrigin
+		hasProvenance    bool
+	)
+	if provenance, ok := payload["provenance"].(map[string]any); ok {
+		provenanceTenant, provenanceOrigin, hasProvenance = runIdentityFromProvenance(provenance)
 	}
 
-	if _, ok := payload["origin"]; !ok {
-		provenance, ok := payload["provenance"].(map[string]any)
-		if ok {
-			_, origin, found := runIdentityFromProvenance(provenance)
-			if found && (origin.SourceKind != "" || origin.SourceName != "") {
-				payload["origin"] = origin
-			}
-		}
+	if tenant != "" {
+		payload["tenant"] = tenant
+	} else if hasProvenance && provenanceTenant != "" {
+		payload["tenant"] = provenanceTenant
+	}
+
+	if hasProvenance && (provenanceOrigin.SourceKind != "" || provenanceOrigin.SourceName != "") {
+		payload["origin"] = provenanceOrigin
 	}
 
 	bytes, err := json.Marshal(payload)
