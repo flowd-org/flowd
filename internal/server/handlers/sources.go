@@ -259,6 +259,8 @@ func sanitizeSourceURL(raw string) string {
 	if parsed.User != nil {
 		parsed.User = nil
 	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
 	return parsed.String()
 }
 

@@ -173,7 +173,7 @@ func TestSourcesHandlerListCoreViewAndRedaction(t *testing.T) {
 		Ref:            "main",
 		ResolvedRef:    "deadbeef",
 		ResolvedCommit: "deadbeef",
-		URL:            "https://user:" + secret + "@example.com/repo.git",
+		URL:            "https://user:" + secret + "@example.com/repo.git?access_token=" + secret + "#" + secret,
 		LocalPath:      gitRoot,
 		Expose:         "read",
 	})
