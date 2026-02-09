@@ -170,6 +170,9 @@ func TestJobIDHelpers(t *testing.T) {
 		if got := DotJobIDToSlash("Demo..Build"); got != "Demo/Build" {
 			t.Fatalf("expected Demo/Build, got %q", got)
 		}
+		if got := DotJobIDToSlash("a...b"); got != "a/b" {
+			t.Fatalf("expected a/b, got %q", got)
+		}
 	})
 
 	t.Run("slash to dot", func(t *testing.T) {
@@ -183,6 +186,9 @@ func TestJobIDHelpers(t *testing.T) {
 		}
 		if got := SlashJobIDToDot("demo//Build"); got != "demo.Build" {
 			t.Fatalf("expected demo.Build, got %q", got)
+		}
+		if got := SlashJobIDToDot("a///b"); got != "a.b" {
+			t.Fatalf("expected a.b, got %q", got)
 		}
 	})
 }

@@ -95,9 +95,7 @@ func DotJobIDToSlash(input string) string {
 		return ""
 	}
 	trimmed = strings.ReplaceAll(trimmed, ".", "/")
-	trimmed = strings.ReplaceAll(trimmed, "//", "/")
-	trimmed = strings.Trim(trimmed, "/")
-	return trimmed
+	return compactSlashPath(trimmed)
 }
 
 // SlashJobIDToDot derives a dot-delimited identifier from a slash path.
@@ -106,12 +104,26 @@ func SlashJobIDToDot(input string) string {
 	if trimmed == "" {
 		return ""
 	}
-	trimmed = strings.ReplaceAll(trimmed, "//", "/")
-	trimmed = strings.Trim(trimmed, "/")
+	trimmed = compactSlashPath(trimmed)
 	if trimmed == "" {
 		return ""
 	}
 	return strings.ReplaceAll(trimmed, "/", ".")
+}
+
+func compactSlashPath(input string) string {
+	if input == "" {
+		return ""
+	}
+	segments := strings.Split(strings.Trim(input, "/"), "/")
+	filtered := segments[:0]
+	for _, seg := range segments {
+		if seg == "" {
+			continue
+		}
+		filtered = append(filtered, seg)
+	}
+	return strings.Join(filtered, "/")
 }
 
 func normalizePathInput(value string) string {
