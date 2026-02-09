@@ -43,6 +43,7 @@ func (s *journalEventSink) Publish(runID string, ev sse.Event) {
 	data := ev.Data
 	if data != "" {
 		data = ensureJournalIdentityPayload(data, ev.Tenant)
+		ev.Data = data
 	}
 	entry, err := s.journal.Append(context.Background(), runID, ev.Event, []byte(data), ts)
 	if err != nil {
