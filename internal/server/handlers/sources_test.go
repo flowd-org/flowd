@@ -100,8 +100,8 @@ func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	if payload["expose"] != "read" {
 		t.Fatalf("expected expose read, got %v", payload["expose"])
 	}
-	if prov, ok := payload["provenance"].(map[string]any); !ok || prov["resolved_path"] == "" {
-		t.Fatalf("expected provenance with resolved_path, got %+v", payload["provenance"])
+	if _, ok := payload["provenance"]; ok {
+		t.Fatalf("expected provenance to be omitted from response, got %+v", payload["provenance"])
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/sources", nil)
@@ -117,8 +117,8 @@ func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected one source in list, got %d", len(list))
 	}
-	if prov, ok := list[0]["provenance"].(map[string]any); !ok || prov["resolved_path"] == "" {
-		t.Fatalf("expected provenance in list response, got %+v", list[0]["provenance"])
+	if _, ok := list[0]["provenance"]; ok {
+		t.Fatalf("expected provenance to be omitted from list response, got %+v", list[0]["provenance"])
 	}
 }
 

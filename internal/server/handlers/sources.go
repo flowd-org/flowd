@@ -158,10 +158,8 @@ func buildSourceView(src sourcestore.Source, tenant string) sourceView {
 		URL:              sanitizeSourceURL(src.URL),
 		Trust:            src.Trust,
 		Aliases:          src.Aliases,
-		Metadata:         src.Metadata,
 		Digest:           src.Digest,
 		VerifySignatures: src.VerifySignatures,
-		Provenance:       src.Provenance,
 		Expose:           src.Expose,
 	}
 }
@@ -445,9 +443,6 @@ func handleListSources(w http.ResponseWriter, r *http.Request, cfg SourcesConfig
 	includeAliases := shouldExposeAliases(r, cfg)
 	views := make([]sourceView, 0, len(items))
 	for i := range items {
-		if items[i].Provenance == nil {
-			items[i].Provenance = buildSourceProvenance(items[i])
-		}
 		items[i] = sanitizeSourceForResponse(items[i], includeAliases)
 		views = append(views, buildSourceView(items[i], resolvedTenant))
 	}
@@ -981,9 +976,6 @@ func NewSourceGetHandler(cfg SourcesConfig) http.Handler {
 			}
 			includeAliases := shouldExposeAliases(r, cfg)
 			src = sanitizeSourceForResponse(src, includeAliases)
-			if src.Provenance == nil {
-				src.Provenance = buildSourceProvenance(src)
-			}
 			writeSourceResponse(r.Context(), w, src, false)
 		case http.MethodDelete:
 			if deleted := store.Delete(name); !deleted {
