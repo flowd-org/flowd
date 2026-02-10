@@ -430,12 +430,12 @@ argspec:
 		{
 			name:       "leading slash rejected",
 			jobID:      "/demo",
-			wantStatus: http.StatusNotFound,
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "trailing slash rejected",
 			jobID:      "demo/",
-			wantStatus: http.StatusNotFound,
+			wantStatus: http.StatusBadRequest,
 		},
 	}
 
@@ -488,6 +488,81 @@ argspec:
 				if prov["canonical_path"] != tc.wantCanonicalPath {
 					t.Fatalf("expected canonical_path %q, got %v", tc.wantCanonicalPath, prov["canonical_path"])
 				}
+			}
+		})
+	}
+}
+
+func TestRunsHandlerRejectsEmptyJobIDSegments(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+argspec:
+  args:
+    - name: name
+      type: string
+      required: true
+`)
+
+	h := NewRunsHandler(RunsConfig{Root: root, Store: runstore.New()})
+
+	cases := []struct {
+		name  string
+		jobID string
+	}{
+		{
+			name:  "leading slash",
+			jobID: "/demo",
+		},
+		{
+			name:  "trailing slash",
+			jobID: "demo/",
+		},
+		{
+			name:  "double slash",
+			jobID: "demo//child",
+		},
+		{
+			name:  "leading dot",
+			jobID: ".demo",
+		},
+		{
+			name:  "trailing dot",
+			jobID: "demo.",
+		},
+		{
+			name:  "double dot",
+			jobID: "demo..child",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := fmt.Sprintf(`{"job_id":"%s","args":{"name":"Alice"}}`, tc.jobID)
+			req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			addIdempotencyHeader(req)
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+			}
+			if !strings.HasPrefix(resp.Header().Get("Content-Type"), "application/problem+json") {
+				t.Fatalf("expected problem response, got %q", resp.Header().Get("Content-Type"))
+			}
+			var problem map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+				t.Fatalf("decode problem: %v", err)
+			}
+			if problem["code"] != response.ProblemCodeJobIDInvalidSegment {
+				t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDInvalidSegment, problem)
+			}
+			if problem["type"] != response.ProblemTypeJobIDInvalidSegment {
+				t.Fatalf("expected type %q, got %+v", response.ProblemTypeJobIDInvalidSegment, problem)
 			}
 		})
 	}

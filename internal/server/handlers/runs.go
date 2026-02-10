@@ -79,6 +79,37 @@ func scopedIdempotencyKey(tenant, key string) string {
 	return hex.EncodeToString(sum[:]) + ":" + key
 }
 
+func hasEmptyJobIDSegment(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || trimmed == "." || trimmed == "/" {
+		return false
+	}
+	normalized := strings.ReplaceAll(trimmed, "\\", "/")
+	prevSep := true
+	for _, r := range normalized {
+		if r == '/' || r == '.' {
+			if prevSep {
+				return true
+			}
+			prevSep = true
+			continue
+		}
+		prevSep = false
+	}
+	return prevSep
+}
+
+func invalidJobIDSegmentProblem(input string) response.Problem {
+	prob := response.New(http.StatusBadRequest, "invalid job_id",
+		response.WithType(response.ProblemTypeJobIDInvalidSegment),
+		response.WithExtension("code", response.ProblemCodeJobIDInvalidSegment),
+		response.WithDetail("job_id contains empty segments"),
+		response.WithExtension("path", input),
+		response.WithExtension("reason", "empty segment"),
+	)
+	return scrubProblemResponse(&prob, nil, nil, nil, nil)
+}
+
 func normalizeJobRefInput(input string) string {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
@@ -225,6 +256,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.JobID) == "" && req.JobID != "" {
 		response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
+		return
+	}
+	if hasEmptyJobIDSegment(req.JobID) {
+		response.Write(w, invalidJobIDSegmentProblem(req.JobID))
 		return
 	}
 
