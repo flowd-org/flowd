@@ -1,9 +1,12 @@
 package server
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 )
 
 func TestAuthMiddlewareRequiresToken(t *testing.T) {
@@ -89,7 +92,62 @@ func TestAuthMiddlewareForbidden(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareTenantClaimPresent(t *testing.T) {
+	mw := authMiddleware(Config{Dev: true})
+	var gotTenant string
+	var gotTenantOK bool
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTenant, gotTenantOK = requestctx.Tenant(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	token := unsignedJWT(`{"sub":"tester","tenant":"acme","scope":"jobs:read"}`)
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	if !gotTenantOK {
+		t.Fatalf("expected tenant claim to be present")
+	}
+	if gotTenant != "acme" {
+		t.Fatalf("expected tenant %q, got %q", "acme", gotTenant)
+	}
+}
+
+func TestAuthMiddlewareTenantClaimAbsent(t *testing.T) {
+	mw := authMiddleware(Config{Dev: true})
+	var gotTenantOK bool
+	var gotPrincipalOK bool
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, gotTenantOK = requestctx.Tenant(r.Context())
+		_, gotPrincipalOK = requestctx.Principal(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	token := unsignedJWT(`{"sub":"tester","scope":"jobs:read"}`)
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	if gotTenantOK {
+		t.Fatalf("expected tenant claim to be absent")
+	}
+	if !gotPrincipalOK {
+		t.Fatalf("expected principal to be present")
+	}
+}
+
 type nopWriter struct{}
 
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
 func (nopWriter) Sync() error                 { return nil }
+
+func unsignedJWT(payload string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	body := base64.RawURLEncoding.EncodeToString([]byte(payload))
+	return header + "." + body + "."
+}

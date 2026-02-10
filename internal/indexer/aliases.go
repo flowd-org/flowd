@@ -178,7 +178,9 @@ func normalizeAliasTarget(from string) (targetPath, targetID string) {
 	if normalized == "" {
 		return "", ""
 	}
-	targetPath = normalized
-	targetID = strings.ReplaceAll(normalized, "/", ".")
-	return targetPath, targetID
+	canonical := DotJobIDToSlash(normalized)
+	if canonical == "" {
+		return "", ""
+	}
+	return canonical, canonical
 }

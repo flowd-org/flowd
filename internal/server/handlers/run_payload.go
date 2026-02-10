@@ -13,6 +13,8 @@ import (
 type RunPayload struct {
 	ID              string         `json:"id"`
 	JobID           string         `json:"job_id"`
+	Tenant          string         `json:"tenant,omitempty"`
+	Origin          jobOrigin      `json:"origin,omitempty"`
 	Status          string         `json:"status"`
 	StartedAt       time.Time      `json:"started_at"`
 	FinishedAt      *time.Time     `json:"finished_at,omitempty"`
@@ -34,7 +36,7 @@ func newRunPayload(id, jobID, status string, startedAt time.Time) RunPayload {
 }
 
 func payloadFromStore(run runstore.Run) RunPayload {
-	return RunPayload{
+	payload := RunPayload{
 		ID:              run.ID,
 		JobID:           run.JobID,
 		Status:          run.Status,
@@ -47,10 +49,12 @@ func payloadFromStore(run runstore.Run) RunPayload {
 		Provenance:      run.Provenance,
 		RequestID:       run.RequestID,
 	}
+	applyRunIdentityFromProvenance(&payload)
+	return payload
 }
 
 func payloadFromRecord(record coredb.RunRecord) RunPayload {
-	return RunPayload{
+	payload := RunPayload{
 		ID:              record.ID,
 		JobID:           record.JobID,
 		Status:          record.Status,
@@ -63,6 +67,8 @@ func payloadFromRecord(record coredb.RunRecord) RunPayload {
 		Provenance:      record.Provenance,
 		RequestID:       record.RequestID,
 	}
+	applyRunIdentityFromProvenance(&payload)
+	return payload
 }
 
 func writeRunPayload(w http.ResponseWriter, payload RunPayload, status int) {

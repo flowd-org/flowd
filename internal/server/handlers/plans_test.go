@@ -321,7 +321,19 @@ argspec:
 		Sources: store,
 	})
 
-	body := `{"job_id":"remote","args":{"name":"Bob"},"source":{"name":"external"}}`
+	source, ok := store.Get("external")
+	if !ok {
+		t.Fatalf("expected external source in store")
+	}
+	discovered, err := indexer.DiscoverWithMountPath(source.LocalPath, sourceLogicalMountPath(source))
+	if err != nil {
+		t.Fatalf("discover source jobs: %v", err)
+	}
+	if len(discovered.Jobs) != 1 {
+		t.Fatalf("expected exactly one discovered job, got %d", len(discovered.Jobs))
+	}
+	jobID := discovered.Jobs[0].ID
+	body := `{"job_id":"` + jobID + `","args":{"name":"Bob"},"source":{"name":"external"}}`
 	req := httptest.NewRequest(http.MethodPost, "/plans", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -336,8 +348,8 @@ argspec:
 	if err := json.NewDecoder(rr.Body).Decode(&plan); err != nil {
 		t.Fatalf("decode plan: %v", err)
 	}
-	if plan.JobID != "remote" {
-		t.Fatalf("expected plan job_id remote, got %s", plan.JobID)
+	if plan.JobID != jobID {
+		t.Fatalf("expected plan job_id %s, got %s", jobID, plan.JobID)
 	}
 	if plan.Outputs == nil {
 		t.Fatalf("expected outputs in plan")
@@ -372,7 +384,19 @@ func TestPlansHandlerUsesGitSource(t *testing.T) {
 	}
 
 	h := NewPlansHandler(PlansConfig{Root: t.TempDir(), Sources: store})
-	body := `{"job_id":"gitjob","args":{"name":"Charlie"},"source":{"name":"git-remote"}}`
+	source, ok := store.Get("git-remote")
+	if !ok {
+		t.Fatalf("expected git source in store")
+	}
+	discovered, err := indexer.DiscoverWithMountPath(source.LocalPath, sourceLogicalMountPath(source))
+	if err != nil {
+		t.Fatalf("discover source jobs: %v", err)
+	}
+	if len(discovered.Jobs) != 1 {
+		t.Fatalf("expected exactly one discovered job, got %d", len(discovered.Jobs))
+	}
+	jobID := discovered.Jobs[0].ID
+	body := `{"job_id":"` + jobID + `","args":{"name":"Charlie"},"source":{"name":"git-remote"}}`
 	req := httptest.NewRequest(http.MethodPost, "/plans", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -386,8 +410,8 @@ func TestPlansHandlerUsesGitSource(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&plan); err != nil {
 		t.Fatalf("decode plan: %v", err)
 	}
-	if plan.JobID != "gitjob" {
-		t.Fatalf("expected job gitjob, got %s", plan.JobID)
+	if plan.JobID != jobID {
+		t.Fatalf("expected job %s, got %s", jobID, plan.JobID)
 	}
 	if plan.Outputs == nil {
 		t.Fatalf("expected outputs in plan")

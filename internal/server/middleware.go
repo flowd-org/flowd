@@ -134,6 +134,9 @@ func authMiddleware(cfg Config) Middleware {
 			}
 			ctx := withAuth(r.Context(), info)
 			ctx = requestctx.WithPrincipal(ctx, info.principal())
+			if tenant, ok := info.tenantClaim(); ok {
+				ctx = requestctx.WithTenant(ctx, tenant)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

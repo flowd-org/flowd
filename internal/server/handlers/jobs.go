@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/flowd-org/flowd/internal/configloader"
 	"github.com/flowd-org/flowd/internal/indexer"
 	"github.com/flowd-org/flowd/internal/server/headers"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 )
@@ -35,12 +37,19 @@ type JobsConfig struct {
 type jobView struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
+	Tenant      string        `json:"tenant"`
+	Origin      jobOrigin     `json:"origin"`
 	Description string        `json:"description,omitempty"`
 	Args        []interface{} `json:"args,omitempty"`
 	Extends     []string      `json:"extends,omitempty"`
 	Source      *jobSource    `json:"source,omitempty"`
 	AliasOf     string        `json:"alias_of,omitempty"`
 	AliasDetail string        `json:"alias_detail,omitempty"`
+}
+
+type jobOrigin struct {
+	SourceKind string `json:"source_kind"`
+	SourceName string `json:"source_name"`
 }
 
 type jobSource struct {
@@ -78,6 +87,14 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			return
 		}
 
+		resolvedTenant, prob := resolveTenant(r.Context(), "")
+		if prob != nil {
+			response.Write(w, *prob)
+			return
+		}
+
+		logger := requestctx.Logger(r.Context())
+
 		targets, err := resolveJobTargets(cfg.Root, cfg.Sources)
 		if err != nil {
 			response.Write(w, response.New(http.StatusInternalServerError, "resolve sources failed", response.WithDetail(err.Error())))
@@ -89,6 +106,7 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			allJobs  []indexer.JobInfo
 			errorCnt int
 		)
+		var collisionCandidates []jobCollisionContender
 
 		aliasSets := make([]indexer.AliasSet, 0)
 		aliasSources := make(map[string]struct{})
@@ -99,7 +117,21 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			aliasSets = append(aliasSets, indexer.AliasSet{Source: "", Aliases: aliases})
 		}
 
+		sourceKindByName := make(map[string]string)
 		for _, target := range targets {
+			if target.source != nil {
+				sourceKindByName[target.source.Name] = mapSourceKind(target.source.Type)
+			}
+		}
+
+		for _, target := range targets {
+			origin := defaultJobOrigin()
+			if target.source != nil {
+				origin = jobOrigin{
+					SourceKind: mapSourceKind(target.source.Type),
+					SourceName: target.source.Name,
+				}
+			}
 			if target.source != nil && len(target.source.Aliases) > 0 {
 				if _, ok := aliasSources[target.source.Name]; !ok {
 					aliasSets = append(aliasSets, indexer.AliasSet{Source: target.source.Name, Aliases: target.source.Aliases})
@@ -107,17 +139,22 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				}
 			}
 			if target.source != nil && strings.EqualFold(target.source.Type, "oci") {
-				ociViews, ociErrors := discoverOCIJobs(*target.source)
+				ociViews, ociCandidates, ociErrors := discoverOCIJobs(*target.source, resolvedTenant, origin)
 				allViews = append(allViews, ociViews...)
 				for _, view := range ociViews {
 					allJobs = append(allJobs, indexer.JobInfo{ID: view.ID, Name: view.Name})
 				}
+				collisionCandidates = append(collisionCandidates, ociCandidates...)
 				errorCnt += len(ociErrors)
 				continue
 			}
 
-			discovered, dErr := discoverFn(target.root)
+			discovered, dErr := discoverJobsWithMountPath(target, discoverFn)
 			if dErr != nil {
+				if prob, ok := discoveryProblem(dErr); ok {
+					response.Write(w, *prob)
+					return
+				}
 				response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(dErr.Error())))
 				return
 			}
@@ -125,6 +162,8 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				view := jobView{
 					ID:          job.ID,
 					Name:        job.Name,
+					Tenant:      resolvedTenant,
+					Origin:      origin,
 					Description: job.Summary,
 				}
 				if target.source != nil {
@@ -135,8 +174,16 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				}
 				allViews = append(allViews, view)
 				allJobs = append(allJobs, job)
+				collisionCandidates = append(collisionCandidates, buildJobCollisionContender(job, target.root, target.source))
 			}
 			errorCnt += len(discovered.Errors)
+		}
+
+		logJobsDiscoverySummary(logger, resolvedTenant, len(allJobs), len(targets), errorCnt)
+
+		if canonicalID, contenders, ok := findJobIDCollision(collisionCandidates); ok {
+			response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
+			return
 		}
 
 		aliasIndex, aliasErrs := indexer.BuildAliasIndex(allJobs, aliasSets)
@@ -154,9 +201,17 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 					continue
 				}
 				seenAliases[key] = struct{}{}
+				origin := defaultJobOrigin()
+				if alias.Source != "" {
+					if kind, ok := sourceKindByName[alias.Source]; ok {
+						origin = jobOrigin{SourceKind: kind, SourceName: alias.Source}
+					}
+				}
 				aliasView := jobView{
 					ID:      alias.Name,
 					Name:    alias.Name,
+					Tenant:  resolvedTenant,
+					Origin:  origin,
 					AliasOf: alias.TargetPath,
 				}
 				aliasView.Description = fmt.Sprintf("[alias] %s", alias.TargetPath)
@@ -207,6 +262,8 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 			}
 			views = allViews[start:end]
 		}
+
+		logJobsListedSummary(logger, resolvedTenant, page, perPage, len(allViews), len(views), errorCnt)
 
 		payload, err := json.Marshal(views)
 		if err != nil {
@@ -309,18 +366,42 @@ func resolveJobTargets(defaultRoot string, store *sourcestore.Store) ([]jobTarge
 	return targets, nil
 }
 
-func discoverOCIJobs(src sourcestore.Source) ([]jobView, []indexer.DiscoveryError) {
+func discoverJobsWithMountPath(target jobTarget, discoverFn func(string) (indexer.Result, error)) (indexer.Result, error) {
+	if target.source == nil {
+		return discoverFn(target.root)
+	}
+	mountPath := sourceNameMountPath(*target.source)
+	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
+		return discoverFn(target.root)
+	}
+	return indexer.DiscoverWithMountPath(target.root, mountPath)
+}
+
+func sourceNameMountPath(src sourcestore.Source) string {
+	return sourceLogicalMountPath(src)
+}
+
+func sourceLogicalMountPath(src sourcestore.Source) string {
+	name := strings.TrimSpace(src.Name)
+	if name == "" {
+		return "."
+	}
+	return name
+}
+
+func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([]jobView, []jobCollisionContender, []indexer.DiscoveryError) {
 	manifest, err := loadAddonManifestFromSource(src)
 	if err != nil {
-		return nil, []indexer.DiscoveryError{{
+		return nil, nil, []indexer.DiscoveryError{{
 			Path: fmt.Sprintf("oci://%s", src.Name),
 			Err:  err.Error(),
 		}}
 	}
 	if manifest == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	var views []jobView
+	views := make([]jobView, 0, len(manifest.Jobs))
+	candidates := make([]jobCollisionContender, 0, len(manifest.Jobs))
 	for _, job := range manifest.Jobs {
 		if strings.TrimSpace(job.ID) == "" {
 			continue
@@ -333,6 +414,8 @@ func discoverOCIJobs(src sourcestore.Source) ([]jobView, []indexer.DiscoveryErro
 		view := jobView{
 			ID:          id,
 			Name:        name,
+			Tenant:      tenant,
+			Origin:      origin,
 			Description: job.Summary,
 			Source: &jobSource{
 				Name: src.Name,
@@ -340,6 +423,44 @@ func discoverOCIJobs(src sourcestore.Source) ([]jobView, []indexer.DiscoveryErro
 			},
 		}
 		views = append(views, view)
+		candidates = append(candidates, buildOCIJobCollisionContender(src, id, job.ID))
 	}
-	return views, nil
+	return views, candidates, nil
+}
+
+func defaultJobOrigin() jobOrigin {
+	return jobOrigin{SourceKind: "fs", SourceName: "local"}
+}
+
+func mapSourceKind(sourceType string) string {
+	if strings.EqualFold(sourceType, "local") {
+		return "fs"
+	}
+	return strings.ToLower(strings.TrimSpace(sourceType))
+}
+
+func logJobsDiscoverySummary(logger *slog.Logger, tenant string, discovered, targets, discoveryErrors int) {
+	if logger == nil {
+		return
+	}
+	logger.Info("jobs.discovered",
+		slog.String("tenant", tenant),
+		slog.Int("discovered", discovered),
+		slog.Int("targets", targets),
+		slog.Int("discovery_errors", discoveryErrors),
+	)
+}
+
+func logJobsListedSummary(logger *slog.Logger, tenant string, page, perPage, total, returned, discoveryErrors int) {
+	if logger == nil {
+		return
+	}
+	logger.Info("jobs.listed",
+		slog.String("tenant", tenant),
+		slog.Int("page", page),
+		slog.Int("per_page", perPage),
+		slog.Int("total", total),
+		slog.Int("returned", returned),
+		slog.Int("discovery_errors", discoveryErrors),
+	)
 }

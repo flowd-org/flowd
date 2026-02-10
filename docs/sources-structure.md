@@ -27,17 +27,15 @@ Points to a local directory containing jobs:
 ```yaml
 sources:
   - name: "local-ops"
-    type: "fs"
-    path: "/opt/flwd/jobs"
-    mountPath: "ops"
+    type: "local"
+    ref: "/opt/flwd/jobs"
     watch: true  # Auto-reload on changes
 ```
 
 **Fields:**
 - `name`: Unique identifier for the source
-- `type`: Must be `"fs"`
-- `path`: Absolute path to the jobs directory
-- `mountPath`: Prefix for job IDs (e.g., `ops/backup`)
+- `type`: Must be `"local"`
+- `ref`: Absolute path to the jobs directory
 - `watch`: Enable filesystem watching for auto-reload
 
 ### Git Source
@@ -50,7 +48,6 @@ sources:
     type: "git"
     url: "https://github.com/org/flwd-jobs.git"
     ref: "main"
-    mountPath: "shared"
     pull_policy: "on-run"
     auto_sync: true
     poll_interval: "5m"
@@ -61,7 +58,6 @@ sources:
 - `type`: Must be `"git"`
 - `url`: Git repository URL
 - `ref`: Branch, tag, or commit SHA
-- `mountPath`: Prefix for job IDs
 - `pull_policy`: When to pull updates (`on-run`, `manual`, `disabled`)
 - `auto_sync`: Periodically sync to latest commit (for branches)
 - `poll_interval`: How often to check for updates
@@ -74,21 +70,21 @@ Loads jobs from OCI container images:
 sources:
   - name: "backup-addon"
     type: "oci"
-    image: "ghcr.io/org/backup-tools:v1.0.0@sha256:..."
-    mountPath: "addons/backup"
+    ref: "ghcr.io/org/backup-tools:v1.0.0@sha256:..."
 ```
 
 **Fields:**
 - `name`: Unique identifier for the source
 - `type`: Must be `"oci"`
-- `image`: OCI image reference (must be digest-pinned)
-- `mountPath`: Prefix for job IDs
+- `ref`: OCI image reference (must be digest-pinned)
 
 See [Add-on Manifests]({{< ref "addon-manifests" >}}) for details on OCI add-ons.
 
 ## Tree-v1 Directory Layout
 
 The **tree-v1** layout organizes jobs in a hierarchical directory structure where each directory containing a `config.yaml` file defines a job.
+
+During PR1, flwd also accepts a legacy sentinel file at `config.d/config.yaml` as a temporary compatibility bridge. If **both** `config.yaml` and `config.d/config.yaml` exist in the same job directory, discovery fails with a 409 RFC7807 error (dual-config invalidity).
 
 ### Basic Structure
 
@@ -112,22 +108,27 @@ jobs/                    # Source root
 
 ### Job ID Resolution
 
-Job IDs are derived from the directory path relative to the source root:
+Job IDs are derived from the directory path relative to the source root and always emitted as canonical slash IDs.
+
+Canonicalization rules:
+- `mountPath` is derived from the source name in this release (each source is mounted under its name). If the source name is `.`, the prefix is empty.
+- Job directory paths are normalized to lowercase kebab-case per path segment.
+- Outputs, persistence, and events use canonical slash IDs only.
 
 ```
-Source mountPath: "ops"
+Source mountPath (derived from source name): "local-ops"
 Directory path: backup/daily
 
-Resulting job ID: ops/backup/daily
+Resulting job ID: local-ops/backup/daily
 ```
 
 **Examples:**
 
 | Source mountPath | Directory Path      | Job ID                    |
 |------------------|---------------------|---------------------------|
-| `ops`            | `backup/daily`      | `ops/backup/daily`        |
+| `local-ops`      | `backup/daily`      | `local-ops/backup/daily`  |
 | `tools`          | `deploy/staging`    | `tools/deploy/staging`    |
-| `shared`         | `db/migrate`        | `shared/db/migrate`       |
+| `shared-tools`   | `db/migrate`        | `shared-tools/db/migrate` |
 | `.`              | `hello`             | `hello`                   |
 
 ### Root Job
@@ -139,16 +140,16 @@ jobs/
 └── config.yaml    # Root job
 ```
 
-This creates a job with ID equal to the `mountPath` (or empty string if `mountPath` is `.`).
+This creates a job with ID equal to the source name (or empty string if the source name is `.`).
 
 ## Discovery Process
 
 flwd discovers jobs using the following process:
 
-1. **Mount sources**: Each source is mounted at its `mountPath` under the tenant's scripts root
+1. **Mount sources**: Each source is mounted at its name under the tenant's scripts root
 2. **Walk directories**: Recursively walk the directory tree
-3. **Identify jobs**: Any directory containing `config.yaml` is a job
-4. **Resolve IDs**: Job ID = `mountPath` + relative directory path
+3. **Identify jobs**: Any directory containing `config.yaml` is a job (legacy `config.d/config.yaml` is accepted during PR1)
+4. **Resolve IDs**: Job ID = source name + relative directory path (canonical slash IDs only)
 5. **Check collisions**: Fail if multiple jobs resolve to the same ID
 
 ### Discovery Example
@@ -158,15 +159,13 @@ flwd discovers jobs using the following process:
 ```yaml
 sources:
   - name: "local-ops"
-    type: "fs"
-    path: "/opt/flwd/jobs"
-    mountPath: "ops"
+    type: "local"
+    ref: "/opt/flwd/jobs"
   
   - name: "shared-tools"
     type: "git"
     url: "https://github.com/org/tools.git"
     ref: "main"
-    mountPath: "shared"
 ```
 
 **Directory Structure:**
@@ -185,23 +184,32 @@ sources:
 
 **Discovered Jobs:**
 
-- `ops/backup/daily` (from local-ops)
-- `shared/deploy/app` (from shared-tools)
+- `local-ops/backup/daily` (from local-ops)
+- `shared-tools/deploy/app` (from shared-tools)
 
 ## Job Collision Detection
 
-If two or more jobs resolve to the same job ID, discovery fails with an error:
+If two or more jobs resolve to the same job ID, discovery fails with an RFC7807 **409 Conflict** error that includes a deterministic `contenders` list to help you identify the colliding jobs.
 
 ```
-Error: Job ID collision detected
-Job ID: ops/backup/daily
-Sources:
-  - local-ops (mountPath: ops, path: backup/daily)
-  - remote-ops (mountPath: ops, path: backup/daily)
+type: https://flowd.org/problems/job-id-collision
+status: 409
+code: job_id.collision
+detail: Multiple job definitions resolve to the same canonical job_id
+canonical_job_id: local-ops/backup/daily
+contenders:
+  - source_kind: fs
+    source_name: local-ops
+    mountPath: local-ops
+    job_dir: backup/daily
+  - source_kind: git
+    source_name: remote-ops
+    mountPath: /var/lib/flwd/git/remote-ops
+    job_dir: backup/daily
 ```
 
 **Resolution:**
-- Change `mountPath` for one of the sources
+- Change the source name for one of the sources
 - Reorganize directory structure
 - Remove duplicate job
 
@@ -292,9 +300,8 @@ Add sources to `flwd.yaml`:
 ```yaml
 sources:
   - name: "my-jobs"
-    type: "fs"
-    path: "/path/to/jobs"
-    mountPath: "custom"
+    type: "local"
+    ref: "/path/to/jobs"
 ```
 
 Reload configuration:
@@ -330,9 +337,8 @@ Enable `watch: true` for automatic reloading:
 ```yaml
 sources:
   - name: "local-dev"
-    type: "fs"
-    path: "./jobs"
-    mountPath: "dev"
+    type: "local"
+    ref: "./jobs"
     watch: true  # Auto-reload on file changes
 ```
 
@@ -384,9 +390,8 @@ instance:
 sources:
   # Local development jobs
   - name: "local-dev"
-    type: "fs"
-    path: "/opt/flwd/dev-jobs"
-    mountPath: "dev"
+    type: "local"
+    ref: "/opt/flwd/dev-jobs"
     watch: true
   
   # Shared team jobs from Git
@@ -394,7 +399,6 @@ sources:
     type: "git"
     url: "https://github.com/org/platform-tools.git"
     ref: "main"
-    mountPath: "platform"
     pull_policy: "on-run"
     auto_sync: true
     poll_interval: "10m"
@@ -404,14 +408,12 @@ sources:
     type: "git"
     url: "https://github.com/org/prod-ops.git"
     ref: "v2.1.0"  # Pinned tag
-    mountPath: "ops"
     pull_policy: "manual"
   
   # Backup tools add-on
   - name: "backup-addon"
     type: "oci"
-    image: "ghcr.io/org/backup-tools:v1.0.0@sha256:abc123..."
-    mountPath: "addons/backup"
+    ref: "ghcr.io/org/backup-tools:v1.0.0@sha256:abc123..."
 ```
 
 **Directory Structure:**
@@ -438,11 +440,11 @@ sources:
 
 **Discovered Jobs:**
 
-- `dev/test/hello`
-- `platform/deploy/app`
-- `ops/backup/database`
-- `addons/backup/backup` (from OCI add-on)
-- `addons/backup/restore` (from OCI add-on)
+- `local-dev/test/hello`
+- `platform-tools/deploy/app`
+- `prod-ops/backup/database`
+- `backup-addon/backup` (from OCI add-on)
+- `backup-addon/restore` (from OCI add-on)
 
 ## Validation
 

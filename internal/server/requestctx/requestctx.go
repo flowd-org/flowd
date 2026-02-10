@@ -10,11 +10,13 @@ import (
 type profileKey struct{}
 type metadataKey struct{}
 type principalKey struct{}
+type tenantKey struct{}
 
 var (
 	ctxProfileKey   = &profileKey{}
 	ctxMetadataKey  = &metadataKey{}
 	ctxPrincipalKey = &principalKey{}
+	ctxTenantKey    = &tenantKey{}
 )
 
 // Metadata stores auxiliary request attributes for structured logging.
@@ -174,6 +176,26 @@ func Principal(ctx context.Context) (string, bool) {
 		return "", false
 	}
 	return principal, true
+}
+
+// WithTenant stores the authenticated tenant claim on the context.
+func WithTenant(ctx context.Context, tenant string) context.Context {
+	if tenant == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxTenantKey, tenant)
+}
+
+// Tenant retrieves the authenticated tenant claim from context.
+func Tenant(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	tenant, _ := ctx.Value(ctxTenantKey).(string)
+	if tenant == "" {
+		return "", false
+	}
+	return tenant, true
 }
 
 // LogPolicyDecision emits a structured policy decision log using the request-scoped logger.

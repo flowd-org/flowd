@@ -72,7 +72,7 @@ $ curl -s -X POST http://127.0.0.1:8080/runs \
     -H 'Authorization: Bearer dev-token' \
     -H 'Content-Type: application/json' \
     -d '{
-          "job":"demo-container",
+          "job_id":"demo-container",
           "args":{"name":"Alice"}
         }' | jq
 ```

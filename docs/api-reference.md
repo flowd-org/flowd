@@ -35,24 +35,30 @@ GET /api/v1/jobs
 
 Returns a list of all discovered jobs across all sources.
 
+Job IDs are always returned as canonical slash IDs. When a job is defined at the source root and `mountPath` is `.`, the canonical job ID is the empty string (`""`).
+
 **Query Parameters:**
 - `source` (optional): Filter by source name
 - `namespace` (optional): Filter by namespace
 
 **Response:**
 ```json
-{
-  "jobs": [
-    {
-      "id": "backup/daily",
-      "name": "daily",
-      "namespace": "backup",
-      "version": "1.0.0",
-      "description": "Daily backup job",
-      "source": "local-fs"
+[
+  {
+    "id": "backup/daily",
+    "name": "backup/daily",
+    "tenant": "default",
+    "origin": {
+      "source_kind": "fs",
+      "source_name": "local"
+    },
+    "description": "Daily backup job",
+    "source": {
+      "name": "local-fs",
+      "type": "local"
     }
-  ]
-}
+  }
+]
 ```
 
 #### Get Job Details
@@ -71,6 +77,11 @@ Returns detailed information about a specific job, including its configuration a
   "namespace": "backup",
   "version": "1.0.0",
   "description": "Daily backup job",
+  "tenant": "default",
+  "origin": {
+    "source_kind": "fs",
+    "source_name": "local-fs"
+  },
   "args": {
     "type": "object",
     "properties": {
@@ -81,7 +92,9 @@ Returns detailed information about a specific job, including its configuration a
     },
     "required": ["target"]
   },
-  "source": "local-fs"
+  "source": {
+    "name": "local-fs"
+  }
 }
 ```
 
@@ -94,6 +107,8 @@ POST /api/v1/runs
 ```
 
 Creates and executes a new run of a job.
+
+Job references are input-compatible (aliases, existing dot-form IDs, and case-insensitive slash IDs), but responses, persistence, SSE, and journal entries always use canonical slash IDs.
 
 ##### Idempotency
 
@@ -113,6 +128,9 @@ Creates and executes a new run of a job.
 **Replay behavior**
 - If the same `Idempotency-Key` and request body are replayed after a successful run creation, the server returns the cached response and sets `Idempotent-Replay: true`.
 
+**Tenant scoping**
+- Idempotency keys are scoped by the resolved tenant. The same key in different tenants does not collide.
+
 **Failure modes (RFC7807)**
 - **409 Conflict** — key reuse with a different request body or hash mismatch:
   - `type`: `https://flowd.org/problems/idempotency/mismatch`
@@ -128,17 +146,31 @@ Creates and executes a new run of a job.
     "target": "/mnt/backup"
   },
   "tenant": "default",
-  "async": true
+  "source": {"name": "local-fs"}
 }
 ```
+
+**Tenant resolution rules (summary)**
+- If a principal tenant claim is present, it is authoritative.
+- If both a principal tenant and a request `tenant` are present and differ, the request is rejected (RFC7807).
+- If no principal tenant is available, `tenant` defaults to `default` when omitted.
+- If the principal exists but has no tenant claim, treat it as "no principal tenant" for resolution.
+
+**Root job aliases**
+- If the resolved canonical job ID is `""`, `job_id` may be sent as `""`, `"."`, or `"/"` and will be normalized to `""`.
 
 **Response:**
 ```json
 {
-  "run_id": "run_01HX...",
+  "id": "run_01HX...",
   "job_id": "backup/daily",
+  "tenant": "default",
+  "origin": {
+    "source_kind": "fs",
+    "source_name": "local-fs"
+  },
   "status": "running",
-  "created_at": "2024-01-15T10:30:00Z"
+  "started_at": "2024-01-15T10:30:00Z"
 }
 ```
 
@@ -158,18 +190,20 @@ Returns a list of all runs.
 
 **Response:**
 ```json
-{
-  "runs": [
-    {
-      "run_id": "run_01HX...",
-      "job_id": "backup/daily",
-      "status": "success",
-      "created_at": "2024-01-15T10:30:00Z",
-      "finished_at": "2024-01-15T10:35:00Z"
-    }
-  ],
-  "total": 42
-}
+[
+  {
+    "id": "run_01HX...",
+    "job_id": "backup/daily",
+    "tenant": "default",
+    "origin": {
+      "source_kind": "fs",
+      "source_name": "local-fs"
+    },
+    "status": "success",
+    "started_at": "2024-01-15T10:30:00Z",
+    "finished_at": "2024-01-15T10:35:00Z"
+  }
+]
 ```
 
 #### Get Run Details
@@ -183,14 +217,16 @@ Returns detailed information about a specific run.
 **Response:**
 ```json
 {
-  "run_id": "run_01HX...",
+  "id": "run_01HX...",
   "job_id": "backup/daily",
-  "status": "success",
-  "created_at": "2024-01-15T10:30:00Z",
-  "finished_at": "2024-01-15T10:35:00Z",
-  "args": {
-    "target": "/mnt/backup"
+  "tenant": "default",
+  "origin": {
+    "source_kind": "fs",
+    "source_name": "local-fs"
   },
+  "status": "success",
+  "started_at": "2024-01-15T10:30:00Z",
+  "finished_at": "2024-01-15T10:35:00Z",
   "result": {
     "value": {
       "files_backed_up": 1234,
@@ -327,8 +363,8 @@ Returns system information and configuration.
   "sources": [
     {
       "name": "local-fs",
-      "type": "fs",
-      "path": "/opt/flwd/jobs"
+      "type": "local",
+      "ref": "/opt/flwd/jobs"
     }
   ],
   "extensions": ["tui", "mcp"]
@@ -367,7 +403,7 @@ All SSE endpoints use a single `flowd` envelope and a fixed retry hint:
 event: flowd
 retry: 3000
 id: 42
-data: {"seq":42,"ts":"2026-01-10T10:00:15Z","type":"run.output","run_id":"run_01HX...","tenant":"default","data":{...}}
+data: {"seq":42,"ts":"2026-01-10T10:00:15Z","type":"run.output","run_id":"run_01HX...","tenant":"default","origin":{"source_kind":"fs","source_name":"local-fs"},"data":{...}}
 ```
 
 Heartbeat comments are emitted at least every 15 seconds in the form:

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,9 +19,53 @@ import (
 	"github.com/flowd-org/flowd/internal/policy"
 	policyverify "github.com/flowd-org/flowd/internal/policy/verify"
 	"github.com/flowd-org/flowd/internal/server/metrics"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/types"
 )
+
+type captureHandler struct {
+	records []string
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	var b strings.Builder
+	b.WriteString(r.Message)
+	r.Attrs(func(attr slog.Attr) bool {
+		appendAttrString(&b, attr)
+		return true
+	})
+	h.records = append(h.records, b.String())
+	return nil
+}
+
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler {
+	return h
+}
+
+func (h *captureHandler) WithGroup(string) slog.Handler {
+	return h
+}
+
+func appendAttrString(b *strings.Builder, attr slog.Attr) {
+	attr.Value = attr.Value.Resolve()
+	switch attr.Value.Kind() {
+	case slog.KindString:
+		b.WriteString(attr.Value.String())
+	case slog.KindAny:
+		if value, ok := attr.Value.Any().(string); ok {
+			b.WriteString(value)
+		}
+	case slog.KindGroup:
+		for _, child := range attr.Value.Group() {
+			appendAttrString(b, child)
+		}
+	}
+}
 
 func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	root := t.TempDir()
@@ -55,8 +100,8 @@ func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	if payload["expose"] != "read" {
 		t.Fatalf("expected expose read, got %v", payload["expose"])
 	}
-	if prov, ok := payload["provenance"].(map[string]any); !ok || prov["resolved_path"] == "" {
-		t.Fatalf("expected provenance with resolved_path, got %+v", payload["provenance"])
+	if _, ok := payload["provenance"]; ok {
+		t.Fatalf("expected provenance to be omitted from response, got %+v", payload["provenance"])
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/sources", nil)
@@ -72,8 +117,184 @@ func TestSourcesHandlerLocalSuccess(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected one source in list, got %d", len(list))
 	}
-	if prov, ok := list[0]["provenance"].(map[string]any); !ok || prov["resolved_path"] == "" {
-		t.Fatalf("expected provenance in list response, got %+v", list[0]["provenance"])
+	if _, ok := list[0]["provenance"]; ok {
+		t.Fatalf("expected provenance to be omitted from list response, got %+v", list[0]["provenance"])
+	}
+}
+
+func TestSourcesHandlerListDoesNotLogSecrets(t *testing.T) {
+	secret := "supersecret"
+	store := sourcestore.New()
+	store.Upsert(sourcestore.Source{
+		Name: "git",
+		Type: "git",
+		URL:  "https://user:" + secret + "@example.com/repo.git",
+		Ref:  "main",
+	})
+	h := NewSourcesHandler(SourcesConfig{Store: store})
+
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
+	req = req.WithContext(requestctx.WithLogger(req.Context(), logger))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for list, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(handler.records) == 0 {
+		t.Fatalf("expected log entries to be captured")
+	}
+	for _, entry := range handler.records {
+		if strings.Contains(entry, secret) {
+			t.Fatalf("expected logs to exclude secret substring, got %q", entry)
+		}
+	}
+}
+
+func TestSourcesHandlerListCoreViewAndRedaction(t *testing.T) {
+	secret := "supersecret"
+	store := sourcestore.New()
+	localRoot := t.TempDir()
+	gitRoot := t.TempDir()
+	ociRoot := t.TempDir()
+
+	store.Upsert(sourcestore.Source{
+		Name:      "local",
+		Type:      "local",
+		Ref:       "demo",
+		LocalPath: localRoot,
+		Expose:    "read",
+	})
+	store.Upsert(sourcestore.Source{
+		Name:           "git",
+		Type:           "git",
+		Ref:            "main",
+		ResolvedRef:    "deadbeef",
+		ResolvedCommit: "deadbeef",
+		URL:            "https://user:" + secret + "@example.com/repo.git?access_token=" + secret + "#" + secret,
+		LocalPath:      gitRoot,
+		Expose:         "read",
+	})
+	store.Upsert(sourcestore.Source{
+		Name:             "addon",
+		Type:             "oci",
+		Ref:              "ghcr.io/example/addon:1.0",
+		Digest:           "sha256:abc123",
+		PullPolicy:       "always",
+		VerifySignatures: true,
+		LocalPath:        ociRoot,
+		Expose:           "read",
+	})
+
+	h := NewSourcesHandler(SourcesConfig{Store: store})
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
+	req = req.WithContext(requestctx.WithLogger(req.Context(), logger))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for list, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatalf("expected response to exclude secret substring")
+	}
+	for _, entry := range handler.records {
+		if strings.Contains(entry, secret) {
+			t.Fatalf("expected logs to exclude secret substring, got %q", entry)
+		}
+	}
+
+	var list []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("expected three sources, got %d", len(list))
+	}
+
+	local, ok := sourceByID(list, "local")
+	if !ok {
+		t.Fatalf("expected local source in response")
+	}
+	assertCoreViewFields(t, local, "local", "fs", localRoot, "tree-v1")
+	localConfig, _ := local["config"].(map[string]any)
+	if localConfig["path"] != "demo" {
+		t.Fatalf("expected local config path demo, got %+v", localConfig)
+	}
+
+	git, ok := sourceByID(list, "git")
+	if !ok {
+		t.Fatalf("expected git source in response")
+	}
+	assertCoreViewFields(t, git, "git", "git", gitRoot, "tree-v1")
+	gitConfig, _ := git["config"].(map[string]any)
+	if gitConfig["url"] != "https://example.com/repo.git" {
+		t.Fatalf("expected sanitized git url, got %+v", gitConfig)
+	}
+	if git["name"] != "git" || git["type"] != "git" || git["ref"] != "main" || git["resolved_ref"] != "deadbeef" {
+		t.Fatalf("expected legacy fields present, got %+v", git)
+	}
+
+	oci, ok := sourceByID(list, "addon")
+	if !ok {
+		t.Fatalf("expected oci source in response")
+	}
+	if oci["kind"] != "oci" {
+		t.Fatalf("expected oci kind, got %+v", oci["kind"])
+	}
+	ociConfig, _ := oci["config"].(map[string]any)
+	if ociConfig["ref"] != "ghcr.io/example/addon:1.0" || ociConfig["digest"] != "sha256:abc123" {
+		t.Fatalf("expected oci config ref/digest, got %+v", ociConfig)
+	}
+}
+
+func TestSanitizeSourceURLMalformed(t *testing.T) {
+	secret := "supersecret"
+	input := "https://user:" + secret + "@example.com/repo.git%"
+	output := sanitizeSourceURL(input)
+	if strings.Contains(output, secret) {
+		t.Fatalf("expected sanitized url to remove credentials, got %q", output)
+	}
+	if strings.Contains(output, "@") {
+		t.Fatalf("expected sanitized url to remove userinfo delimiter, got %q", output)
+	}
+}
+
+func sourceByID(list []map[string]any, id string) (map[string]any, bool) {
+	for _, item := range list {
+		if value, ok := item["id"].(string); ok && value == id {
+			return item, true
+		}
+	}
+	return nil, false
+}
+
+func assertCoreViewFields(t *testing.T, payload map[string]any, id, kind, mountPath, layout string) {
+	t.Helper()
+	if payload["id"] != id {
+		t.Fatalf("expected id %s, got %+v", id, payload["id"])
+	}
+	if payload["tenant"] != "default" {
+		t.Fatalf("expected default tenant, got %+v", payload["tenant"])
+	}
+	if payload["kind"] != kind {
+		t.Fatalf("expected kind %s, got %+v", kind, payload["kind"])
+	}
+	if payload["mountPath"] != mountPath {
+		t.Fatalf("expected mountPath %s, got %+v", mountPath, payload["mountPath"])
+	}
+	if payload["layout"] != layout {
+		t.Fatalf("expected layout %s, got %+v", layout, payload["layout"])
+	}
+	if payload["pull_policy"] != "always" {
+		t.Fatalf("expected pull_policy always, got %+v", payload["pull_policy"])
+	}
+	if _, ok := payload["config"]; !ok {
+		t.Fatalf("expected config to be present, got %+v", payload)
 	}
 }
 

@@ -71,12 +71,57 @@ var (
 	sha256Pattern         = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
 
-func scopedIdempotencyKey(principal, key string) string {
-	if principal == "" {
+func scopedIdempotencyKey(tenant, key string) string {
+	if tenant == "" {
 		return key
 	}
-	sum := sha256.Sum256([]byte(principal))
+	sum := sha256.Sum256([]byte(tenant))
 	return hex.EncodeToString(sum[:]) + ":" + key
+}
+
+func hasEmptyJobIDSegment(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || trimmed == "." || trimmed == "/" {
+		return false
+	}
+	normalized := strings.ReplaceAll(trimmed, "\\", "/")
+	prevSep := true
+	for _, r := range normalized {
+		if r == '/' || r == '.' {
+			if prevSep {
+				return true
+			}
+			prevSep = true
+			continue
+		}
+		prevSep = false
+	}
+	return prevSep
+}
+
+func invalidJobIDSegmentProblem(input string) response.Problem {
+	prob := response.New(http.StatusBadRequest, "invalid job_id",
+		response.WithType(response.ProblemTypeJobIDInvalidSegment),
+		response.WithExtension("code", response.ProblemCodeJobIDInvalidSegment),
+		response.WithDetail("job_id contains empty segments"),
+		response.WithExtension("path", input),
+		response.WithExtension("reason", "empty segment"),
+	)
+	return scrubProblemResponse(&prob, nil, nil, nil, nil)
+}
+
+func normalizeJobRefInput(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "/" || trimmed == "." {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "/") || strings.HasSuffix(trimmed, "/") {
+		return trimmed
+	}
+	return indexer.DotJobIDToSlash(trimmed)
 }
 
 var detectContainerRuntime = container.DetectRuntime
@@ -200,13 +245,21 @@ func (h *RunsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
-	req, rawBody, err := decodeRunRequest(r.Body)
+	req, rawBody, jobIDPresent, err := decodeRunRequest(r.Body)
 	if err != nil {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid request body", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
-	if req.JobID == "" {
+	if !jobIDPresent {
 		response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
+		return
+	}
+	if strings.TrimSpace(req.JobID) == "" && req.JobID != "" {
+		response.Write(w, response.New(http.StatusBadRequest, "job_id is required"))
+		return
+	}
+	if hasEmptyJobIDSegment(req.JobID) {
+		response.Write(w, invalidJobIDSegmentProblem(req.JobID))
 		return
 	}
 
@@ -237,7 +290,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	logger := requestctx.Logger(ctx)
-	principal, _ := requestctx.Principal(ctx)
+	resolvedTenant, prob := resolveTenant(ctx, req.Tenant)
+	if prob != nil {
+		response.Write(w, *prob)
+		return
+	}
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
 		response.Write(w, response.New(http.StatusBadRequest, "Idempotency-Key header required"))
@@ -247,7 +304,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		response.Write(w, response.New(http.StatusBadRequest, "invalid Idempotency-Key header"))
 		return
 	}
-	scopedKey := scopedIdempotencyKey(principal, idemKey)
+	scopedKey := scopedIdempotencyKey(resolvedTenant, idemKey)
 	endpoint := r.Method + " " + r.URL.Path
 	now := h.now()
 	reserved := false
@@ -334,6 +391,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		runRoot = "scripts"
 	}
 
+	var runSource *sourcestore.Source
 	if req.Source != nil && req.Source.Name != "" {
 		if h.sources != nil {
 			src, ok := h.sources.Get(req.Source.Name)
@@ -346,28 +404,48 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			runRoot = src.LocalPath
+			runSource = &src
 		}
 	}
 
-	result, err := h.discover(runRoot)
+	result, err := h.discoverWithMountPath(runRoot, runSource)
 	if err != nil {
+		if prob, ok := discoveryProblem(err); ok {
+			response.Write(w, *prob)
+			return
+		}
 		response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
+		return
+	}
+	if canonicalID, contenders, ok := findJobIDCollision(buildCollisionCandidates(result.Jobs, runRoot, runSource)); ok {
+		response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
 		return
 	}
 
 	jobMap := make(map[string]indexer.JobInfo, len(result.Jobs))
 	mergeJobInfo(jobMap, result)
+	originByID := make(map[string]jobOrigin, len(result.Jobs))
+	mergeJobOrigins(originByID, result.Jobs, runSource)
 	lookup := newAliasLookup()
 	lookup.merge(result)
 
-	requestedID := req.JobID
-	effectiveID := req.JobID
+	rawRequestedID := req.JobID
+	requestedID := strings.TrimSpace(req.JobID)
+	normalizedID := normalizeJobRefInput(requestedID)
+	effectiveID := normalizedID
 	var aliasUsed *indexer.AliasInfo
 
 	var scriptDir string
+	var runOrigin jobOrigin
+	originSet := false
 	setScriptDir := func(id string) bool {
 		if job, ok := jobMap[strings.ToLower(id)]; ok {
-			scriptDir = filepath.Dir(job.Path)
+			scriptDir = job.Path
+			effectiveID = job.ID
+			if origin, ok := originByID[strings.ToLower(job.ID)]; ok {
+				runOrigin = origin
+				originSet = true
+			}
 			return true
 		}
 		return false
@@ -400,17 +478,29 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	if scriptDir == "" {
 		if req.Source != nil && req.Source.Name != "" && runRoot != h.root {
-			if alt, err := h.discover(h.root); err == nil {
-				mergeJobInfo(jobMap, alt)
-				lookup.merge(alt)
-				if aliasUsed == nil {
-					if resolveAlias() {
-						return
-					}
+			alt, err := h.discover(h.root)
+			if err != nil {
+				if prob, ok := discoveryProblem(err); ok {
+					response.Write(w, *prob)
+					return
 				}
-				if scriptDir == "" {
-					setScriptDir(effectiveID)
+				response.Write(w, response.New(http.StatusInternalServerError, "job discovery failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
+				return
+			}
+			if canonicalID, contenders, ok := findJobIDCollision(buildCollisionCandidates(alt.Jobs, h.root, nil)); ok {
+				response.Write(w, jobIDCollisionProblem(canonicalID, contenders))
+				return
+			}
+			mergeJobInfo(jobMap, alt)
+			mergeJobOrigins(originByID, alt.Jobs, nil)
+			lookup.merge(alt)
+			if aliasUsed == nil {
+				if resolveAlias() {
+					return
 				}
+			}
+			if scriptDir == "" {
+				setScriptDir(effectiveID)
 			}
 		}
 	}
@@ -427,6 +517,14 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Write(w, response.New(http.StatusNotFound, "job not found", response.WithDetail(scrubProblemDetail(requestedID, nil, nil, nil, nil))))
 		return
+	}
+
+	if !originSet {
+		if runSource != nil {
+			runOrigin = jobOrigin{SourceKind: mapSourceKind(runSource.Type), SourceName: runSource.Name}
+		} else {
+			runOrigin = defaultJobOrigin()
+		}
 	}
 
 	absScriptDir, err := filepath.Abs(scriptDir)
@@ -449,6 +547,10 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.loadConfig(absScriptDir)
 	if err != nil {
+		if prob, ok := discoveryProblem(err); ok {
+			response.Write(w, *prob)
+			return
+		}
 		response.Write(w, response.New(http.StatusInternalServerError, "load config failed", response.WithDetail(scrubProblemDetail(err.Error(), nil, nil, nil, nil))))
 		return
 	}
@@ -534,8 +636,9 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if provenance == nil {
 		provenance = map[string]any{}
 	}
+	provenance = setRunIdentityInProvenance(provenance, resolvedTenant, runOrigin)
 	provenance["canonical_id"] = effectiveID
-	canonicalPath := strings.ReplaceAll(effectiveID, ".", "/")
+	canonicalPath := indexer.DotJobIDToSlash(effectiveID)
 	if aliasUsed != nil {
 		canonicalPath = aliasUsed.TargetPath
 		aliasMeta := map[string]any{
@@ -548,7 +651,7 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 			aliasMeta["description"] = aliasUsed.Description
 		}
 		provenance["alias"] = aliasMeta
-		provenance["invoked_path"] = requestedID
+		provenance["invoked_path"] = rawRequestedID
 	}
 	provenance["canonical_path"] = canonicalPath
 
@@ -660,6 +763,8 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := newRunPayload(runID, effectiveID, defaultRunStatus, now)
+	resp.Tenant = resolvedTenant
+	resp.Origin = runOrigin
 	resp.Executor = executorMode
 	resp.SecurityProfile = effProfile
 	resp.RequestID = requestIDFromContext(ctx)
@@ -758,6 +863,11 @@ func (h *RunsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		attrs := []any{
 			slog.String("run_id", runID),
 			slog.String("job_id", effectiveID),
+			slog.String("tenant", resolvedTenant),
+			slog.Group("origin",
+				slog.String("source_kind", runOrigin.SourceKind),
+				slog.String("source_name", runOrigin.SourceName),
+			),
 			slog.String("status", resp.Status),
 			slog.String("executor", executorMode),
 			slog.String("security_profile", effProfile),
@@ -807,6 +917,17 @@ func (h *RunsHandler) ociRunUnsupported(jobID string) *response.Problem {
 		}
 	}
 	return nil
+}
+
+func (h *RunsHandler) discoverWithMountPath(root string, src *sourcestore.Source) (indexer.Result, error) {
+	if src == nil {
+		return h.discover(root)
+	}
+	mountPath := sourceLogicalMountPath(*src)
+	if strings.TrimSpace(mountPath) == "" || mountPath == "." {
+		return h.discover(root)
+	}
+	return indexer.DiscoverWithMountPath(root, mountPath)
 }
 
 func resolveEffectiveProfile(requested, cfgProfile string) (string, error) {
@@ -867,6 +988,7 @@ func (h *RunsHandler) resolveProvenance(jobID string, src *RunSourceRef, scriptD
 
 type runRequest struct {
 	JobID                    string         `json:"job_id"`
+	Tenant                   string         `json:"tenant,omitempty"`
 	Args                     map[string]any `json:"args"`
 	RequestedSecurityProfile string         `json:"requested_security_profile"`
 	Source                   *RunSourceRef  `json:"source"`
@@ -877,22 +999,27 @@ type RunSourceRef struct {
 	Name string `json:"name"`
 }
 
-func decodeRunRequest(body io.ReadCloser) (runRequest, []byte, error) {
+func decodeRunRequest(body io.ReadCloser) (runRequest, []byte, bool, error) {
 	defer body.Close()
 	var req runRequest
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return req, nil, err
+		return req, nil, false, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		return req, data, err
+		return req, data, false, err
 	}
 	if req.Args == nil {
 		req.Args = map[string]any{}
 	}
-	return req, data, nil
+	jobIDPresent := false
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err == nil {
+		_, jobIDPresent = raw["job_id"]
+	}
+	return req, data, jobIDPresent, nil
 }
 
 func (h *RunsHandler) handleList(w http.ResponseWriter, r *http.Request) {
@@ -1170,7 +1297,7 @@ func publishPolicyDecisions(sink EventSink, payload *RunPayload, decisions []pol
 		if err != nil {
 			bytes = []byte("{}")
 		}
-		sink.Publish(payload.ID, sse.Event{Event: "policy.decision", Data: string(bytes)})
+		sink.Publish(payload.ID, sse.Event{Event: "policy.decision", Data: string(bytes), Tenant: payload.Tenant})
 		if dec.Decision == "denied" {
 			publishPolicyDenied(sink, payload, dec.Subject, dec.Code, dec.Reason)
 		}
@@ -1200,7 +1327,7 @@ func publishPolicyDenied(sink EventSink, payload *RunPayload, subject, code, rea
 	if err != nil {
 		bytes = []byte("{}")
 	}
-	sink.Publish(payload.ID, sse.Event{Event: "policy.denied", Data: string(bytes)})
+	sink.Publish(payload.ID, sse.Event{Event: "policy.denied", Data: string(bytes), Tenant: payload.Tenant})
 }
 
 func policyEventBase(payload *RunPayload) map[string]any {
@@ -1211,6 +1338,12 @@ func policyEventBase(payload *RunPayload) map[string]any {
 		"executor":         payload.Executor,
 		"runtime":          payload.Runtime,
 		"timestamp":        time.Now().UTC(),
+	}
+	if payload.Tenant != "" {
+		base["tenant"] = payload.Tenant
+	}
+	if payload.Origin.SourceKind != "" || payload.Origin.SourceName != "" {
+		base["origin"] = payload.Origin
 	}
 	if payload.Provenance != nil {
 		base["provenance"] = payload.Provenance
@@ -1422,12 +1555,28 @@ func (h *RunsHandler) failRun(runID string, status string, err error) {
 	h.updateRunStatus(runID, status, &stamp)
 	if h.events != nil {
 		payload := map[string]any{"status": status}
+		var tenant string
+		var origin jobOrigin
+		if run, ok := h.store.Get(runID); ok {
+			view := payloadFromStore(run)
+			payload["run_id"] = view.ID
+			payload["job_id"] = view.JobID
+			tenant = view.Tenant
+			origin = view.Origin
+		}
 		if err != nil {
 			payload["error"] = err.Error()
 		}
+		if tenant != "" {
+			payload["tenant"] = tenant
+		}
+		if origin.SourceKind != "" || origin.SourceName != "" {
+			payload["origin"] = origin
+		}
 		h.events.Publish(runID, sse.Event{
-			Event: "run.finished",
-			Data:  encodeData(payload),
+			Event:  "run.finished",
+			Data:   encodeData(payload),
+			Tenant: tenant,
 		})
 	}
 }
@@ -1436,26 +1585,33 @@ func (h *RunsHandler) publishRunCanceled(run runstore.Run, finished time.Time, r
 	if h.events == nil {
 		return
 	}
+	view := payloadFromStore(run)
 	payload := map[string]any{
-		"run_id":    run.ID,
-		"job_id":    run.JobID,
+		"run_id":    view.ID,
+		"job_id":    view.JobID,
 		"status":    "canceled",
 		"timestamp": finished,
 	}
 	if reason != "" {
 		payload["reason"] = reason
 	}
-	if run.Provenance != nil {
-		payload["provenance"] = run.Provenance
+	if view.Provenance != nil {
+		payload["provenance"] = view.Provenance
 	}
-	if run.Runtime != "" {
-		payload["runtime"] = run.Runtime
+	if view.Runtime != "" {
+		payload["runtime"] = view.Runtime
+	}
+	if view.Tenant != "" {
+		payload["tenant"] = view.Tenant
+	}
+	if view.Origin.SourceKind != "" || view.Origin.SourceName != "" {
+		payload["origin"] = view.Origin
 	}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		bytes = []byte("{}")
 	}
-	h.events.Publish(run.ID, sse.Event{Event: "run.canceled", Data: string(bytes)})
+	h.events.Publish(run.ID, sse.Event{Event: "run.canceled", Data: string(bytes), Tenant: view.Tenant})
 }
 
 func isTerminalStatus(status string) bool {
