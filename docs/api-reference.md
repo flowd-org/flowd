@@ -53,10 +53,10 @@ Job IDs are always returned as canonical slash IDs. When a job is defined at the
       "source_name": "local"
     },
     "description": "Daily backup job",
-  "source": {
-    "name": "local-fs",
-    "type": "local"
-  }
+    "source": {
+      "name": "local-fs",
+      "type": "local"
+    }
   }
 ]
 ```
