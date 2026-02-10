@@ -139,11 +139,12 @@ func NewJobsHandler(cfg JobsConfig) http.Handler {
 				}
 			}
 			if target.source != nil && strings.EqualFold(target.source.Type, "oci") {
-				ociViews, ociErrors := discoverOCIJobs(*target.source, resolvedTenant, origin)
+				ociViews, ociCandidates, ociErrors := discoverOCIJobs(*target.source, resolvedTenant, origin)
 				allViews = append(allViews, ociViews...)
 				for _, view := range ociViews {
 					allJobs = append(allJobs, indexer.JobInfo{ID: view.ID, Name: view.Name})
 				}
+				collisionCandidates = append(collisionCandidates, ociCandidates...)
 				errorCnt += len(ociErrors)
 				continue
 			}
@@ -388,18 +389,19 @@ func sourceLogicalMountPath(src sourcestore.Source) string {
 	return name
 }
 
-func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([]jobView, []indexer.DiscoveryError) {
+func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([]jobView, []jobCollisionContender, []indexer.DiscoveryError) {
 	manifest, err := loadAddonManifestFromSource(src)
 	if err != nil {
-		return nil, []indexer.DiscoveryError{{
+		return nil, nil, []indexer.DiscoveryError{{
 			Path: fmt.Sprintf("oci://%s", src.Name),
 			Err:  err.Error(),
 		}}
 	}
 	if manifest == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	var views []jobView
+	views := make([]jobView, 0, len(manifest.Jobs))
+	candidates := make([]jobCollisionContender, 0, len(manifest.Jobs))
 	for _, job := range manifest.Jobs {
 		if strings.TrimSpace(job.ID) == "" {
 			continue
@@ -421,8 +423,9 @@ func discoverOCIJobs(src sourcestore.Source, tenant string, origin jobOrigin) ([
 			},
 		}
 		views = append(views, view)
+		candidates = append(candidates, buildOCIJobCollisionContender(src, id, job.ID))
 	}
-	return views, nil
+	return views, candidates, nil
 }
 
 func defaultJobOrigin() jobOrigin {

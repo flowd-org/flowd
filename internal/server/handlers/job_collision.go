@@ -66,6 +66,27 @@ func buildJobCollisionContender(job indexer.JobInfo, root string, src *sourcesto
 	}
 }
 
+func buildOCIJobCollisionContender(src sourcestore.Source, canonicalID, jobID string) jobCollisionContender {
+	jobDir := filepath.ToSlash(strings.TrimSpace(jobID))
+	if jobDir == "" {
+		jobDir = "."
+	}
+	origin := jobCollisionOrigin{
+		SourceKind: normalizeJobCollisionSourceKind(src.Type),
+		SourceName: src.Name,
+	}
+	mountPath := sourceMountPath(src)
+	if strings.TrimSpace(mountPath) == "" {
+		mountPath = "."
+	}
+	return jobCollisionContender{
+		CanonicalJobID: canonicalID,
+		Origin:         origin,
+		MountPath:      mountPath,
+		JobDir:         jobDir,
+	}
+}
+
 func normalizeJobCollisionSourceKind(kind string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "", "fs", "local":

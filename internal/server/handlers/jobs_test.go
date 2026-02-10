@@ -117,6 +117,104 @@ func TestJobsHandlerOCIManifestErrorCounts(t *testing.T) {
 	}
 }
 
+func TestJobsHandlerCollisionIncludesOCIJobs(t *testing.T) {
+	root := t.TempDir()
+	jobDir := filepath.Join(root, "addon", "build")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatalf("mkdir job dir: %v", err)
+	}
+	config := `version: v1
+job:
+  name: Local Build
+`
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	store := sourcestore.New()
+	tempDir := t.TempDir()
+	manifestPath := filepath.Join(tempDir, "manifest.yaml")
+	if err := os.WriteFile(manifestPath, []byte(`
+apiVersion: flwd.addon/v1
+kind: AddOn
+metadata:
+  name: Example Addon
+  id: example.addon
+  version: 1.0.0
+requires: {}
+jobs:
+  - id: build
+    name: Build Project
+    summary: Compile the project
+    argspec:
+      args: []
+`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	store.Upsert(sourcestore.Source{
+		Name:      "addon",
+		Type:      "oci",
+		LocalPath: tempDir,
+		Metadata: map[string]any{
+			"manifest_path": manifestPath,
+		},
+	})
+
+	handler := NewJobsHandler(JobsConfig{
+		Root:    root,
+		Sources: store,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	contentType := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/problem+json") {
+		t.Fatalf("expected problem+json content type, got %s", contentType)
+	}
+
+	var prob map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob["code"] != response.ProblemCodeJobIDCollision {
+		t.Fatalf("expected code %q, got %+v", response.ProblemCodeJobIDCollision, prob["code"])
+	}
+	if prob["canonical_job_id"] != "addon/build" {
+		t.Fatalf("expected canonical_job_id addon/build, got %+v", prob["canonical_job_id"])
+	}
+	contendersRaw, ok := prob["contenders"].([]any)
+	if !ok {
+		t.Fatalf("expected contenders array, got %+v", prob["contenders"])
+	}
+	if len(contendersRaw) != 2 {
+		t.Fatalf("expected 2 contenders, got %d", len(contendersRaw))
+	}
+
+	seenKinds := map[string]bool{}
+	for _, entry := range contendersRaw {
+		contender, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("expected contender map, got %+v", entry)
+		}
+		origin, ok := contender["origin"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected origin map, got %+v", contender["origin"])
+		}
+		if kind, ok := origin["source_kind"].(string); ok && kind != "" {
+			seenKinds[kind] = true
+		}
+	}
+	if !seenKinds["fs"] || !seenKinds["oci"] {
+		t.Fatalf("expected contenders for fs and oci, got %+v", seenKinds)
+	}
+}
+
 func TestJobsHandlerAliasVisibilityPolicy(t *testing.T) {
 	root := t.TempDir()
 	aliasConfig := []byte(`aliases:
