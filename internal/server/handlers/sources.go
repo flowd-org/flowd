@@ -253,7 +253,7 @@ func sanitizeSourceURL(raw string) string {
 	cleaned = stripURLQueryFragment(cleaned)
 	parsed, err := url.Parse(cleaned)
 	if err != nil {
-		return cleaned
+		return scrubUserInfoFallback(cleaned)
 	}
 	if parsed.User != nil {
 		parsed.User = nil
@@ -261,6 +261,35 @@ func sanitizeSourceURL(raw string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+func scrubUserInfoFallback(value string) string {
+	if value == "" {
+		return value
+	}
+	if idx := strings.Index(value, "://"); idx >= 0 {
+		prefix := value[:idx+3]
+		rest := value[idx+3:]
+		return prefix + scrubUserInfoAuthority(rest)
+	}
+	return scrubUserInfoAuthority(value)
+}
+
+func scrubUserInfoAuthority(value string) string {
+	if value == "" {
+		return value
+	}
+	authorityEnd := strings.IndexAny(value, "/?#")
+	if authorityEnd < 0 {
+		authorityEnd = len(value)
+	}
+	authority := value[:authorityEnd]
+	lastAt := strings.LastIndex(authority, "@")
+	if lastAt < 0 {
+		return value
+	}
+	scrubbed := authority[lastAt+1:]
+	return scrubbed + value[authorityEnd:]
 }
 
 func stripURLQueryFragment(value string) string {

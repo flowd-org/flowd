@@ -252,6 +252,18 @@ func TestSourcesHandlerListCoreViewAndRedaction(t *testing.T) {
 	}
 }
 
+func TestSanitizeSourceURLMalformed(t *testing.T) {
+	secret := "supersecret"
+	input := "https://user:" + secret + "@example.com/repo.git%"
+	output := sanitizeSourceURL(input)
+	if strings.Contains(output, secret) {
+		t.Fatalf("expected sanitized url to remove credentials, got %q", output)
+	}
+	if strings.Contains(output, "@") {
+		t.Fatalf("expected sanitized url to remove userinfo delimiter, got %q", output)
+	}
+}
+
 func sourceByID(list []map[string]any, id string) (map[string]any, bool) {
 	for _, item := range list {
 		if value, ok := item["id"].(string); ok && value == id {
