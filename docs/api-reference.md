@@ -23,7 +23,102 @@ http://localhost:8080/api/v1
 
 Authentication and authorization are handled via the Security Profiles system. See the [Configuration]({{< ref "configuration" >}}) documentation for details on setting up API access.
 
+The following probe endpoints are intentionally public (no bearer token required):
+
+- `GET /healthz`
+- `GET /startupz`
+- `GET /readyz`
+
+All other endpoints in this document require authentication with the appropriate scopes.
+
 ## Endpoints
+
+### Operational probes and introspection
+
+#### Startup probe
+
+```http
+GET /startupz
+```
+
+Readiness for process startup completion.
+
+- `204 No Content`: startup sequence complete.
+- `503 Service Unavailable`: startup is incomplete.
+  - Problem `type`: `https://flowd.org/problems/startup-incomplete`
+
+#### Readiness probe
+
+```http
+GET /readyz
+```
+
+Readiness for serving traffic.
+
+- `204 No Content`: Core DB and storage checks are healthy.
+- `503 Service Unavailable`: server is not ready.
+  - Problem `type`: `https://flowd.org/problems/not-ready`
+  - Includes a `checks` extension with per-subsystem status.
+
+#### Runtime limits
+
+```http
+GET /limits
+```
+
+Returns runtime scheduling limits and queue defaults.
+
+- Auth required.
+- Required scope: `jobs:read`
+
+Example response:
+
+```json
+{
+  "algorithm": "wfq",
+  "concurrency": 8,
+  "queue_max_depth": 1024,
+  "backpressure_mode": "reject_when_full",
+  "queue_stats": {
+    "len": 0,
+    "enqueued": 0,
+    "dequeued": 0,
+    "dropped": 0
+  },
+  "updated_at": "2026-02-11T10:00:00Z"
+}
+```
+
+#### Server capabilities
+
+```http
+GET /capabilities
+```
+
+Returns core identity/version plus compiled and enabled extension metadata.
+
+- Auth required.
+- Required scope: `jobs:read`
+
+Example response:
+
+```json
+{
+  "core": {
+    "version": "1.0.0",
+    "spec_version": "1.0.1",
+    "app_id": "org.flowd.runner"
+  },
+  "extensions": [
+    {
+      "name": "export",
+      "version": "1.0.0",
+      "compiled": true,
+      "enabled": false
+    }
+  ]
+}
+```
 
 ### Jobs
 

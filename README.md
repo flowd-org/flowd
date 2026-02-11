@@ -95,9 +95,11 @@ flwd :serve --bind 127.0.0.1:8080 --profile secure --dev
 
 Serve mode exposes REST endpoints and SSE streams that mirror the CLI functionality:
 
+- `GET /healthz`, `GET /startupz`, `GET /readyz` (public probes)
 - `GET /jobs`
 - `POST /plans`
 - `POST /runs`, `GET /runs`, `GET /runs/{id}`
+- `GET /limits`, `GET /capabilities` (requires `jobs:read`)
 - `GET /runs/{id}/events` (SSE)
 - `GET /sources`, `POST /sources`, `GET /sources/{name}`
 - `GET /metrics` (Prometheus text exposition)
@@ -270,5 +272,4 @@ Policy overrides (e.g., `rootfs_writable`, `network`) granted for permissive/dis
 - **`source.trust.required`** — OCI sources must opt in; add `trusted=true` (API) or `--trusted` (CLI).
 - **`E_ADDON_MANIFEST`** — manifest missing/invalid; see problem detail for fields to fix.
 - **`E_OCI`** — runtime pull/extract failure; inspect podman/docker logs and verify registry access.
-
 
