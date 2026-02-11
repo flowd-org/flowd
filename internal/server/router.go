@@ -198,6 +198,7 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	runEvents := handlers.NewRunEventsHandler(runStore, hub, journal)
 	runEventsExport := handlers.NewRunEventsExportHandler(runStore, journal, cfg.ExtensionEnabled("export"))
 	startupHealth := handlers.NewStartupzHandler()
+	readyHealth := handlers.NewReadyzHandler(cfg.CoreDB)
 	storageHealth := handlers.NewStorageHealthHandler(cfg.CoreDB)
 	runHandler := handlers.NewRunsHandler(handlers.RunsConfig{
 		Root:          cfg.ScriptsRoot,
@@ -226,6 +227,7 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 		Runtime:  cfg.ContainerRuntime,
 	}))
 	mux.Handle("/startupz", startupHealth)
+	mux.Handle("/readyz", readyHealth)
 	mux.Handle("/runs", runHandler)
 	mux.Handle("/runs/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ":cancel") {
