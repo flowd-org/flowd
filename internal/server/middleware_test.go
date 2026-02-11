@@ -141,6 +141,64 @@ func TestAuthMiddlewareTenantClaimAbsent(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareAllowsPublicProbeEndpointsWithoutToken(t *testing.T) {
+	mw := authMiddleware(Config{})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "healthz", path: "/healthz"},
+		{name: "startupz", path: "/startupz"},
+		{name: "readyz", path: "/readyz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+			if resp.Code != http.StatusNoContent {
+				t.Fatalf("expected 204 for %s without token, got %d", tt.path, resp.Code)
+			}
+		})
+	}
+}
+
+func TestAuthMiddlewareProtectsHealthStorageAndIntrospectionEndpoints(t *testing.T) {
+	mw := authMiddleware(Config{})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "health storage", path: "/health/storage"},
+		{name: "limits", path: "/limits"},
+		{name: "capabilities", path: "/capabilities"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401 for %s without token, got %d", tt.path, resp.Code)
+			}
+			if challenge := resp.Header().Get("WWW-Authenticate"); challenge == "" {
+				t.Fatalf("expected WWW-Authenticate header for %s", tt.path)
+			}
+		})
+	}
+}
+
 type nopWriter struct{}
 
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
