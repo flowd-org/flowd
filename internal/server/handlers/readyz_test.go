@@ -65,6 +65,17 @@ func TestReadyzHandlerStorageError(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected application/problem+json, got %q", ct)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if body["type"] != readyzNotReadyProblemType {
+		t.Fatalf("expected problem type %q, got %v", readyzNotReadyProblemType, body["type"])
+	}
 }
 
 func TestReadyzHandlerStorageNotHealthy(t *testing.T) {
@@ -81,6 +92,17 @@ func TestReadyzHandlerStorageNotHealthy(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("expected application/problem+json, got %q", ct)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if body["type"] != readyzNotReadyProblemType {
+		t.Fatalf("expected problem type %q, got %v", readyzNotReadyProblemType, body["type"])
 	}
 }
 
