@@ -119,6 +119,9 @@ func TestMetricsEndpointExposesSeries(t *testing.T) {
 	if !strings.Contains(body, "flwd_build_info") {
 		t.Fatalf("expected flwd_build_info metric, got body: %s", body)
 	}
+	if !strings.Contains(body, `spec_version="1.0.1"`) {
+		t.Fatalf("expected flwd_build_info spec_version=1.0.1, got body: %s", body)
+	}
 	if !strings.Contains(body, "http_requests_total") {
 		t.Fatalf("expected http_requests_total metric, got body: %s", body)
 	}
