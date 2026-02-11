@@ -45,6 +45,8 @@ func RequiredScopes(method, path string) []string {
 			return []string{ScopeRuleYRead}
 		case path == "/health/storage":
 			return []string{ScopeJobsRead}
+		case path == "/limits":
+			return []string{ScopeJobsRead}
 		}
 	case http.MethodPost:
 		switch {
