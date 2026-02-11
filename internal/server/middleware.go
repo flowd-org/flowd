@@ -112,6 +112,10 @@ func corsMiddleware(cfg Config) Middleware {
 func authMiddleware(cfg Config) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isPublicProbeRequest(r.Method, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if cfg.MetricsEnabled && cfg.MetricsAllowUnauthenticated && r.Method == http.MethodGet && r.URL.Path == "/metrics" {
 				next.ServeHTTP(w, r)
 				return
@@ -142,6 +146,18 @@ func authMiddleware(cfg Config) Middleware {
 	}
 }
 
+func isPublicProbeRequest(method, path string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	switch path {
+	case "/healthz", "/startupz", "/readyz":
+		return true
+	default:
+		return false
+	}
+}
+
 func metricsMiddleware(cfg Config) Middleware {
 	if !cfg.MetricsEnabled {
 		return func(next http.Handler) http.Handler { return next }
@@ -167,8 +183,16 @@ func templateRoute(path string) string {
 		return "/metrics"
 	case path == "/healthz":
 		return "/healthz"
+	case path == "/startupz":
+		return "/startupz"
+	case path == "/readyz":
+		return "/readyz"
 	case path == "/health/storage":
 		return "/health/storage"
+	case path == "/limits":
+		return "/limits"
+	case path == "/capabilities":
+		return "/capabilities"
 	case path == "/plans":
 		return "/plans"
 	case path == "/runs":
