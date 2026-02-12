@@ -53,6 +53,9 @@ func loggingMiddleware(cfg Config) Middleware {
 				ctx = requestctx.WithRequestID(ctx, requestID)
 			}
 			next.ServeHTTP(recorder, r.WithContext(ctx))
+			if isPublicProbeRequest(r.Method, r.URL.Path) && recorder.status == http.StatusNoContent {
+				return
+			}
 			effective, ok := requestctx.EffectiveProfile(ctx)
 			if !ok || effective == "" {
 				effective = cfg.Profile
