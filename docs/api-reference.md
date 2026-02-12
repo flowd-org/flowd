@@ -13,10 +13,21 @@ flwd exposes a REST API for programmatic access to jobs, runs, artifacts, and sy
 
 ## Base URL
 
-When running in serve mode, the API is available at:
+This document covers two classes of endpoints:
+
+- API endpoints (most of this reference) live under the versioned API prefix.
+- Operational endpoints (probes, metrics, SSE) are rooted at the server base URL (no `/api/v1` prefix).
+
+When running in serve mode, the versioned API base URL is:
 
 ```
 http://localhost:8080/api/v1
+```
+
+Operational base URL:
+
+```
+http://localhost:8080
 ```
 
 ## Authentication
@@ -36,6 +47,8 @@ All other endpoints in this document require authentication with the appropriate
 ## Endpoints
 
 ### Operational probes and introspection
+
+These operational endpoints are served at the server root (they are not under `/api/v1`).
 
 #### Startup probe
 
@@ -471,6 +484,8 @@ Returns system information and configuration.
 ## Server-Sent Events (SSE)
 
 flwd supports real-time event streaming via Server-Sent Events for monitoring runs and system events.
+
+SSE endpoints are served at the server root (they are not under `/api/v1`).
 
 ### Endpoints
 
