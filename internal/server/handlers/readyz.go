@@ -13,6 +13,7 @@ import (
 const (
 	readyzNotReadyProblemType = "https://flowd.org/problems/not-ready"
 	readyzPingTimeout         = 2 * time.Second
+	readyzStorageTimeout      = 2 * time.Second
 )
 
 type coreDBReadyFunc func(*http.Request) error
@@ -68,7 +69,9 @@ func (h *readyzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := h.storageStats(r)
+	storageCtx, cancel := context.WithTimeout(r.Context(), readyzStorageTimeout)
+	defer cancel()
+	stats, err := h.storageStats(r.WithContext(storageCtx))
 	if err != nil {
 		response.Write(w, response.New(http.StatusServiceUnavailable, "not ready",
 			response.WithType(readyzNotReadyProblemType),

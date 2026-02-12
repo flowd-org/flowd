@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/flowd-org/flowd/internal/coredb"
 )
@@ -103,6 +104,32 @@ func TestReadyzHandlerStorageNotHealthy(t *testing.T) {
 	}
 	if body["type"] != readyzNotReadyProblemType {
 		t.Fatalf("expected problem type %q, got %v", readyzNotReadyProblemType, body["type"])
+	}
+}
+
+func TestReadyzHandlerStorageCheckHasDeadline(t *testing.T) {
+	handler := NewReadyzHandlerWithChecks(
+		func(*http.Request) error { return nil },
+		func(r *http.Request) (coredb.StorageStats, error) {
+			dl, ok := r.Context().Deadline()
+			if !ok {
+				t.Fatalf("expected storage check context to have a deadline")
+			}
+			if until := time.Until(dl); until <= 0 {
+				t.Fatalf("expected storage check deadline to be in the future")
+			} else if until > readyzStorageTimeout {
+				t.Fatalf("expected storage check deadline <= %s, got %s", readyzStorageTimeout, until)
+			}
+			return coredb.StorageStats{OK: true}, nil
+		},
+	)
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
 	}
 }
 
