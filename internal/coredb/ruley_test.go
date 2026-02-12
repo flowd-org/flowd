@@ -3,6 +3,7 @@ package coredb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -61,6 +62,13 @@ func TestRuleYStoreQuotaExceeded(t *testing.T) {
 	}
 	if _, err := store.Put(ctx, "core_triggers", "b", []byte("1234"), RuleYPutOptions{MaxBytes: 6}); !errors.Is(err, ErrRuleYQuotaExceeded) {
 		t.Fatalf("expected quota error, got %v", err)
+	}
+
+	if _, err := store.Put(ctx, "core_invocation_state", "row:a", []byte("x"), RuleYPutOptions{MaxRows: 1, MaxBytes: 1024}); err != nil {
+		t.Fatalf("row quota initial put: %v", err)
+	}
+	if _, err := store.Put(ctx, "core_invocation_state", "row:b", []byte("x"), RuleYPutOptions{MaxRows: 1, MaxBytes: 1024}); !errors.Is(err, ErrRuleYQuotaExceeded) {
+		t.Fatalf("expected row quota error, got %v", err)
 	}
 }
 
@@ -137,6 +145,68 @@ func TestRuleYStoreValidationAndCAS(t *testing.T) {
 	}
 	if _, err := store.CAS(ctx, "core_triggers", "cas:key", v1, []byte("stale"), RuleYPutOptions{}); !errors.Is(err, ErrRuleYCASMismatch) {
 		t.Fatalf("expected cas mismatch, got %v", err)
+	}
+}
+
+func TestRuleYStoreTTLInvisibleOnReadAndScan(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	if _, err := store.Put(ctx, "core_triggers", "ttl:key", []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
+		t.Fatalf("put with ttl: %v", err)
+	}
+
+	if _, ok, err := store.Get(ctx, "core_triggers", "ttl:key"); err != nil {
+		t.Fatalf("get before expiry: %v", err)
+	} else if !ok {
+		t.Fatalf("expected key before expiry")
+	}
+
+	now = now.Add(2 * time.Second)
+
+	if _, ok, err := store.Get(ctx, "core_triggers", "ttl:key"); err != nil {
+		t.Fatalf("get after expiry: %v", err)
+	} else if ok {
+		t.Fatalf("expected key to be invisible after expiry")
+	}
+
+	items, _, err := store.Scan(ctx, "core_triggers", "ttl:", "", 10)
+	if err != nil {
+		t.Fatalf("scan after expiry: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected expired key excluded from scan, got %d items", len(items))
+	}
+}
+
+func TestRuleYStoreScanLimitIsCappedAt1000(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+
+	for i := 0; i < 1005; i++ {
+		key := fmt.Sprintf("cap:%04d", i)
+		if _, err := store.Put(ctx, "core_triggers", key, []byte("v"), RuleYPutOptions{}); err != nil {
+			t.Fatalf("put %q: %v", key, err)
+		}
+	}
+
+	items, cursor, err := store.Scan(ctx, "core_triggers", "cap:", "", 5000)
+	if err != nil {
+		t.Fatalf("scan with over-limit request: %v", err)
+	}
+	if len(items) != 1000 {
+		t.Fatalf("expected 1000 items due to cap, got %d", len(items))
+	}
+	if cursor == "" {
+		t.Fatalf("expected non-empty cursor when over cap")
 	}
 }
 
