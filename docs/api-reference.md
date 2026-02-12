@@ -29,6 +29,8 @@ The following probe endpoints are intentionally public (no bearer token required
 - `GET /startupz`
 - `GET /readyz`
 
+`GET /metrics` may also be unauthenticated when the server binds to a loopback address (for other bind addresses, it requires a bearer token with the usual scopes).
+
 All other endpoints in this document require authentication with the appropriate scopes.
 
 ## Endpoints
@@ -107,7 +109,7 @@ Example response:
   "core": {
     "version": "1.0.0",
     "spec_version": "1.0.1",
-    "app_id": "org.flowd.runner"
+    "app_id": "flwd"
   },
   "extensions": [
     {
