@@ -210,6 +210,58 @@ func TestRuleYStoreScanLimitIsCappedAt1000(t *testing.T) {
 	}
 }
 
+func TestRuleYJanitorSweepDeletesExpiredRowsInBatches(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	for i := 0; i < 3; i++ {
+		if _, err := store.Put(ctx, "core_triggers", fmt.Sprintf("exp:%d", i), []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
+			t.Fatalf("put exp:%d: %v", i, err)
+		}
+	}
+
+	now = now.Add(2 * time.Second)
+	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
+		Now:   func() time.Time { return now },
+		Batch: 2,
+	})
+
+	deleted, err := janitor.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("sweep 1: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("expected first sweep to delete 2 rows, got %d", deleted)
+	}
+
+	remaining, err := countNamespaceRows(ctx, db, "core_triggers")
+	if err != nil {
+		t.Fatalf("count after first sweep: %v", err)
+	}
+	if remaining != 1 {
+		t.Fatalf("expected 1 remaining row, got %d", remaining)
+	}
+
+	deleted, err = janitor.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("sweep 2: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected second sweep to delete 1 row, got %d", deleted)
+	}
+}
+
+func countNamespaceRows(ctx context.Context, db *DB, namespace string) (int64, error) {
+	var count int64
+	err := db.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM kv WHERE ns = ?`, namespace).Scan(&count)
+	return count, err
+}
+
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 	dir := t.TempDir()

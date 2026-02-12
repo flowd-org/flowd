@@ -38,6 +38,13 @@ func Run(ctx context.Context, cfg Config) error {
 	norm.CoreDB = db
 
 	logger := newLogger(norm)
+	janitorCtx, janitorCancel := context.WithCancel(ctx)
+	defer janitorCancel()
+	janitor := coredb.NewRuleYJanitor(db, coredb.RuleYJanitorOptions{})
+	janitorErrCh := make(chan error, 1)
+	go func() {
+		janitorErrCh <- janitor.Run(janitorCtx)
+	}()
 	runtimeDetector := norm.RuntimeDetector
 	if runtimeDetector == nil {
 		runtimeDetector = func() (container.Runtime, error) {
@@ -80,6 +87,10 @@ func Run(ctx context.Context, cfg Config) error {
 
 	select {
 	case <-ctx.Done():
+		janitorCancel()
+		if err := <-janitorErrCh; err != nil && !errors.Is(err, coredb.ErrRuleYUnavailable) {
+			return err
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -90,6 +101,10 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		return ctx.Err()
 	case err := <-errCh:
+		janitorCancel()
+		if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+			return janitorErr
+		}
 		if err == nil || errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
