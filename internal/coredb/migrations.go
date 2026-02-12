@@ -43,6 +43,28 @@ var baseMigrations = [...]string{
 		ts INTEGER NOT NULL
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_core_journal_run_ts ON core_run_journal(run_id, ts);`,
+	`CREATE TABLE IF NOT EXISTS kv (
+		ns TEXT NOT NULL,
+		k TEXT NOT NULL,
+		v BLOB NOT NULL,
+		content_type TEXT NOT NULL,
+		version INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		expires_at INTEGER,
+		PRIMARY KEY (ns, k)
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_kv_expires_at ON kv(expires_at);`,
+	`CREATE TABLE IF NOT EXISTS core_artifacts (
+		artifact_id TEXT PRIMARY KEY,
+		tenant TEXT NOT NULL,
+		job_id TEXT NOT NULL,
+		run_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		content_type TEXT,
+		size_bytes INTEGER NOT NULL,
+		created_at INTEGER NOT NULL
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_core_artifacts_tenant_job_run ON core_artifacts(tenant, job_id, run_id);`,
 }
 
 func applyMigrations(ctx context.Context, conn *sql.DB) error {
