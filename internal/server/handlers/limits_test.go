@@ -22,9 +22,6 @@ func TestLimitsHandlerMethodNotAllowed(t *testing.T) {
 }
 
 func TestLimitsHandlerResponseDefaultsAndShape(t *testing.T) {
-	prev := runtime.GOMAXPROCS(1)
-	defer runtime.GOMAXPROCS(prev)
-
 	handler := NewLimitsHandler()
 	req := httptest.NewRequest(http.MethodGet, "/limits", nil)
 	rec := httptest.NewRecorder()
@@ -49,8 +46,9 @@ func TestLimitsHandlerResponseDefaultsAndShape(t *testing.T) {
 	if got := body["algorithm"]; got != limitsAlgorithmDefault {
 		t.Fatalf("expected algorithm %q, got %v", limitsAlgorithmDefault, got)
 	}
-	if got := int(body["concurrency"].(float64)); got != 4 {
-		t.Fatalf("expected concurrency 4 for GOMAXPROCS=1, got %d", got)
+	expectedConcurrency := defaultConcurrency(runtime.GOMAXPROCS(0))
+	if got := int(body["concurrency"].(float64)); got != expectedConcurrency {
+		t.Fatalf("expected concurrency %d for current GOMAXPROCS, got %d", expectedConcurrency, got)
 	}
 	if got := int(body["queue_max_depth"].(float64)); got != limitsQueueMaxDepthDefault {
 		t.Fatalf("expected queue_max_depth %d, got %d", limitsQueueMaxDepthDefault, got)
