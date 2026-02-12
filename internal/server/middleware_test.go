@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flowd-org/flowd/internal/server/requestctx"
@@ -138,6 +140,111 @@ func TestAuthMiddlewareTenantClaimAbsent(t *testing.T) {
 	}
 	if !gotPrincipalOK {
 		t.Fatalf("expected principal to be present")
+	}
+}
+
+func TestAuthMiddlewareAllowsPublicProbeEndpointsWithoutToken(t *testing.T) {
+	mw := authMiddleware(Config{})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "healthz", path: "/healthz"},
+		{name: "startupz", path: "/startupz"},
+		{name: "readyz", path: "/readyz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+			if resp.Code != http.StatusNoContent {
+				t.Fatalf("expected 204 for %s without token, got %d", tt.path, resp.Code)
+			}
+		})
+	}
+}
+
+func TestAuthMiddlewareProtectsHealthStorageAndIntrospectionEndpoints(t *testing.T) {
+	mw := authMiddleware(Config{})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "health storage", path: "/health/storage"},
+		{name: "limits", path: "/limits"},
+		{name: "capabilities", path: "/capabilities"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401 for %s without token, got %d", tt.path, resp.Code)
+			}
+			if challenge := resp.Header().Get("WWW-Authenticate"); challenge == "" {
+				t.Fatalf("expected WWW-Authenticate header for %s", tt.path)
+			}
+		})
+	}
+}
+
+func TestLoggingMiddlewareSuppressesSuccessfulPublicProbeLogs(t *testing.T) {
+	var out bytes.Buffer
+	mw := loggingMiddleware(Config{Log: "text", Profile: "secure", StdOut: &out})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	paths := []string{"/healthz", "/startupz", "/readyz"}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			out.Reset()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+			if resp.Code != http.StatusNoContent {
+				t.Fatalf("expected 204 for %s, got %d", path, resp.Code)
+			}
+			if got := out.String(); got != "" {
+				t.Fatalf("expected no log output for successful probe %s, got %q", path, got)
+			}
+		})
+	}
+}
+
+func TestLoggingMiddlewareKeepsProbeFailureLogs(t *testing.T) {
+	var out bytes.Buffer
+	mw := loggingMiddleware(Config{Log: "text", Profile: "secure", StdOut: &out})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.Code)
+	}
+	logOutput := out.String()
+	if !strings.Contains(logOutput, "msg=request") {
+		t.Fatalf("expected request log line, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "path=/readyz") {
+		t.Fatalf("expected probe path in log output, got %q", logOutput)
 	}
 }
 

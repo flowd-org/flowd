@@ -92,6 +92,38 @@ The legacy `/events` path is an alias of `/events/stream`.
 Events are sent as SSE and can be parsed by dashboards, CLIs or monitoring tools.
 See the API reference for the SSE envelope (`event: flowd`, `retry: 3000`), resume behavior, and stale-cursor semantics.
 
+## Health probes and introspection endpoints
+
+Serve mode also exposes lightweight operational endpoints for startup/readiness probing and runtime introspection.
+
+Public probes (no bearer token required):
+
+- `GET /healthz`
+- `GET /startupz`
+- `GET /readyz`
+
+Protected introspection endpoints (bearer token required, scope `jobs:read`):
+
+- `GET /limits`
+- `GET /capabilities`
+
+Probe semantics:
+
+- `GET /startupz`: returns `204 No Content` when startup is complete; otherwise `503 Service Unavailable` with RFC7807 type `https://flowd.org/problems/startup-incomplete`.
+- `GET /readyz`: returns `204 No Content` when Core DB and storage checks pass; otherwise `503 Service Unavailable` with RFC7807 type `https://flowd.org/problems/not-ready` and per-check status details.
+
+Quick checks:
+
+```bash
+# Public startup/readiness probes
+$ curl -i http://127.0.0.1:8080/startupz
+$ curl -i http://127.0.0.1:8080/readyz
+
+# Protected introspection endpoints
+$ curl -s -H 'Authorization: Bearer dev-token' http://127.0.0.1:8080/limits | jq
+$ curl -s -H 'Authorization: Bearer dev-token' http://127.0.0.1:8080/capabilities | jq
+```
+
 ## Authentication and scopes
 
 Serve mode uses bearer tokens (JWTs) for authentication and simple scopes for

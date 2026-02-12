@@ -13,6 +13,7 @@ import (
 	"time"
 
 	coremetrics "github.com/flowd-org/flowd/internal/metrics"
+	"github.com/flowd-org/flowd/internal/server/buildinfo"
 )
 
 // Registry collects counters, gauges, and histograms for Prometheus exposition.
@@ -57,7 +58,7 @@ func NewRegistry() *Registry {
 		sourcesAdded:  make(map[string]uint64),
 		buildInfoLabels: map[string]string{
 			"version":      "dev",
-			"spec_version": "1.2.0",
+			"spec_version": buildinfo.CoreSpecVersion,
 		},
 		containerRuns:        newSimpleHistogram([]float64{0.5, 1, 2, 5, 10, 20, 60, 120, 300}),
 		containerPulls:       newSimpleHistogram([]float64{0.5, 1, 2, 5, 10, 20, 60, 120, 300}),

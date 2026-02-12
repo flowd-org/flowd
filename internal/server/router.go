@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -15,6 +14,7 @@ import (
 	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	policyverify "github.com/flowd-org/flowd/internal/policy/verify"
+	"github.com/flowd-org/flowd/internal/server/buildinfo"
 	"github.com/flowd-org/flowd/internal/server/handlers"
 	"github.com/flowd-org/flowd/internal/server/metrics"
 	"github.com/flowd-org/flowd/internal/server/runstore"
@@ -45,11 +45,10 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 	if norm.MetricsEnabled {
-		version := os.Getenv("FLWD_VERSION")
-		if version == "" {
-			version = "dev"
-		}
-		metrics.Default.SetBuildInfo(map[string]string{"version": version})
+		metrics.Default.SetBuildInfo(map[string]string{
+			"version":      buildinfo.Version(),
+			"spec_version": buildinfo.CoreSpecVersion,
+		})
 		metrics.Default.RecordSecurityProfileGauge(norm.Profile)
 	}
 	runtime, err := runtimeDetector()
@@ -197,7 +196,13 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	runGet := handlers.NewRunGetHandler(handlers.RunGetConfig{Store: runStore, DB: cfg.CoreDB})
 	runEvents := handlers.NewRunEventsHandler(runStore, hub, journal)
 	runEventsExport := handlers.NewRunEventsExportHandler(runStore, journal, cfg.ExtensionEnabled("export"))
+	startupHealth := handlers.NewStartupzHandler()
+	readyHealth := handlers.NewReadyzHandler(cfg.CoreDB)
 	storageHealth := handlers.NewStorageHealthHandler(cfg.CoreDB)
+	limitsHandler := handlers.NewLimitsHandler()
+	capabilitiesHandler := handlers.NewCapabilitiesHandler(map[string]bool{
+		"export": cfg.ExtensionEnabled("export"),
+	})
 	runHandler := handlers.NewRunsHandler(handlers.RunsConfig{
 		Root:          cfg.ScriptsRoot,
 		Store:         runStore,
@@ -224,6 +229,10 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 		Verifier: verifier,
 		Runtime:  cfg.ContainerRuntime,
 	}))
+	mux.Handle("/startupz", startupHealth)
+	mux.Handle("/readyz", readyHealth)
+	mux.Handle("/limits", limitsHandler)
+	mux.Handle("/capabilities", capabilitiesHandler)
 	mux.Handle("/runs", runHandler)
 	mux.Handle("/runs/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ":cancel") {
