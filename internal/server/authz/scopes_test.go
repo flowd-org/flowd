@@ -22,6 +22,7 @@ func TestRequiredScopes(t *testing.T) {
 		{method: "GET", path: "/events", want: []string{ScopeEventsRead}},
 		{method: "GET", path: "/events/stream", want: []string{ScopeEventsRead}},
 		{method: "GET", path: "/health/storage", want: []string{ScopeJobsRead}},
+		{method: "GET", path: "/limits", want: []string{ScopeJobsRead}},
 		{method: "GET", path: "/capabilities", want: []string{ScopeJobsRead}},
 	}
 
