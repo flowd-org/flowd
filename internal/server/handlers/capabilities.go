@@ -30,18 +30,22 @@ type capabilitiesResponse struct {
 }
 
 type capabilitiesHandler struct {
-	version           string
-	compiledExtension map[string]bool
+	version            string
+	compiledExtensions []string
+	enabledExtensions  map[string]bool
 }
 
 // NewCapabilitiesHandler returns an HTTP handler for GET /capabilities.
 func NewCapabilitiesHandler(extensionEnabled map[string]bool) http.Handler {
-	compiled := map[string]bool{
-		"export": extensionEnabled["export"],
+	compiledExtensions := []string{"export"}
+	enabledExtensions := make(map[string]bool, len(compiledExtensions))
+	for _, name := range compiledExtensions {
+		enabledExtensions[name] = extensionEnabled[name]
 	}
 	return &capabilitiesHandler{
-		version:           buildinfo.Version(),
-		compiledExtension: compiled,
+		version:            buildinfo.Version(),
+		compiledExtensions: compiledExtensions,
+		enabledExtensions:  enabledExtensions,
 	}
 }
 
@@ -51,10 +55,7 @@ func (h *capabilitiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	names := make([]string, 0, len(h.compiledExtension))
-	for name := range h.compiledExtension {
-		names = append(names, name)
-	}
+	names := append([]string(nil), h.compiledExtensions...)
 	sort.Strings(names)
 
 	extensions := make([]capabilitiesExtension, 0, len(names))
@@ -63,7 +64,7 @@ func (h *capabilitiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			Name:     name,
 			Version:  h.version,
 			Compiled: true,
-			Enabled:  h.compiledExtension[name],
+			Enabled:  h.enabledExtensions[name],
 		})
 	}
 
