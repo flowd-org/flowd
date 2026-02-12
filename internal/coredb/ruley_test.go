@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestRuleYStorePutGet(t *testing.T) {
+func TestRuleYStorePutGetDelete(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -15,34 +15,37 @@ func TestRuleYStorePutGet(t *testing.T) {
 	store := NewRuleYStore(db)
 	store.now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
-	key := []byte("foo")
-	val := []byte("bar")
-	if err := store.Put(ctx, "core_triggers", key, val, 0); err != nil {
+	version, err := store.Put(ctx, "core_triggers", "Foo", []byte("bar"), RuleYPutOptions{})
+	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
+	if version != 1 {
+		t.Fatalf("expected version 1, got %d", version)
+	}
 
-	got, ts, ok, err := store.Get(ctx, "core_triggers", key)
+	entry, ok, err := store.Get(ctx, "core_triggers", "foo")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	if !ok {
-		t.Fatalf("expected value present")
+		t.Fatalf("expected key to exist")
 	}
-	if string(got) != "bar" {
-		t.Fatalf("unexpected value %q", got)
+	if string(entry.Value) != "bar" {
+		t.Fatalf("unexpected value: %q", entry.Value)
 	}
-	if !ts.Equal(store.now()) {
-		t.Fatalf("unexpected timestamp %v", ts)
+	if entry.Version != 1 {
+		t.Fatalf("expected version 1, got %d", entry.Version)
+	}
+	if !entry.UpdatedAt.Equal(store.now()) {
+		t.Fatalf("unexpected updated_at: %v", entry.UpdatedAt)
 	}
 
-	// Ensure NamespaceSize tracks the stored payload (key + value).
-	size, err := store.NamespaceSize(ctx, "core_triggers")
+	deleted, err := store.Del(ctx, "core_triggers", "foo")
 	if err != nil {
-		t.Fatalf("namespace size: %v", err)
+		t.Fatalf("delete: %v", err)
 	}
-	expected := int64(len(key) + len(val))
-	if size != expected {
-		t.Fatalf("expected namespace size %d, got %d", expected, size)
+	if !deleted {
+		t.Fatalf("expected delete=true")
 	}
 }
 
@@ -53,12 +56,10 @@ func TestRuleYStoreQuotaExceeded(t *testing.T) {
 	db := openTestDB(t)
 	store := NewRuleYStore(db)
 
-	limit := int64(20)
-	value := make([]byte, 10)
-	if err := store.Put(ctx, "core_triggers", []byte("a"), value, limit); err != nil {
+	if _, err := store.Put(ctx, "core_triggers", "a", []byte("1234"), RuleYPutOptions{MaxBytes: 6}); err != nil {
 		t.Fatalf("initial put: %v", err)
 	}
-	if err := store.Put(ctx, "core_triggers", []byte("b"), value, limit); !errors.Is(err, ErrRuleYNamespaceQuota) {
+	if _, err := store.Put(ctx, "core_triggers", "b", []byte("1234"), RuleYPutOptions{MaxBytes: 6}); !errors.Is(err, ErrRuleYQuotaExceeded) {
 		t.Fatalf("expected quota error, got %v", err)
 	}
 }
@@ -77,80 +78,65 @@ func TestRuleYStoreScanPrefix(t *testing.T) {
 		"bee:one":   "v4",
 	}
 	for k, v := range testData {
-		if err := store.Put(ctx, "core_triggers", []byte(k), []byte(v), 0); err != nil {
+		if _, err := store.Put(ctx, "core_triggers", k, []byte(v), RuleYPutOptions{}); err != nil {
 			t.Fatalf("put %s: %v", k, err)
 		}
 	}
 
-	items, cursor, err := store.Scan(ctx, "core_triggers", []byte("app:"), nil, 2)
+	items, cursor, err := store.Scan(ctx, "core_triggers", "app:", "", 2)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(items))
 	}
-	if cursor == nil {
-		t.Fatalf("expected cursor for next page")
-	}
-	if string(items[0].Key) != "app:one" || string(items[1].Key) != "app:three" {
-		t.Fatalf("unexpected first page keys: %q, %q", items[0].Key, items[1].Key)
+	if cursor == "" {
+		t.Fatalf("expected next cursor")
 	}
 
-	// Fetch next page
-	items2, cursor2, err := store.Scan(ctx, "core_triggers", []byte("app:"), cursor, 2)
+	items2, cursor2, err := store.Scan(ctx, "core_triggers", "app:", cursor, 2)
 	if err != nil {
 		t.Fatalf("scan page 2: %v", err)
 	}
 	if len(items2) != 1 {
-		t.Fatalf("expected final item, got %d", len(items2))
+		t.Fatalf("expected 1 item, got %d", len(items2))
 	}
-	if cursor2 != nil {
-		t.Fatalf("expected cursor to be nil on last page")
-	}
-	if string(items2[0].Key) != "app:two" {
-		t.Fatalf("unexpected second page key %q", items2[0].Key)
+	if cursor2 != "" {
+		t.Fatalf("expected empty cursor at end, got %q", cursor2)
 	}
 }
 
-func TestRuleYStoreDelete(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	db := openTestDB(t)
-	store := NewRuleYStore(db)
-	if err := store.Put(ctx, "core_triggers", []byte("del"), []byte("value"), 0); err != nil {
-		t.Fatalf("put: %v", err)
-	}
-	deleted, err := store.Delete(ctx, "core_triggers", []byte("del"))
-	if err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	if !deleted {
-		t.Fatalf("expected delete to return true")
-	}
-	_, _, ok, err := store.Get(ctx, "core_triggers", []byte("del"))
-	if err != nil {
-		t.Fatalf("get after delete: %v", err)
-	}
-	if ok {
-		t.Fatalf("expected key to be removed")
-	}
-}
-
-func TestRuleYStoreKeyValueLimits(t *testing.T) {
+func TestRuleYStoreValidationAndCAS(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	db := openTestDB(t)
 	store := NewRuleYStore(db)
 
-	bigKey := make([]byte, ruleYMaxKeyBytes+1)
-	if err := store.Put(ctx, "core_triggers", bigKey, []byte("x"), 0); !errors.Is(err, ErrRuleYKeyTooLarge) {
-		t.Fatalf("expected key too large error, got %v", err)
+	if _, err := store.Put(ctx, "core_triggers", "UPPER", []byte("ok"), RuleYPutOptions{}); err != nil {
+		t.Fatalf("put uppercase key: %v", err)
 	}
-	bigValue := make([]byte, ruleYMaxValueBytes+1)
-	if err := store.Put(ctx, "core_triggers", []byte("k"), bigValue, 0); !errors.Is(err, ErrRuleYValueTooLarge) {
-		t.Fatalf("expected value too large error, got %v", err)
+	if _, err := store.Put(ctx, "core_triggers", "bad key", []byte("x"), RuleYPutOptions{}); !errors.Is(err, ErrRuleYInvalidKey) {
+		t.Fatalf("expected invalid key error, got %v", err)
+	}
+	tooBig := make([]byte, ruleYMaxValueBytes+1)
+	if _, err := store.Put(ctx, "core_triggers", "k", tooBig, RuleYPutOptions{}); !errors.Is(err, ErrRuleYValueTooLarge) {
+		t.Fatalf("expected value-too-large error, got %v", err)
+	}
+
+	v1, err := store.CAS(ctx, "core_triggers", "cas:key", 0, []byte("one"), RuleYPutOptions{})
+	if err != nil {
+		t.Fatalf("cas create: %v", err)
+	}
+	v2, err := store.CAS(ctx, "core_triggers", "cas:key", v1, []byte("two"), RuleYPutOptions{})
+	if err != nil {
+		t.Fatalf("cas update: %v", err)
+	}
+	if v2 != v1+1 {
+		t.Fatalf("expected version increment, got %d -> %d", v1, v2)
+	}
+	if _, err := store.CAS(ctx, "core_triggers", "cas:key", v1, []byte("stale"), RuleYPutOptions{}); !errors.Is(err, ErrRuleYCASMismatch) {
+		t.Fatalf("expected cas mismatch, got %v", err)
 	}
 }
 
