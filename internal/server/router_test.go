@@ -135,8 +135,8 @@ func TestRuleYKVHandlerIntegration(t *testing.T) {
 		DataDir: tempDir,
 		RuleY: types.RuleYConfig{
 			Allowlist: map[string]types.RuleYNamespaceConfig{
-				"core_triggers":         {LimitBytes: 9},
-				"core_invocation_state": {LimitBytes: defaultRuleYLimitBytes},
+				"core_triggers":         {MaxBytes: 9},
+				"core_invocation_state": {MaxBytes: defaultRuleYMaxBytes},
 			},
 		},
 	}

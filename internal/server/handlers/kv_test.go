@@ -130,7 +130,7 @@ func TestKVHandlerQuotaExceeded(t *testing.T) {
 	h := NewKVHandler(KVConfig{
 		Store: store,
 		Allowlist: map[string]KVNamespaceConfig{
-			"core_triggers": {LimitBytes: 9},
+			"core_triggers": {MaxBytes: 9},
 		},
 	})
 

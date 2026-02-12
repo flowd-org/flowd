@@ -20,7 +20,8 @@ const (
 	defaultLogMode         = "text"
 	defaultScriptsRoot     = "scripts"
 	defaultShutdownTimeout = 15 * time.Second
-	defaultRuleYLimitBytes = 32 << 20
+	defaultRuleYMaxRows    = 10_000
+	defaultRuleYMaxBytes   = 10 << 20
 )
 
 // Config carries serve-mode runtime settings derived from CLI flags and env vars.
@@ -109,15 +110,22 @@ func (c Config) normalize() Config {
 	}
 	if len(c.RuleY.Allowlist) == 0 {
 		c.RuleY.Allowlist = map[string]types.RuleYNamespaceConfig{
-			"core_triggers":         {LimitBytes: defaultRuleYLimitBytes},
-			"core_invocation_state": {LimitBytes: defaultRuleYLimitBytes},
+			"core_triggers":         {MaxRows: defaultRuleYMaxRows, MaxBytes: defaultRuleYMaxBytes},
+			"core_invocation_state": {MaxRows: defaultRuleYMaxRows, MaxBytes: defaultRuleYMaxBytes},
 		}
 	} else {
 		for ns, nsCfg := range c.RuleY.Allowlist {
-			if nsCfg.LimitBytes <= 0 {
-				nsCfg.LimitBytes = defaultRuleYLimitBytes
-				c.RuleY.Allowlist[ns] = nsCfg
+			if nsCfg.MaxBytes <= 0 {
+				nsCfg.MaxBytes = nsCfg.LimitBytes
 			}
+			if nsCfg.MaxRows <= 0 {
+				nsCfg.MaxRows = defaultRuleYMaxRows
+			}
+			if nsCfg.MaxBytes <= 0 {
+				nsCfg.MaxBytes = defaultRuleYMaxBytes
+			}
+			nsCfg.LimitBytes = nsCfg.MaxBytes
+			c.RuleY.Allowlist[ns] = nsCfg
 		}
 	}
 	if len(c.Extensions) == 0 {

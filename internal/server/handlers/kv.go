@@ -19,8 +19,8 @@ const kvQuotaExceededProblemType = "https://flowd.org/problems/kv/quota-exceeded
 
 // KVNamespaceConfig controls namespace-specific Rule-Y behaviour.
 type KVNamespaceConfig struct {
-	LimitBytes int64
-	MaxRows    int64
+	MaxBytes int64
+	MaxRows  int64
 }
 
 // KVConfig configures the KV handler.
@@ -96,7 +96,7 @@ func (h *kvHandler) handlePut(w http.ResponseWriter, r *http.Request, namespace,
 		return
 	}
 
-	if _, err := h.store.Put(r.Context(), namespace, key, value, coredb.RuleYPutOptions{MaxBytes: cfg.LimitBytes, MaxRows: cfg.MaxRows}); err != nil {
+	if _, err := h.store.Put(r.Context(), namespace, key, value, coredb.RuleYPutOptions{MaxBytes: cfg.MaxBytes, MaxRows: cfg.MaxRows}); err != nil {
 		h.writeStoreError(w, err)
 		return
 	}

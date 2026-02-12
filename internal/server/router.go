@@ -180,8 +180,8 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	kvAllow := make(map[string]handlers.KVNamespaceConfig, len(cfg.RuleY.Allowlist))
 	storeAllow := make(map[string]coredb.RuleYNamespaceQuota, len(cfg.RuleY.Allowlist))
 	for ns, entry := range cfg.RuleY.Allowlist {
-		kvAllow[ns] = handlers.KVNamespaceConfig{LimitBytes: entry.LimitBytes, MaxRows: entry.MaxRows}
-		storeAllow[ns] = coredb.RuleYNamespaceQuota{MaxRows: entry.MaxRows, MaxBytes: entry.LimitBytes}
+		kvAllow[ns] = handlers.KVNamespaceConfig{MaxBytes: entry.MaxBytes, MaxRows: entry.MaxRows}
+		storeAllow[ns] = coredb.RuleYNamespaceQuota{MaxRows: entry.MaxRows, MaxBytes: entry.MaxBytes}
 	}
 	kvStore.SetAllowlist(storeAllow)
 	mux.Handle("/kv/", handlers.NewKVHandler(handlers.KVConfig{
