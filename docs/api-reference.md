@@ -44,6 +44,10 @@ The following probe endpoints are intentionally public (no bearer token required
 
 All other endpoints in this document require authentication with the appropriate scopes.
 
+The server also exposes internal-only endpoints under `/kv/*` for Rule-Y runtime state.
+These endpoints are not a stable public API, are not advertised in `/capabilities`, and
+may change without notice.
+
 ## Endpoints
 
 ### Operational probes and introspection
@@ -399,45 +403,20 @@ Cancels a running job.
 
 ### Artifacts
 
-#### List Artifacts
+#### Download Artifact
 
 ```http
-GET /api/v1/artifacts
-```
-
-Returns a list of all artifacts.
-
-**Query Parameters:**
-- `run_id` (optional): Filter by run ID
-- `limit` (optional): Maximum number of results
-
-**Response:**
-```json
-{
-  "artifacts": [
-    {
-      "id": "artifact_01HX...",
-      "run_id": "run_01HX...",
-      "name": "backup-archive",
-      "path": "/workspace/backup.tar.gz",
-      "media_type": "application/gzip",
-      "size_bytes": 12345678,
-      "created_at": "2024-01-15T10:35:00Z"
-    }
-  ]
-}
-```
-
-#### Get Artifact
-
-```http
-GET /api/v1/artifacts/{artifact_id}
+GET /artifacts/{artifact_id}
 ```
 
 Downloads the artifact file.
 
+- Auth required.
+- Required scope: `artifacts:read`.
+- Tenant-isolated: artifacts are only downloadable by principals in the same tenant.
+
 **Response:**
-Binary content with appropriate `Content-Type` header.
+Binary content with appropriate `Content-Type` (and usually `Content-Length`) headers.
 
 ### System
 
