@@ -3,7 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +22,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/configloader"
 	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/engine"
@@ -160,6 +165,8 @@ type RunsHandler struct {
 	policy         *policy.Context
 	verifier       verify.ImageVerifier
 	runtime        container.Runtime
+	artifactMeta   *coredb.ArtifactStore
+	artifactBytes  *artifacts.Store
 	running        sync.Map // runID -> *runExecutionContext
 }
 
@@ -210,8 +217,12 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 	}
 
 	var dbRuns *coredb.RunStore
+	var artifactMeta *coredb.ArtifactStore
+	var artifactBytes *artifacts.Store
 	if cfg.DB != nil {
 		dbRuns = coredb.NewRunStore(cfg.DB)
+		artifactMeta = coredb.NewArtifactStore(cfg.DB)
+		artifactBytes = artifacts.NewStore(artifacts.Options{})
 	}
 
 	return &RunsHandler{
@@ -230,6 +241,8 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 		policy:         cfg.Policy,
 		verifier:       cfg.Verifier,
 		runtime:        cfg.Runtime,
+		artifactMeta:   artifactMeta,
+		artifactBytes:  artifactBytes,
 	}
 }
 
@@ -1514,6 +1527,16 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	finished := time.Now().UTC()
 	execCtx.runPayload.FinishedAt = &finished
 	execCtx.runPayload.Status = status
+	artifactIDs, artifactErr := h.registerBuiltInRunArtifacts(runCtx, execCtx.runPayload, runDir)
+	if artifactErr != nil {
+		slog.Warn("run artifact registration failed",
+			slog.String("run_id", runID),
+			slog.String("error", artifactErr.Error()),
+		)
+	}
+	if len(artifactIDs) > 0 {
+		h.attachBuiltInArtifactIDs(runID, artifactIDs)
+	}
 	if sink != nil {
 		metrics.RecordRunFinished(status)
 		sink.EmitRunFinish(runID, status, runErr)
@@ -1528,6 +1551,105 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 			h.publishRunCanceled(run, finished, "canceled")
 		}
 	}
+}
+
+func (h *RunsHandler) registerBuiltInRunArtifacts(ctx context.Context, payload RunPayload, runDir string) (map[string]string, error) {
+	if h == nil || h.artifactMeta == nil || h.artifactBytes == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(payload.Tenant) == "" || strings.TrimSpace(payload.JobID) == "" || strings.TrimSpace(payload.ID) == "" {
+		return nil, nil
+	}
+	builtIns := []struct {
+		name        string
+		contentType string
+	}{
+		{name: "plan.json", contentType: "application/json"},
+		{name: "stdout", contentType: "text/plain; charset=utf-8"},
+		{name: "stderr", contentType: "text/plain; charset=utf-8"},
+	}
+	registered := make(map[string]string, len(builtIns))
+	var errs []error
+	for _, artifact := range builtIns {
+		path := filepath.Join(runDir, artifact.name)
+		file, err := os.Open(path)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("open built-in artifact %s: %w", artifact.name, err))
+			continue
+		}
+		id, err := newUUIDv7()
+		if err != nil {
+			_ = file.Close()
+			errs = append(errs, fmt.Errorf("generate artifact id for %s: %w", artifact.name, err))
+			continue
+		}
+		artifactID := strings.ToLower(id.String())
+		sizeBytes, err := h.artifactBytes.Write(ctx, artifactID, file)
+		_ = file.Close()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("write built-in artifact %s: %w", artifact.name, err))
+			continue
+		}
+		err = h.artifactMeta.Create(ctx, coredb.ArtifactRecord{
+			ArtifactID:  artifactID,
+			Tenant:      payload.Tenant,
+			JobID:       payload.JobID,
+			RunID:       payload.ID,
+			Name:        artifact.name,
+			ContentType: artifact.contentType,
+			SizeBytes:   sizeBytes,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("persist built-in artifact metadata %s: %w", artifact.name, err))
+			continue
+		}
+		registered[artifact.name] = artifactID
+	}
+	return registered, errors.Join(errs...)
+}
+
+func (h *RunsHandler) attachBuiltInArtifactIDs(runID string, artifactIDs map[string]string) {
+	if h == nil || len(artifactIDs) == 0 {
+		return
+	}
+	run, ok := h.store.Get(runID)
+	if !ok {
+		return
+	}
+	result := map[string]any{}
+	for k, v := range run.Result {
+		result[k] = v
+	}
+	builtIns := make(map[string]any, len(artifactIDs))
+	for name, artifactID := range artifactIDs {
+		builtIns[name] = artifactID
+	}
+	result["artifacts"] = builtIns
+	run.Result = result
+	h.store.Update(run)
+	if h.dbRuns != nil {
+		record := runRecordFromStore(run)
+		record = scrubRunRecord(record, newPersistenceScrubber(nil, nil))
+		_ = h.dbRuns.Update(context.Background(), record)
+	}
+}
+
+func newUUIDv7() (uuid.UUID, error) {
+	var id uuid.UUID
+	if _, err := io.ReadFull(crand.Reader, id[:]); err != nil {
+		return uuid.Nil, err
+	}
+	millis := uint64(time.Now().UTC().UnixMilli())
+	id[0] = byte(millis >> 40)
+	id[1] = byte(millis >> 32)
+	id[2] = byte(millis >> 24)
+	id[3] = byte(millis >> 16)
+	id[4] = byte(millis >> 8)
+	id[5] = byte(millis)
+	id[6] = (id[6] & 0x0f) | 0x70
+	binary.BigEndian.PutUint16(id[6:8], binary.BigEndian.Uint16(id[6:8]))
+	id[8] = (id[8] & 0x3f) | 0x80
+	return id, nil
 }
 
 func (h *RunsHandler) updateRunStatus(runID, status string, finished *time.Time) {
