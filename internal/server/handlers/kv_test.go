@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -151,6 +152,59 @@ func TestKVHandlerQuotaExceeded(t *testing.T) {
 	h.ServeHTTP(resp2, req2)
 	if resp2.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", resp2.Code)
+	}
+	var problem map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode quota problem: %v", err)
+	}
+	if got := problem["type"]; got != kvQuotaExceededProblemType {
+		t.Fatalf("expected type %q, got %v", kvQuotaExceededProblemType, got)
+	}
+	if got := problem["code"]; got != "kv/quota-exceeded" {
+		t.Fatalf("expected code kv/quota-exceeded, got %v", got)
+	}
+}
+
+func TestKVHandlerScanLimitCappedAt1000(t *testing.T) {
+	ctx := context.Background()
+	store := coredb.NewRuleYStore(openTestDB(t))
+	h := NewKVHandler(KVConfig{
+		Store: store,
+		Allowlist: map[string]KVNamespaceConfig{
+			"core_triggers": {},
+		},
+	})
+
+	for i := 0; i < 1005; i++ {
+		key := fmt.Sprintf("app:%04d", i)
+		putBody := map[string]string{"value": base64.StdEncoding.EncodeToString([]byte("value"))}
+		buf, _ := json.Marshal(putBody)
+		req := httptest.NewRequest(http.MethodPut, "/kv/core_triggers/"+key, bytes.NewReader(buf)).WithContext(ctx)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put %s failed: %d", key, rec.Code)
+		}
+	}
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/kv/core_triggers?prefix=app:&limit=5000", nil).WithContext(ctx))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Items      []map[string]any `json:"items"`
+		NextCursor string           `json:"nextCursor"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode scan response: %v", err)
+	}
+	if len(body.Items) != 1000 {
+		t.Fatalf("expected 1000 items when limit=5000, got %d", len(body.Items))
+	}
+	if body.NextCursor == "" {
+		t.Fatal("expected nextCursor for capped page")
 	}
 }
 

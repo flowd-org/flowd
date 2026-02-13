@@ -17,6 +17,11 @@ import (
 const namespaceForbiddenProblemType = "https://flowd.org/problems/namespace-forbidden"
 const kvQuotaExceededProblemType = "https://flowd.org/problems/kv/quota-exceeded"
 
+const (
+	kvDefaultScanLimit = 256
+	kvMaxScanLimit     = 1000
+)
+
 // KVNamespaceConfig controls namespace-specific Rule-Y behaviour.
 type KVNamespaceConfig struct {
 	MaxBytes int64
@@ -158,11 +163,14 @@ func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace
 		cursor = string(decoded)
 	}
 
-	limit := 256
+	limit := kvDefaultScanLimit
 	if v := q.Get("limit"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
 			limit = parsed
 		}
+	}
+	if limit > kvMaxScanLimit {
+		limit = kvMaxScanLimit
 	}
 
 	items, nextCursor, err := h.store.Scan(r.Context(), namespace, prefix, cursor, limit)
