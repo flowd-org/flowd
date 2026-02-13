@@ -17,6 +17,7 @@ This document covers two classes of endpoints:
 
 - API endpoints (most of this reference) live under the versioned API prefix.
 - Operational endpoints (probes, metrics, SSE) are rooted at the server base URL (no `/api/v1` prefix).
+- Artifact downloads are also rooted at the server base URL: `GET /artifacts/{artifact_id}` (not `GET /api/v1/artifacts/{artifact_id}`).
 
 When running in serve mode, the versioned API base URL is:
 
@@ -28,6 +29,12 @@ Operational base URL:
 
 ```
 http://localhost:8080
+```
+
+Example artifact download URL:
+
+```
+http://localhost:8080/artifacts/{artifact_id}
 ```
 
 ## Authentication
