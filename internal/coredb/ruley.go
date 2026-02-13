@@ -430,6 +430,11 @@ func normalizeRuleYKey(key string) (string, error) {
 	return normalized, nil
 }
 
+// NormalizeRuleYKey validates and canonicalizes a Rule-Y key for cross-package use.
+func NormalizeRuleYKey(key string) (string, error) {
+	return normalizeRuleYKey(key)
+}
+
 func validateRuleYKeyPrefix(prefix string) error {
 	if len(prefix) > 128 {
 		return ErrRuleYInvalidKey
