@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 )
 
@@ -93,5 +96,41 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(record.SizeBytes, 10))
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, f)
+	written, copyErr := io.Copy(w, f)
+	if copyErr != nil {
+		reason := artifactDownloadStreamFailureReason(copyErr, r.Context().Err())
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			attrs := []any{
+				slog.String("code", "artifact/download-stream-failed"),
+				slog.String("reason", reason),
+				slog.String("artifact_id", record.ArtifactID),
+				slog.Int64("written_bytes", written),
+			}
+			if resolvedTenant != "" {
+				attrs = append(attrs, slog.String("tenant", resolvedTenant))
+			}
+			if record.SizeBytes >= 0 {
+				attrs = append(attrs, slog.Int64("expected_bytes", record.SizeBytes))
+			}
+			attrs = append(attrs, slog.String("error", copyErr.Error()))
+
+			switch reason {
+			case "context_canceled":
+				logger.Info("artifact.download.stream_failed", attrs...)
+			default:
+				logger.Warn("artifact.download.stream_failed", attrs...)
+			}
+		}
+	}
+}
+
+func artifactDownloadStreamFailureReason(copyErr error, ctxErr error) string {
+	switch {
+	case errors.Is(copyErr, context.Canceled) || errors.Is(ctxErr, context.Canceled):
+		return "context_canceled"
+	case errors.Is(copyErr, context.DeadlineExceeded) || errors.Is(ctxErr, context.DeadlineExceeded):
+		return "context_deadline"
+	default:
+		return "io_error"
+	}
 }
