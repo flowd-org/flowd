@@ -12,6 +12,8 @@ type Sink interface {
 	EnsurePersistenceLatency(operation, outcome string)
 	RecordPersistenceLatency(operation, outcome string, duration time.Duration)
 	RecordPersistenceEviction(kind string, bytes int64)
+	RecordKVQuotaExceeded(namespace string)
+	RecordArtifactWriteFailed(reason string)
 	RecordIdempotencyLookup(outcome string)
 	RecordIdempotencyReplay()
 	RecordIdempotencyConflict()
@@ -33,6 +35,8 @@ type noopSink struct{}
 func (noopSink) EnsurePersistenceLatency(string, string)                {}
 func (noopSink) RecordPersistenceLatency(string, string, time.Duration) {}
 func (noopSink) RecordPersistenceEviction(string, int64)                {}
+func (noopSink) RecordKVQuotaExceeded(string)                           {}
+func (noopSink) RecordArtifactWriteFailed(string)                       {}
 func (noopSink) RecordIdempotencyLookup(string)                         {}
 func (noopSink) RecordIdempotencyReplay()                               {}
 func (noopSink) RecordIdempotencyConflict()                             {}

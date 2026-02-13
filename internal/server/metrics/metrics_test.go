@@ -141,3 +141,26 @@ func TestRunAndSecretMetricsOutput(t *testing.T) {
 		t.Fatalf("expected secret container rejected counter, got body:\n%s", body)
 	}
 }
+
+func TestKVAndArtifactFailureMetricsOutput(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordKVQuotaExceeded("core_triggers")
+	reg.RecordKVQuotaExceeded("CORE_TRIGGERS")
+	reg.RecordArtifactWriteFailed("size_cap")
+	reg.RecordArtifactWriteFailed("io_error")
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `kv_quota_exceeded_total{namespace="core_triggers"} 2`) {
+		t.Fatalf("expected kv quota counter for namespace, got body:\n%s", body)
+	}
+	if !strings.Contains(body, `artifacts_write_failed_total{reason="size_cap"} 1`) {
+		t.Fatalf("expected artifact size cap failure counter, got body:\n%s", body)
+	}
+	if !strings.Contains(body, `artifacts_write_failed_total{reason="io_error"} 1`) {
+		t.Fatalf("expected artifact io error failure counter, got body:\n%s", body)
+	}
+}

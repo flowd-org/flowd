@@ -96,6 +96,24 @@ func RecordPersistenceEviction(kind string, bytes int64) {
 	getSink().RecordPersistenceEviction(k, bytes)
 }
 
+// RecordKVQuotaExceeded increments KV quota exceeded counter for a namespace.
+func RecordKVQuotaExceeded(namespace string) {
+	ns := sanitize(namespace)
+	if ns == "" {
+		ns = "unknown"
+	}
+	getSink().RecordKVQuotaExceeded(ns)
+}
+
+// RecordArtifactWriteFailed increments artifact write failure counter for a reason.
+func RecordArtifactWriteFailed(reason string) {
+	r := sanitize(reason)
+	if r == "" {
+		r = "unknown"
+	}
+	getSink().RecordArtifactWriteFailed(r)
+}
+
 // RecordIdempotencyLookup records an idempotency lookup outcome.
 func RecordIdempotencyLookup(outcome string) {
 	o := sanitize(outcome)

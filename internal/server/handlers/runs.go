@@ -1529,10 +1529,17 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	execCtx.runPayload.Status = status
 	artifactIDs, artifactErr := h.registerBuiltInRunArtifacts(runCtx, execCtx.runPayload, runDir)
 	if artifactErr != nil {
-		slog.Warn("run artifact registration failed",
-			slog.String("run_id", runID),
-			slog.String("error", artifactErr.Error()),
-		)
+		if logger := requestctx.Logger(runCtx); logger != nil {
+			logger.Warn("run.artifact.registration_failed",
+				slog.String("run_id", runID),
+				slog.String("code", "artifact/registration-failed"),
+			)
+		} else {
+			slog.Warn("run.artifact.registration_failed",
+				slog.String("run_id", runID),
+				slog.String("code", "artifact/registration-failed"),
+			)
+		}
 	}
 	if len(artifactIDs) > 0 {
 		h.attachBuiltInArtifactIDs(runID, artifactIDs)
@@ -1587,6 +1594,15 @@ func (h *RunsHandler) registerBuiltInRunArtifacts(ctx context.Context, payload R
 		sizeBytes, err := h.artifactBytes.Write(ctx, artifactID, file)
 		_ = file.Close()
 		if err != nil {
+			reason := artifactWriteFailureReason(err)
+			metrics.RecordArtifactWriteFailed(reason)
+			if logger := requestctx.Logger(ctx); logger != nil {
+				logger.Warn("artifact.write.failed",
+					slog.String("run_id", payload.ID),
+					slog.String("artifact_name", artifact.name),
+					slog.String("reason", reason),
+				)
+			}
 			errs = append(errs, fmt.Errorf("write built-in artifact %s: %w", artifact.name, err))
 			continue
 		}
@@ -1606,6 +1622,21 @@ func (h *RunsHandler) registerBuiltInRunArtifacts(ctx context.Context, payload R
 		registered[artifact.name] = artifactID
 	}
 	return registered, errors.Join(errs...)
+}
+
+func artifactWriteFailureReason(err error) string {
+	switch {
+	case err == nil:
+		return "unknown"
+	case errors.Is(err, artifacts.ErrArtifactTooLarge):
+		return "size_cap"
+	case errors.Is(err, artifacts.ErrImmutableWrite):
+		return "immutable_write"
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	default:
+		return "io_error"
+	}
 }
 
 func (h *RunsHandler) attachBuiltInArtifactIDs(runID string, artifactIDs map[string]string) {

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flowd-org/flowd/internal/coredb"
+	"github.com/flowd-org/flowd/internal/metrics"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 )
 
@@ -102,7 +105,7 @@ func (h *kvHandler) handlePut(w http.ResponseWriter, r *http.Request, namespace,
 	}
 
 	if _, err := h.store.Put(r.Context(), namespace, key, value, coredb.RuleYPutOptions{MaxBytes: cfg.MaxBytes, MaxRows: cfg.MaxRows}); err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -115,7 +118,7 @@ func (h *kvHandler) handleGet(w http.ResponseWriter, r *http.Request, namespace,
 	}
 	entry, found, err := h.store.Get(r.Context(), namespace, key)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 	if !found {
@@ -139,7 +142,7 @@ func (h *kvHandler) handleDelete(w http.ResponseWriter, r *http.Request, namespa
 	}
 	deleted, err := h.store.Del(r.Context(), namespace, key)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 	if !deleted {
@@ -175,7 +178,7 @@ func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace
 
 	items, nextCursor, err := h.store.Scan(r.Context(), namespace, prefix, cursor, limit)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 
@@ -196,7 +199,7 @@ func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace
 	writeJSON(w, resp, http.StatusOK)
 }
 
-func (h *kvHandler) writeStoreError(w http.ResponseWriter, err error) {
+func (h *kvHandler) writeStoreError(w http.ResponseWriter, r *http.Request, namespace string, err error) {
 	if err == nil {
 		return
 	}
@@ -204,6 +207,13 @@ func (h *kvHandler) writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, coredb.ErrRuleYUnavailable):
 		response.Write(w, response.New(http.StatusServiceUnavailable, "storage unavailable"))
 	case errors.Is(err, coredb.ErrRuleYQuotaExceeded):
+		metrics.RecordKVQuotaExceeded(namespace)
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			logger.Warn("kv.quota_exceeded",
+				slog.String("namespace", strings.ToLower(strings.TrimSpace(namespace))),
+				slog.String("code", "kv/quota-exceeded"),
+			)
+		}
 		response.Write(w, kvQuotaExceededProblem())
 	case errors.Is(err, coredb.ErrRuleYNamespaceForbidden):
 		response.Write(w, namespaceForbiddenProblem())

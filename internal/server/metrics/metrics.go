@@ -33,6 +33,8 @@ type Registry struct {
 	persistenceLatency    map[[2]string]*valueHistogram
 	persistenceEvictions  map[string]uint64
 	persistenceBytes      map[string]uint64
+	kvQuotaExceeded       map[string]uint64
+	artifactWriteFailed   map[string]uint64
 	idempotencyLookups    map[string]uint64
 	idempotencyReplays    uint64
 	idempotencyConflicts  uint64
@@ -65,6 +67,8 @@ func NewRegistry() *Registry {
 		persistenceLatency:   make(map[[2]string]*valueHistogram),
 		persistenceEvictions: make(map[string]uint64),
 		persistenceBytes:     make(map[string]uint64),
+		kvQuotaExceeded:      make(map[string]uint64),
+		artifactWriteFailed:  make(map[string]uint64),
 		idempotencyLookups:   make(map[string]uint64),
 		sseActive:            make(map[string]int64),
 		sseStreamStarts:      make(map[string]uint64),
@@ -271,6 +275,18 @@ func (r *Registry) writeAll(w http.ResponseWriter) {
 	writeMetricHeader(buf, "flowd_persistence_eviction_bytes_total", "Bytes reclaimed by persistence evictions", "counter")
 	for _, kind := range sortedKeysUint(r.persistenceBytes) {
 		fmt.Fprintf(buf, "flowd_persistence_eviction_bytes_total{kind=%q} %d\n", kind, r.persistenceBytes[kind])
+	}
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "kv_quota_exceeded_total", "KV quota exceeded responses by namespace", "counter")
+	for _, namespace := range sortedKeysUint(r.kvQuotaExceeded) {
+		fmt.Fprintf(buf, "kv_quota_exceeded_total{namespace=%q} %d\n", namespace, r.kvQuotaExceeded[namespace])
+	}
+	buf.WriteByte('\n')
+
+	writeMetricHeader(buf, "artifacts_write_failed_total", "Artifact write failures by reason", "counter")
+	for _, reason := range sortedKeysUint(r.artifactWriteFailed) {
+		fmt.Fprintf(buf, "artifacts_write_failed_total{reason=%q} %d\n", reason, r.artifactWriteFailed[reason])
 	}
 	buf.WriteByte('\n')
 
@@ -616,6 +632,28 @@ func (r *Registry) RecordPersistenceEviction(kind string, bytes int64) {
 	defer r.mu.Unlock()
 	r.persistenceEvictions[kind]++
 	r.persistenceBytes[kind] += uint64(bytes)
+}
+
+// RecordKVQuotaExceeded increments KV quota exceeded counter for a namespace.
+func (r *Registry) RecordKVQuotaExceeded(namespace string) {
+	namespace = normalizeLabel(namespace)
+	if namespace == "" {
+		namespace = "unknown"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.kvQuotaExceeded[namespace]++
+}
+
+// RecordArtifactWriteFailed increments artifact write failure counter by reason.
+func (r *Registry) RecordArtifactWriteFailed(reason string) {
+	reason = normalizeLabel(reason)
+	if reason == "" {
+		reason = "unknown"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.artifactWriteFailed[reason]++
 }
 
 // RecordIdempotencyLookup increments idempotency lookup counters by outcome.
