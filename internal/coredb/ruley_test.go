@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -253,6 +254,109 @@ func TestRuleYJanitorSweepDeletesExpiredRowsInBatches(t *testing.T) {
 	}
 	if deleted != 1 {
 		t.Fatalf("expected second sweep to delete 1 row, got %d", deleted)
+	}
+}
+
+func TestRuleYJanitorDeletesExpiredRowsWithinSixtySeconds(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base
+	store.now = func() time.Time { return now }
+
+	if _, err := store.Put(ctx, "core_triggers", "janitor:bound", []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
+		t.Fatalf("put with ttl: %v", err)
+	}
+
+	expiresAt := base.Add(time.Second)
+	now = expiresAt.Add(50 * time.Second)
+
+	if _, ok, err := store.Get(ctx, "core_triggers", "janitor:bound"); err != nil {
+		t.Fatalf("get after expiry: %v", err)
+	} else if ok {
+		t.Fatalf("expected expired key to be invisible before janitor sweep")
+	}
+
+	remaining, err := countNamespaceRows(ctx, db, "core_triggers")
+	if err != nil {
+		t.Fatalf("count before sweep: %v", err)
+	}
+	if remaining != 1 {
+		t.Fatalf("expected 1 physical row before sweep, got %d", remaining)
+	}
+
+	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
+		Now: func() time.Time { return now },
+	})
+	deleted, err := janitor.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected sweep to delete 1 row, got %d", deleted)
+	}
+
+	if elapsed := now.Sub(expiresAt); elapsed > 60*time.Second {
+		t.Fatalf("expected deletion within <=60s of expiry, elapsed=%s", elapsed)
+	}
+}
+
+func TestRuleYJanitorRunUsesInjectedTicks(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return base }
+
+	if _, err := store.Put(ctx, "core_triggers", "janitor:tick", []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
+		t.Fatalf("put with ttl: %v", err)
+	}
+
+	expiresAt := base.Add(time.Second)
+	janitorNow := expiresAt.Add(60 * time.Second)
+	ticks := make(chan time.Time, 1)
+
+	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
+		Now:  func() time.Time { return janitorNow },
+		Tick: ticks,
+	})
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- janitor.Run(ctx)
+	}()
+
+	ticks <- janitorNow
+
+	deleted := false
+	for i := 0; i < 200; i++ {
+		remaining, err := countNamespaceRows(context.Background(), db, "core_triggers")
+		if err != nil {
+			t.Fatalf("count during run: %v", err)
+		}
+		if remaining == 0 {
+			deleted = true
+			break
+		}
+		runtime.Gosched()
+	}
+	if !deleted {
+		t.Fatalf("expected tick-driven janitor run to delete expired row")
+	}
+
+	cancel()
+	if err := <-runDone; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if elapsed := janitorNow.Sub(expiresAt); elapsed > 60*time.Second {
+		t.Fatalf("expected tick-driven deletion within <=60s of expiry, elapsed=%s", elapsed)
 	}
 }
 
