@@ -358,5 +358,22 @@ func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
 		if resp.Code != http.StatusForbidden {
 			t.Fatalf("expected 403, got %d", resp.Code)
 		}
+
+		var problem map[string]any
+		if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
+			t.Fatalf("decode problem response: %v", err)
+		}
+
+		if _, ok := problem["artifact_tenant"]; ok {
+			t.Fatal("response must not include artifact tenant identifier")
+		}
+		if _, ok := problem["principal_tenant"]; ok {
+			t.Fatal("response must not include principal tenant identifier")
+		}
+
+		body := resp.Body.String()
+		if strings.Contains(body, "\"acme\"") || strings.Contains(body, "\"other\"") {
+			t.Fatalf("response must not leak tenant identifiers, got %s", body)
+		}
 	})
 }

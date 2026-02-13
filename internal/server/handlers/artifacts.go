@@ -68,9 +68,7 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Write(w, response.New(http.StatusForbidden, "tenant mismatch",
 			response.WithType(response.ProblemTypeTenantMismatch),
 			response.WithExtension("code", response.ProblemCodeTenantMismatch),
-			response.WithDetail("artifact tenant does not match principal tenant"),
-			response.WithExtension("artifact_tenant", record.Tenant),
-			response.WithExtension("principal_tenant", resolvedTenant),
+			response.WithDetail("artifact is not accessible for this tenant"),
 		))
 		return
 	}
