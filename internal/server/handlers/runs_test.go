@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -32,6 +35,15 @@ import (
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/server/sse"
 )
+
+func uuidV7UnixMillis(id uuid.UUID) int64 {
+	return int64(id[0])<<40 |
+		int64(id[1])<<32 |
+		int64(id[2])<<24 |
+		int64(id[3])<<16 |
+		int64(id[4])<<8 |
+		int64(id[5])
+}
 
 var idempotencySeq uint64
 
@@ -1987,6 +1999,40 @@ func TestRegisterBuiltInRunArtifactsCleansUpBytesOnMetadataFailure(t *testing.T)
 	}
 	if fileCount != 0 {
 		t.Fatalf("expected artifact bytes cleanup after metadata failure, found %d files", fileCount)
+	}
+}
+
+func TestNewUUIDv7(t *testing.T) {
+	before := time.Now().UTC().UnixMilli() - 2000
+	ids := make([]uuid.UUID, 0, 8)
+	for i := 0; i < cap(ids); i++ {
+		id, err := newUUIDv7()
+		if err != nil {
+			t.Fatalf("newUUIDv7: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	after := time.Now().UTC().UnixMilli() + 2000
+
+	prevMillis := int64(0)
+	for i, id := range ids {
+		if got := id.Version(); got != 7 {
+			t.Fatalf("id[%d] version = %d, want 7", i, got)
+		}
+		if got := id.Variant(); got != uuid.RFC4122 {
+			t.Fatalf("id[%d] variant = %d, want RFC4122", i, got)
+		}
+		millis := uuidV7UnixMillis(id)
+		if millis < before || millis > after {
+			t.Fatalf("id[%d] millis = %d outside [%d, %d]", i, millis, before, after)
+		}
+		if i > 0 && millis < prevMillis {
+			t.Fatalf("id[%d] millis regressed: %d < %d", i, millis, prevMillis)
+		}
+		prevMillis = millis
+		if decoded := binary.BigEndian.Uint16(id[6:8]) >> 12; decoded != 0x7 {
+			t.Fatalf("id[%d] high bits do not encode v7", i)
+		}
 	}
 }
 

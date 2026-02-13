@@ -3,9 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
-	crand "crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1669,21 +1667,7 @@ func (h *RunsHandler) attachBuiltInArtifactIDs(runID string, artifactIDs map[str
 }
 
 func newUUIDv7() (uuid.UUID, error) {
-	var id uuid.UUID
-	if _, err := io.ReadFull(crand.Reader, id[:]); err != nil {
-		return uuid.Nil, err
-	}
-	millis := uint64(time.Now().UTC().UnixMilli())
-	id[0] = byte(millis >> 40)
-	id[1] = byte(millis >> 32)
-	id[2] = byte(millis >> 24)
-	id[3] = byte(millis >> 16)
-	id[4] = byte(millis >> 8)
-	id[5] = byte(millis)
-	id[6] = (id[6] & 0x0f) | 0x70
-	binary.BigEndian.PutUint16(id[6:8], binary.BigEndian.Uint16(id[6:8]))
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id, nil
+	return uuid.NewV7()
 }
 
 func (h *RunsHandler) updateRunStatus(runID, status string, finished *time.Time) {
