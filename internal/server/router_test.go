@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,63 @@ func TestRuleYKVHandlerIntegration(t *testing.T) {
 	handler.ServeHTTP(quota, makeReq(http.MethodPut, "/kv/core_triggers/b", putBody("abcd"), "ruley:write"))
 	if quota.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 when quota exceeded, got %d", quota.Code)
+	}
+
+	// Scan limit is capped at 1000 even when a higher limit is requested.
+	for i := 0; i < 1005; i++ {
+		key := fmt.Sprintf("/kv/core_invocation_state/app:%04d", i)
+		write := httptest.NewRecorder()
+		handler.ServeHTTP(write, makeReq(http.MethodPut, key, putBody("x"), "ruley:write"))
+		if write.Code != http.StatusNoContent {
+			t.Fatalf("expected 204 while seeding scan rows, got %d for %s", write.Code, key)
+		}
+	}
+
+	scan := httptest.NewRecorder()
+	handler.ServeHTTP(scan, makeReq(http.MethodGet, "/kv/core_invocation_state?prefix=app:&limit=5000", nil, "ruley:read"))
+	if scan.Code != http.StatusOK {
+		t.Fatalf("expected 200 scan response, got %d: %s", scan.Code, scan.Body.String())
+	}
+	var scanBody struct {
+		Items      []map[string]any `json:"items"`
+		NextCursor string           `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(scan.Body.Bytes(), &scanBody); err != nil {
+		t.Fatalf("decode scan body: %v", err)
+	}
+	if got := len(scanBody.Items); got != 1000 {
+		t.Fatalf("expected capped scan page size 1000, got %d", got)
+	}
+	if scanBody.NextCursor == "" {
+		t.Fatal("expected nextCursor when scan page is capped")
+	}
+}
+
+func TestCapabilitiesEndpointDoesNotAdvertiseKV(t *testing.T) {
+	cfg := Config{Bind: "127.0.0.1:0", Profile: "secure", Dev: true}
+	cfg = cfg.normalize()
+	policyCtx, err := policy.NewContext(nil)
+	if err != nil {
+		t.Fatalf("policy context: %v", err)
+	}
+	handler := buildHandler(cfg, policyCtx, nil)
+
+	token := unsignedJWT(`{"sub":"tester","scope":"jobs:read"}`)
+	req := httptest.NewRequest(http.MethodGet, "/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode capabilities body: %v", err)
+	}
+	if _, ok := raw["kv"]; ok {
+		t.Fatal("capabilities must not advertise /kv")
 	}
 }
 
