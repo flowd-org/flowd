@@ -138,7 +138,8 @@ func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byt
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	existingVersion, existed, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey)
+	nowMillis := s.now().UnixMilli()
+	existingVersion, existed, existedCounted, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
 	if err != nil {
 		return 0, err
 	}
@@ -150,11 +151,11 @@ func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byt
 		effectiveQuota.MaxBytes = opts.MaxBytes
 	}
 	newEntryBytes := len(normalizedKey) + len(value)
-	if err := enforceRuleYQuota(ctx, tx, ns, effectiveQuota, existed, oldBytes, newEntryBytes); err != nil {
+	if err := enforceRuleYQuota(ctx, tx, ns, nowMillis, effectiveQuota, existed, existedCounted, oldBytes, newEntryBytes); err != nil {
 		return 0, err
 	}
 
-	updatedAt := s.now().UnixMilli()
+	updatedAt := nowMillis
 	expiresAt := nullableExpiryMillis(updatedAt, opts.TTL)
 	contentType := strings.TrimSpace(opts.ContentType)
 	if contentType == "" {
@@ -349,7 +350,8 @@ func (s *RuleYStore) CAS(ctx context.Context, namespace, key string, expectVersi
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	existingVersion, existed, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey)
+	nowMillis := s.now().UnixMilli()
+	existingVersion, existed, existedCounted, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
 	if err != nil {
 		return 0, err
 	}
@@ -368,11 +370,11 @@ func (s *RuleYStore) CAS(ctx context.Context, namespace, key string, expectVersi
 		effectiveQuota.MaxBytes = opts.MaxBytes
 	}
 	newEntryBytes := len(normalizedKey) + len(value)
-	if err := enforceRuleYQuota(ctx, tx, ns, effectiveQuota, existed, oldBytes, newEntryBytes); err != nil {
+	if err := enforceRuleYQuota(ctx, tx, ns, nowMillis, effectiveQuota, existed, existedCounted, oldBytes, newEntryBytes); err != nil {
 		return 0, err
 	}
 
-	updatedAt := s.now().UnixMilli()
+	updatedAt := nowMillis
 	expiresAt := nullableExpiryMillis(updatedAt, opts.TTL)
 	contentType := strings.TrimSpace(opts.ContentType)
 	if contentType == "" {
@@ -448,39 +450,51 @@ func validateRuleYKeyPrefix(prefix string) error {
 	return nil
 }
 
-func readKVExisting(ctx context.Context, tx *sql.Tx, namespace, key string) (version int64, exists bool, bytes int64, err error) {
-	row := tx.QueryRowContext(ctx, `SELECT version, length(k) + length(v) FROM kv WHERE ns = ? AND k = ?`, namespace, key)
+func readKVExisting(ctx context.Context, tx *sql.Tx, namespace, key string, nowMillis int64) (version int64, exists bool, counted bool, bytes int64, err error) {
+	row := tx.QueryRowContext(ctx, `SELECT version, length(k) + length(v), expires_at FROM kv WHERE ns = ? AND k = ?`, namespace, key)
 	var storedVersion int64
 	var storedBytes int64
-	if err := row.Scan(&storedVersion, &storedBytes); err != nil {
+	var expiresAt sql.NullInt64
+	if err := row.Scan(&storedVersion, &storedBytes, &expiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, 0, nil
+			return 0, false, false, 0, nil
 		}
-		return 0, false, 0, err
+		return 0, false, false, 0, err
 	}
-	return storedVersion, true, storedBytes, nil
+	counted = !expiresAt.Valid || expiresAt.Int64 > nowMillis
+	return storedVersion, true, counted, storedBytes, nil
 }
 
-func enforceRuleYQuota(ctx context.Context, tx *sql.Tx, namespace string, quota RuleYNamespaceQuota, exists bool, oldBytes int64, newBytes int) error {
+func enforceRuleYQuota(ctx context.Context, tx *sql.Tx, namespace string, nowMillis int64, quota RuleYNamespaceQuota, exists bool, existedCounted bool, oldBytes int64, newBytes int) error {
+	if quota.MaxRows <= 0 && quota.MaxBytes <= 0 {
+		return nil
+	}
+
 	var rows int64
-	var bytes sql.NullInt64
+	var bytes int64
 	row := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(length(k) + length(v)), 0) FROM kv WHERE ns = ?`,
-		namespace,
+		`SELECT COUNT(*), COALESCE(SUM(length(k) + length(v)), 0)
+		 FROM kv
+		 WHERE ns = ?
+		   AND (expires_at IS NULL OR expires_at > ?)`,
+		namespace, nowMillis,
 	)
 	if err := row.Scan(&rows, &bytes); err != nil {
 		return err
 	}
 	newRows := rows
-	if !exists {
+	if !exists || !existedCounted {
 		newRows++
 	}
 	if quota.MaxRows > 0 && newRows > quota.MaxRows {
 		return ErrRuleYQuotaExceeded
 	}
 
-	totalBytes := bytes.Int64
-	totalBytes = totalBytes - oldBytes + int64(newBytes)
+	totalBytes := bytes
+	if existedCounted {
+		totalBytes -= oldBytes
+	}
+	totalBytes += int64(newBytes)
 	if quota.MaxBytes > 0 && totalBytes > quota.MaxBytes {
 		return ErrRuleYQuotaExceeded
 	}

@@ -1,6 +1,7 @@
 package coredb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -70,6 +71,60 @@ func TestRuleYStoreQuotaExceeded(t *testing.T) {
 	}
 	if _, err := store.Put(ctx, "core_invocation_state", "row:b", []byte("x"), RuleYPutOptions{MaxRows: 1, MaxBytes: 1024}); !errors.Is(err, ErrRuleYQuotaExceeded) {
 		t.Fatalf("expected row quota error, got %v", err)
+	}
+}
+
+func TestRuleYStoreQuotaIgnoresExpiredRows(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base
+	store.now = func() time.Time { return now }
+
+	if _, err := store.Put(ctx, "core_triggers", "a", []byte("1234"), RuleYPutOptions{TTL: time.Second, MaxBytes: 6, MaxRows: 1}); err != nil {
+		t.Fatalf("put a: %v", err)
+	}
+
+	now = now.Add(2 * time.Second)
+
+	if _, err := store.Put(ctx, "core_triggers", "b", []byte("1234"), RuleYPutOptions{MaxBytes: 6, MaxRows: 1}); err != nil {
+		t.Fatalf("expected quota check to ignore expired row, got %v", err)
+	}
+}
+
+func TestRuleYStoreQuotaRevivingExpiredRowCountsAsNewLiveUsage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base
+	store.now = func() time.Time { return now }
+
+	big := bytes.Repeat([]byte("x"), 50)
+	if _, err := store.Put(ctx, "core_triggers", "big", big, RuleYPutOptions{TTL: time.Second, MaxBytes: 1000, MaxRows: 1000}); err != nil {
+		t.Fatalf("put big: %v", err)
+	}
+	if _, err := store.Put(ctx, "core_triggers", "live", []byte("0123456789"), RuleYPutOptions{MaxBytes: 1000, MaxRows: 1000}); err != nil {
+		t.Fatalf("put live: %v", err)
+	}
+
+	now = now.Add(2 * time.Second)
+
+	if _, err := store.Put(ctx, "core_triggers", "big", []byte("revive"), RuleYPutOptions{MaxRows: 1, MaxBytes: 1000}); !errors.Is(err, ErrRuleYQuotaExceeded) {
+		t.Fatalf("expected reviving expired row to count as a new live row, got %v", err)
+	}
+
+	reviveVal := []byte("0123456789abcdef")
+	liveBytes := int64(len("live") + len("0123456789"))
+	reviveBytes := int64(len("big") + len(reviveVal))
+	maxBytes := liveBytes + reviveBytes - 1
+	if _, err := store.Put(ctx, "core_triggers", "big", reviveVal, RuleYPutOptions{MaxBytes: maxBytes, MaxRows: 1000}); !errors.Is(err, ErrRuleYQuotaExceeded) {
+		t.Fatalf("expected reviving expired row to count towards bytes quota, got %v", err)
 	}
 }
 
