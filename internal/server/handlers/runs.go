@@ -1616,6 +1616,9 @@ func (h *RunsHandler) registerBuiltInRunArtifacts(ctx context.Context, payload R
 			SizeBytes:   sizeBytes,
 		})
 		if err != nil {
+			if cleanupErr := h.artifactBytes.Delete(artifactID); cleanupErr != nil {
+				errs = append(errs, fmt.Errorf("cleanup built-in artifact bytes %s: %w", artifact.name, cleanupErr))
+			}
 			errs = append(errs, fmt.Errorf("persist built-in artifact metadata %s: %w", artifact.name, err))
 			continue
 		}

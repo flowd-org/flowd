@@ -1934,6 +1934,62 @@ job:
 	}
 }
 
+func TestRegisterBuiltInRunArtifactsCleansUpBytesOnMetadataFailure(t *testing.T) {
+	runDir := t.TempDir()
+	for name, content := range map[string]string{
+		"plan.json": "{\"ok\":true}\n",
+		"stdout":    "hello stdout\n",
+		"stderr":    "hello stderr\n",
+	} {
+		if err := os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write built-in %s: %v", name, err)
+		}
+	}
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	meta := coredb.NewArtifactStore(db)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close coredb: %v", err)
+	}
+
+	bytesRoot := t.TempDir()
+	h := &RunsHandler{
+		artifactMeta:  meta,
+		artifactBytes: artifacts.NewStore(artifacts.Options{RootDir: bytesRoot}),
+	}
+
+	registered, err := h.registerBuiltInRunArtifacts(context.Background(), RunPayload{
+		ID:     "run-1",
+		Tenant: "acme",
+		JobID:  "demo",
+	}, runDir)
+	if err == nil {
+		t.Fatal("expected metadata persistence error")
+	}
+	if len(registered) != 0 {
+		t.Fatalf("expected no registered artifacts on metadata failure, got %#v", registered)
+	}
+
+	var fileCount int
+	if walkErr := filepath.WalkDir(bytesRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.Type().IsRegular() {
+			fileCount++
+		}
+		return nil
+	}); walkErr != nil {
+		t.Fatalf("walk artifact bytes root: %v", walkErr)
+	}
+	if fileCount != 0 {
+		t.Fatalf("expected artifact bytes cleanup after metadata failure, found %d files", fileCount)
+	}
+}
+
 func TestRunsHandlerListPagination(t *testing.T) {
 	root := t.TempDir()
 	writeJobConfig(t, root, "demo", `

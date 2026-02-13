@@ -103,6 +103,21 @@ func (s *Store) Open(artifactID string) (*os.File, error) {
 	return os.Open(s.pathForID(normalizedID))
 }
 
+// Delete removes artifact bytes by ID. Missing files are treated as already-clean.
+func (s *Store) Delete(artifactID string) error {
+	if s == nil {
+		return errors.New("artifacts: store unavailable")
+	}
+	normalizedID, err := coredb.NormalizeArtifactIDForStorage(artifactID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(s.pathForID(normalizedID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("artifacts: delete bytes: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) pathForID(artifactID string) string {
 	prefix := artifactID[:2]
 	return filepath.Join(s.rootDir, prefix, artifactID)
