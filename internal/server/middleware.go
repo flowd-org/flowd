@@ -200,6 +200,8 @@ func templateRoute(path string) string {
 		return "/plans"
 	case path == "/runs":
 		return "/runs"
+	case strings.HasPrefix(path, "/artifacts/"):
+		return "/artifacts/{artifact_id}"
 	case strings.HasPrefix(path, "/runs/"):
 		switch {
 		case strings.HasSuffix(path, ":cancel"):

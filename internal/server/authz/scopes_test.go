@@ -21,6 +21,7 @@ func TestRequiredScopes(t *testing.T) {
 		{method: "DELETE", path: "/sources/main", want: []string{ScopeSourcesWrite}},
 		{method: "GET", path: "/events", want: []string{ScopeEventsRead}},
 		{method: "GET", path: "/events/stream", want: []string{ScopeEventsRead}},
+		{method: "GET", path: "/artifacts/018f22b0-1234-7abc-8def-0123456789ab", want: []string{ScopeArtifactsRead}},
 		{method: "GET", path: "/health/storage", want: []string{ScopeJobsRead}},
 		{method: "GET", path: "/limits", want: []string{ScopeJobsRead}},
 		{method: "GET", path: "/capabilities", want: []string{ScopeJobsRead}},

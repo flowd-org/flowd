@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/executor/container"
 	"github.com/flowd-org/flowd/internal/paths"
@@ -214,6 +215,10 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	runGet := handlers.NewRunGetHandler(handlers.RunGetConfig{Store: runStore, DB: cfg.CoreDB})
 	runEvents := handlers.NewRunEventsHandler(runStore, hub, journal)
 	runEventsExport := handlers.NewRunEventsExportHandler(runStore, journal, cfg.ExtensionEnabled("export"))
+	artifactsHandler := handlers.NewArtifactsHandler(handlers.ArtifactsConfig{
+		MetadataStore: coredb.NewArtifactStore(cfg.CoreDB),
+		ByteStore:     artifacts.NewStore(artifacts.Options{}),
+	})
 	startupHealth := handlers.NewStartupzHandler()
 	readyHealth := handlers.NewReadyzHandler(cfg.CoreDB)
 	storageHealth := handlers.NewStorageHealthHandler(cfg.CoreDB)
@@ -252,6 +257,7 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	mux.Handle("/limits", limitsHandler)
 	mux.Handle("/capabilities", capabilitiesHandler)
 	mux.Handle("/runs", runHandler)
+	mux.Handle("/artifacts/", artifactsHandler)
 	mux.Handle("/runs/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ":cancel") {
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/runs/"), ":cancel")

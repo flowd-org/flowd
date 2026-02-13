@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
+	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
 	"github.com/flowd-org/flowd/internal/server/metrics"
@@ -201,4 +204,101 @@ func TestRuleYKVHandlerIntegration(t *testing.T) {
 	if quota.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 when quota exceeded, got %d", quota.Code)
 	}
+}
+
+func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
+	const artifactID = "018f22b0-1234-7abc-8def-0123456789ab"
+
+	dataDir := t.TempDir()
+	prevDataDir := paths.DataDir()
+	paths.SetDataDirOverride(dataDir)
+	t.Cleanup(func() { paths.SetDataDirOverride(prevDataDir) })
+
+	cfg := Config{
+		Bind:    "127.0.0.1:0",
+		Profile: "secure",
+		Dev:     true,
+		DataDir: dataDir,
+	}
+	cfg = cfg.normalize()
+	db, err := coredb.Open(context.Background(), cfg.CoreDBOptions)
+	if err != nil {
+		t.Fatalf("open core db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfg.CoreDB = db
+
+	metaStore := coredb.NewArtifactStore(db)
+	byteStore := artifacts.NewStore(artifacts.Options{})
+	const artifactBody = "hello artifact bytes"
+	size, err := byteStore.Write(context.Background(), artifactID, strings.NewReader(artifactBody))
+	if err != nil {
+		t.Fatalf("write artifact bytes: %v", err)
+	}
+	if err := metaStore.Create(context.Background(), coredb.ArtifactRecord{
+		ArtifactID:  artifactID,
+		Tenant:      "acme",
+		JobID:       "demo",
+		RunID:       "run-1",
+		Name:        "stdout",
+		ContentType: "text/plain; charset=utf-8",
+		SizeBytes:   size,
+	}); err != nil {
+		t.Fatalf("create artifact metadata: %v", err)
+	}
+
+	policyCtx, err := policy.NewContext(nil)
+	if err != nil {
+		t.Fatalf("policy context: %v", err)
+	}
+	handler := buildHandler(cfg, policyCtx, nil)
+
+	t.Run("allows artifacts read with matching tenant", func(t *testing.T) {
+		token := unsignedJWT(`{"sub":"tester","tenant":"acme","scope":"artifacts:read"}`)
+		req := httptest.NewRequest(http.MethodGet, "/artifacts/"+artifactID, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp := httptest.NewRecorder()
+
+		handler.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
+		if got := resp.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+			t.Fatalf("expected content-type from metadata, got %q", got)
+		}
+		payload, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read response body: %v", err)
+		}
+		if string(payload) != artifactBody {
+			t.Fatalf("unexpected body %q", string(payload))
+		}
+	})
+
+	t.Run("forbids reads without artifacts scope", func(t *testing.T) {
+		token := unsignedJWT(`{"sub":"tester","tenant":"acme","scope":"runs:read"}`)
+		req := httptest.NewRequest(http.MethodGet, "/artifacts/"+artifactID, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp := httptest.NewRecorder()
+
+		handler.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d", resp.Code)
+		}
+	})
+
+	t.Run("forbids cross-tenant reads", func(t *testing.T) {
+		token := unsignedJWT(`{"sub":"tester","tenant":"other","scope":"artifacts:read"}`)
+		req := httptest.NewRequest(http.MethodGet, "/artifacts/"+artifactID, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp := httptest.NewRecorder()
+
+		handler.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d", resp.Code)
+		}
+	})
 }

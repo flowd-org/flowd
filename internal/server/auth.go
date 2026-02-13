@@ -188,14 +188,15 @@ func defaultDevAuth() *authInfo {
 		token:   "dev",
 		subject: "dev",
 		scopes: map[string]struct{}{
-			"jobs:read":     {},
-			"runs:read":     {},
-			"runs:write":    {},
-			"events:read":   {},
-			"sources:read":  {},
-			"sources:write": {},
-			"ruley:read":    {},
-			"ruley:write":   {},
+			"jobs:read":      {},
+			"runs:read":      {},
+			"runs:write":     {},
+			"events:read":    {},
+			"sources:read":   {},
+			"sources:write":  {},
+			"ruley:read":     {},
+			"ruley:write":    {},
+			"artifacts:read": {},
 		},
 	}
 }
