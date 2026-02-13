@@ -122,8 +122,8 @@ func DeriveMappingKey(tenant, jobID, artifactKey string) (string, error) {
 }
 
 func normalizeMappingScope(tenant, jobID, artifactKey string) (string, string, string, error) {
-	normalizedTenant := strings.ToLower(strings.TrimSpace(tenant))
-	normalizedJobID := strings.ToLower(strings.TrimSpace(jobID))
+	normalizedTenant := strings.TrimSpace(tenant)
+	normalizedJobID := strings.TrimSpace(jobID)
 	if normalizedTenant == "" || normalizedJobID == "" {
 		return "", "", "", ErrMappingInvalidScope
 	}
@@ -135,6 +135,6 @@ func normalizeMappingScope(tenant, jobID, artifactKey string) (string, string, s
 }
 
 func scopeMatches(record coredb.ArtifactRecord, tenant, jobID string) bool {
-	return strings.EqualFold(strings.TrimSpace(record.Tenant), tenant) &&
-		strings.EqualFold(strings.TrimSpace(record.JobID), jobID)
+	return strings.TrimSpace(record.Tenant) == tenant &&
+		strings.TrimSpace(record.JobID) == jobID
 }

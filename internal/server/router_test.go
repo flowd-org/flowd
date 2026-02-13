@@ -347,6 +347,19 @@ func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
 		}
 	})
 
+	t.Run("forbids reads when tenant differs only by case", func(t *testing.T) {
+		token := unsignedJWT(`{"sub":"tester","tenant":"ACME","scope":"artifacts:read"}`)
+		req := httptest.NewRequest(http.MethodGet, "/artifacts/"+artifactID, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp := httptest.NewRecorder()
+
+		handler.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d", resp.Code)
+		}
+	})
+
 	t.Run("forbids cross-tenant reads", func(t *testing.T) {
 		token := unsignedJWT(`{"sub":"tester","tenant":"other","scope":"artifacts:read"}`)
 		req := httptest.NewRequest(http.MethodGet, "/artifacts/"+artifactID, nil)

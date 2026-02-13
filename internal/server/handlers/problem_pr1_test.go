@@ -39,6 +39,26 @@ func TestTenantMismatchProblemProperties(t *testing.T) {
 	}
 }
 
+func TestResolveTenant_CaseSensitiveAfterTrimming(t *testing.T) {
+	ctx := requestctx.WithTenant(requestctx.WithPrincipal(context.Background(), "user"), "acme")
+
+	resolved, prob := resolveTenant(ctx, " acme ")
+	if prob != nil {
+		t.Fatalf("expected trimmed exact tenant to resolve, got problem %v", prob)
+	}
+	if resolved != "acme" {
+		t.Fatalf("expected resolved tenant acme, got %q", resolved)
+	}
+
+	_, prob = resolveTenant(ctx, " ACME ")
+	if prob == nil {
+		t.Fatalf("expected tenant mismatch for case-only difference")
+	}
+	if prob.Ext["request_tenant"] != "ACME" {
+		t.Fatalf("expected trimmed request_tenant ACME, got %v", prob.Ext["request_tenant"])
+	}
+}
+
 func TestDiscoveryProblemDualConfigProperties(t *testing.T) {
 	err := &configloader.DualConfigError{
 		ScriptDir:   "/tmp/scripts/demo",

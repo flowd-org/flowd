@@ -17,7 +17,7 @@ import (
 
 const testArtifactIDTwo = "018f0d40-0b3e-7c1a-8f0e-5f0b6bd8f404"
 
-func TestDeriveMappingKeyNormalizesScopeAndKey(t *testing.T) {
+func TestDeriveMappingKeyTrimsScopeAndNormalizesArtifactKey(t *testing.T) {
 	t.Parallel()
 
 	got, err := DeriveMappingKey(" TENANT-A ", " Job-42 ", "Backups/Latest")
@@ -25,7 +25,7 @@ func TestDeriveMappingKeyNormalizesScopeAndKey(t *testing.T) {
 		t.Fatalf("derive mapping key: %v", err)
 	}
 
-	raw := "tenant-a\njob-42\nbackups/latest"
+	raw := "TENANT-A\nJob-42\nbackups/latest"
 	sum := sha256.Sum256([]byte(raw))
 	want := "ak/" + hex.EncodeToString(sum[:])
 	if got != want {
@@ -59,7 +59,7 @@ func TestKeyMappingStoreScopesByTenantAndJob(t *testing.T) {
 	store := NewKeyMappingStore(db)
 
 	writeArtifactWithMetadata(t, db, "tenant-a", "job-42", testArtifactID, "stdout", "payload-1")
-	if err := store.Set(ctx, "TENANT-A", "JOB-42", "Backups/Latest", testArtifactID); err != nil {
+	if err := store.Set(ctx, "tenant-a", "job-42", "Backups/Latest", testArtifactID); err != nil {
 		t.Fatalf("set mapping: %v", err)
 	}
 
@@ -72,6 +72,14 @@ func TestKeyMappingStoreScopesByTenantAndJob(t *testing.T) {
 	}
 	if resolved != testArtifactID {
 		t.Fatalf("unexpected resolved artifact id: got %q want %q", resolved, testArtifactID)
+	}
+
+	_, found, err = store.Resolve(ctx, "TENANT-A", "job-42", "backups/latest")
+	if err != nil {
+		t.Fatalf("resolve with tenant case mismatch: %v", err)
+	}
+	if found {
+		t.Fatalf("expected tenant case mismatch lookup to be isolated")
 	}
 
 	_, found, err = store.Resolve(ctx, "tenant-b", "job-42", "backups/latest")
@@ -88,6 +96,20 @@ func TestKeyMappingStoreScopesByTenantAndJob(t *testing.T) {
 	}
 	if found {
 		t.Fatalf("expected job mismatch lookup to be isolated")
+	}
+}
+
+func TestKeyMappingStoreSetRejectsTenantCaseMismatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewKeyMappingStore(db)
+
+	writeArtifactWithMetadata(t, db, "tenant-a", "job-42", testArtifactID, "stdout", "payload-1")
+	err := store.Set(ctx, "TENANT-A", "job-42", "backups/latest", testArtifactID)
+	if !errors.Is(err, ErrMappingScopeMismatch) {
+		t.Fatalf("expected ErrMappingScopeMismatch, got %v", err)
 	}
 }
 

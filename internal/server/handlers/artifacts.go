@@ -67,7 +67,7 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Write(w, *prob)
 		return
 	}
-	if record.Tenant != resolvedTenant {
+	if strings.TrimSpace(record.Tenant) != strings.TrimSpace(resolvedTenant) {
 		response.Write(w, response.New(http.StatusForbidden, "tenant mismatch",
 			response.WithType(response.ProblemTypeTenantMismatch),
 			response.WithExtension("code", response.ProblemCodeTenantMismatch),

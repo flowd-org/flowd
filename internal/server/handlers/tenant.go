@@ -15,6 +15,7 @@ const defaultTenant = "default"
 func resolveTenant(ctx context.Context, requestTenant string) (string, *response.Problem) {
 	reqTenant := strings.TrimSpace(requestTenant)
 	principalTenant, hasPrincipalTenant := requestctx.Tenant(ctx)
+	principalTenant = strings.TrimSpace(principalTenant)
 	_, hasPrincipal := requestctx.Principal(ctx)
 
 	if hasPrincipalTenant {
