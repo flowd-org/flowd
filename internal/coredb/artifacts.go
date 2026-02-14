@@ -15,8 +15,8 @@ import (
 var (
 	// ErrArtifactStoreUnavailable indicates the backing DB has not been initialised.
 	ErrArtifactStoreUnavailable = errors.New("coredb: artifact store unavailable")
-	// ErrArtifactInvalidID indicates an artifact ID that is not a UUIDv7.
-	ErrArtifactInvalidID = errors.New("coredb: artifact_id must be uuidv7")
+	// ErrArtifactInvalidID indicates an artifact ID that is not a UUIDv7 with RFC4122 variant.
+	ErrArtifactInvalidID = errors.New("coredb: artifact_id must be uuidv7 with rfc4122 variant")
 	// ErrArtifactInvalidMetadata indicates required metadata is missing.
 	ErrArtifactInvalidMetadata = errors.New("coredb: artifact metadata invalid")
 )
@@ -136,6 +136,10 @@ func normalizeArtifactID(input string) (string, error) {
 		return "", ErrArtifactInvalidID
 	}
 	if id.Version() != 7 {
+		return "", ErrArtifactInvalidID
+	}
+	// RFC4122 variant is 1 (0b01xxxx in the variant octet)
+	if id.Variant() != uuid.RFC4122 {
 		return "", ErrArtifactInvalidID
 	}
 	return strings.ToLower(id.String()), nil
