@@ -501,3 +501,44 @@ func openTestDB(t *testing.T) *DB {
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
+
+func TestRuleYJanitorSweepUntilDrainedBounded(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	// Create more expired rows than a single sweep can handle (batch=3)
+	const totalRows = 10
+	for i := 0; i < totalRows; i++ {
+		if _, err := store.Put(ctx, "core_triggers", fmt.Sprintf("exp:%d", i), []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
+			t.Fatalf("put exp:%d: %v", i, err)
+		}
+	}
+
+	now = now.Add(2 * time.Second)
+	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
+		Now:   func() time.Time { return now },
+		Batch: 3,
+	})
+
+	// SweepUntilDrained should delete all expired rows in bounded iterations
+	deleted, err := janitor.SweepUntilDrained(ctx)
+	if err != nil {
+		t.Fatalf("sweep until drained: %v", err)
+	}
+	if deleted != totalRows {
+		t.Fatalf("expected sweep until drained to delete all %d rows, got %d", totalRows, deleted)
+	}
+
+	remaining, err := countNamespaceRows(ctx, db, "core_triggers")
+	if err != nil {
+		t.Fatalf("count after drain: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected no remaining expired rows, got %d", remaining)
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
@@ -75,6 +77,28 @@ func (j *RuleYJanitor) Sweep(ctx context.Context) (int64, error) {
 	return affected, nil
 }
 
+// SweepUntilDrained repeatedly calls Sweep until no more expired rows remain
+// or the maximum number of iterations is reached (bounded).
+func (j *RuleYJanitor) SweepUntilDrained(ctx context.Context) (int64, error) {
+	if j == nil || j.db == nil || j.db.sql == nil {
+		return 0, ErrRuleYUnavailable
+	}
+	const maxIterations = 16 // Bound the number of sweeps per tick
+	var totalDeleted int64
+
+	for i := 0; i < maxIterations; i++ {
+		deleted, err := j.Sweep(ctx)
+		if err != nil {
+			return totalDeleted, err
+		}
+		if deleted == 0 {
+			break
+		}
+		totalDeleted += deleted
+	}
+	return totalDeleted, nil
+}
+
 // Run executes janitor sweeps on each tick until ctx is canceled.
 func (j *RuleYJanitor) Run(ctx context.Context) error {
 	if j == nil || j.db == nil || j.db.sql == nil {
@@ -94,8 +118,13 @@ func (j *RuleYJanitor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticks:
-			if _, err := j.Sweep(ctx); err != nil && !errors.Is(err, sql.ErrTxDone) && !errors.Is(err, context.Canceled) {
-				return err
+			if _, err := j.SweepUntilDrained(ctx); err != nil &&
+				!errors.Is(err, sql.ErrTxDone) &&
+				!errors.Is(err, context.Canceled) {
+				var coder codeError
+				if !errors.As(err, &coder) || coder.Code() != int(sqlite3.SQLITE_INTERRUPT) {
+					return err
+				}
 			}
 		}
 	}
