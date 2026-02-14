@@ -266,6 +266,76 @@ func TestRuleYStoreScanLimitIsCappedAt1000(t *testing.T) {
 	}
 }
 
+func TestRuleYStoreCASVerifyAffectedRow(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+
+	// Test 1: CAS on non-existent key with expectVersion=0 should succeed (create)
+	v1, err := store.CAS(ctx, "core_triggers", "new:key", 0, []byte("first"), RuleYPutOptions{})
+	if err != nil {
+		t.Fatalf("CAS create on new key: %v", err)
+	}
+	if v1 != 1 {
+		t.Fatalf("expected version 1 for new key, got %d", v1)
+	}
+
+	// Test 2: CAS with wrong expected version should fail
+	_, err = store.CAS(ctx, "core_triggers", "new:key", 999, []byte("stale"), RuleYPutOptions{})
+	if !errors.Is(err, ErrRuleYCASMismatch) {
+		t.Fatalf("expected cas mismatch for wrong version, got %v", err)
+	}
+
+	// Test 3: CAS with correct version should succeed
+	v2, err := store.CAS(ctx, "core_triggers", "new:key", v1, []byte("second"), RuleYPutOptions{})
+	if err != nil {
+		t.Fatalf("CAS update with correct version: %v", err)
+	}
+	if v2 != v1+1 {
+		t.Fatalf("expected version increment, got %d -> %d", v1, v2)
+	}
+
+	// Test 4: Concurrent first-writer race - both try to create same key
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := store.CAS(ctx, "core_triggers", "concurrent:key", 0, []byte("racer"), RuleYPutOptions{})
+			done <- err
+		}()
+	}
+
+	err1, err2 := <-done, <-done
+
+	// One should succeed, one should fail (either mismatch or unique constraint)
+	successCount := 0
+	if err1 == nil {
+		successCount++
+	}
+	if err2 == nil {
+		successCount++
+	}
+	if successCount != 1 {
+		t.Fatalf("expected exactly one CAS to succeed in race, got %d successes", successCount)
+	}
+
+	// Verify the key exists with version 1
+	entry, ok, err := store.Get(ctx, "core_triggers", "concurrent:key")
+	if err != nil {
+		t.Fatalf("get after race: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected key to exist after race")
+	}
+	if entry.Version != 1 {
+		t.Fatalf("expected version 1 after concurrent create, got %d", entry.Version)
+	}
+	if string(entry.Value) != "racer" {
+		t.Fatalf("expected value 'racer', got %q", entry.Value)
+	}
+}
+
 func TestRuleYJanitorSweepDeletesExpiredRowsInBatches(t *testing.T) {
 	t.Parallel()
 

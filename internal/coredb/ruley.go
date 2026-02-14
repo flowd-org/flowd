@@ -382,23 +382,32 @@ func (s *RuleYStore) CAS(ctx context.Context, namespace, key string, expectVersi
 	}
 
 	newVersion := expectVersion + 1
+	var affected int64
 	if !existed {
 		newVersion = 1
-		_, err = tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
 		)
+		if err != nil {
+			return 0, err
+		}
+		affected, _ = res.RowsAffected()
 	} else {
-		_, err = tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`UPDATE kv
 			SET v = ?, content_type = ?, version = ?, updated_at = ?, expires_at = ?
 			WHERE ns = ? AND k = ? AND version = ?`,
 			value, contentType, newVersion, updatedAt, expiresAt, ns, normalizedKey, expectVersion,
 		)
-	}
-	if err != nil {
-		return 0, err
+		if err != nil {
+			return 0, err
+		}
+		affected, _ = res.RowsAffected()
+		if affected == 0 {
+			return 0, ErrRuleYCASMismatch
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
