@@ -175,13 +175,20 @@ func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byt
 		}
 	} else {
 		// First writer for a missing key: attempt INSERT and handle concurrent first-writers gracefully.
-		_, err := tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
 		)
 		if err != nil {
-			// Another writer created the key concurrently. Re-read to get the existing version.
+			return 0, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		if affected != 1 {
+			// Another writer created the key concurrently or no row was inserted.
 			existingVersion, _, _, _, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
 			if err != nil {
 				return 0, err
@@ -400,9 +407,15 @@ func (s *RuleYStore) CAS(ctx context.Context, namespace, key string, expectVersi
 			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
 		)
 		if err != nil {
+			return 0, ErrRuleYCASMismatch
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
 			return 0, err
 		}
-		affected, _ = res.RowsAffected()
+		if affected != 1 {
+			return 0, ErrRuleYCASMismatch
+		}
 	} else {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE kv
