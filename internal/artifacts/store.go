@@ -88,6 +88,17 @@ func (s *Store) Write(ctx context.Context, artifactID string, src io.Reader) (in
 		_ = os.Remove(targetPath)
 		return 0, ErrArtifactTooLarge
 	}
+
+	// Sync and close the file handle, removing partial bytes on failure.
+	if syncErr := f.Sync(); syncErr != nil {
+		_ = os.Remove(targetPath)
+		return 0, fmt.Errorf("artifacts: sync: %w", syncErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		_ = os.Remove(targetPath)
+		return 0, fmt.Errorf("artifacts: close: %w", closeErr)
+	}
+
 	return written, nil
 }
 

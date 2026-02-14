@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,28 @@ func TestStoreWriteEnforcesSizeCap(t *testing.T) {
 
 	if _, err := store.Open(testArtifactID); err == nil {
 		t.Fatalf("expected oversized write to leave no artifact bytes on disk")
+	}
+}
+
+func TestStoreWriteHandlesCloseError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := NewStore(Options{RootDir: t.TempDir(), MaxArtifactBytes: 256 << 20})
+
+	// Write a valid artifact first to ensure the directory structure exists
+	written, err := store.Write(ctx, testArtifactID, strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("write first artifact payload: %v", err)
+	}
+	if written != 5 {
+		t.Fatalf("expected 5 written bytes, got %d", written)
+	}
+
+	// Verify the file exists
+	targetPath := store.pathForID(testArtifactID)
+	if _, statErr := os.Stat(targetPath); statErr != nil {
+		t.Fatalf("expected artifact file to exist: %v", statErr)
 	}
 }
 
