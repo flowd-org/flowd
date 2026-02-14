@@ -170,15 +170,24 @@ func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byt
 			WHERE ns = ? AND k = ?`,
 			value, contentType, newVersion, updatedAt, expiresAt, ns, normalizedKey,
 		)
+		if err != nil {
+			return 0, err
+		}
 	} else {
-		_, err = tx.ExecContext(ctx,
+		// First writer for a missing key: attempt INSERT and handle concurrent first-writers gracefully.
+		_, err := tx.ExecContext(ctx,
 			`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
 		)
-	}
-	if err != nil {
-		return 0, err
+		if err != nil {
+			// Another writer created the key concurrently. Re-read to get the existing version.
+			existingVersion, _, _, _, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
+			if err != nil {
+				return 0, err
+			}
+			newVersion = existingVersion
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
