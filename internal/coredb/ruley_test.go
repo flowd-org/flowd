@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -333,6 +334,138 @@ func TestRuleYStoreCASVerifyAffectedRow(t *testing.T) {
 	}
 	if string(entry.Value) != "racer" {
 		t.Fatalf("expected value 'racer', got %q", entry.Value)
+	}
+}
+
+func TestRuleYStorePutConcurrentExistingKeyIncrementsVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+
+	const N = 20
+
+	// Seed the key with version 1
+	v0, err := store.Put(ctx, "core_triggers", "concurrent:put", []byte("seed"), RuleYPutOptions{})
+	if err != nil {
+		t.Fatalf("seed put: %v", err)
+	}
+	if v0 != 1 {
+		t.Fatalf("expected seed version 1, got %d", v0)
+	}
+
+	// Spawn N goroutines that all call Put on the same key
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(N)
+	errs := make(chan error, N)
+	versions := make(chan int64, N)
+
+	for i := 0; i < N; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-start
+			v, err := store.Put(ctx, "core_triggers", "concurrent:put", []byte(fmt.Sprintf("v-%d", i)), RuleYPutOptions{})
+			errs <- err
+			versions <- v
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(versions)
+
+	// Assert all errors are nil
+	for i := 0; i < N; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("goroutine %d returned error: %v", i, err)
+		}
+	}
+
+	// Get the final entry and verify version increased by N
+	entry, ok, err := store.Get(ctx, "core_triggers", "concurrent:put")
+	if err != nil {
+		t.Fatalf("get after concurrent puts: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected key to exist after concurrent puts")
+	}
+	if entry.Version != v0+int64(N) {
+		t.Errorf("expected version %d (seed %d + %d writes), got %d", v0+int64(N), v0, N, entry.Version)
+	}
+
+	// Optional: verify we saw all versions from v0+1 to v0+N
+	seen := make(map[int64]bool)
+	for i := 0; i < N; i++ {
+		v := <-versions
+		if seen[v] {
+			t.Errorf("duplicate version returned: %d", v)
+		}
+		seen[v] = true
+	}
+
+	for v := v0 + 1; v <= v0+int64(N); v++ {
+		if !seen[v] {
+			t.Errorf("missing expected version: %d", v)
+		}
+	}
+}
+
+func TestRuleYStorePutConcurrentCreateDoesNotLeakConstraintError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+
+	const N = 20
+
+	// Ensure the key does NOT exist
+	if _, ok, err := store.Get(ctx, "core_triggers", "concurrent:create"); err != nil {
+		t.Fatalf("get before test: %v", err)
+	} else if ok {
+		t.Fatalf("key should not exist before concurrent create test")
+	}
+
+	// Spawn N goroutines that all call Put to create the same new key
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(N)
+	errs := make(chan error, N)
+
+	for range N {
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := store.Put(ctx, "core_triggers", "concurrent:create", []byte("x"), RuleYPutOptions{})
+			errs <- err
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	// Assert no goroutine returns an error (no raw constraint errors)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine returned error: %v", err)
+		}
+	}
+
+	// Verify the key exists with expected version
+	entry, ok, err := store.Get(ctx, "core_triggers", "concurrent:create")
+	if err != nil {
+		t.Fatalf("get after concurrent creates: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected key to exist after concurrent creates")
+	}
+	if entry.Version != int64(N) {
+		t.Errorf("expected version %d, got %d", N, entry.Version)
 	}
 }
 
