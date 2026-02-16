@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
@@ -21,6 +23,20 @@ var ruleYKeyPattern = regexp.MustCompile(`^[a-z0-9._:/-]{1,128}$`)
 var defaultRuleYNamespaces = map[string]RuleYNamespaceQuota{
 	"core_triggers":         {MaxRows: ruleYDefaultMaxRows, MaxBytes: ruleYDefaultMaxBytes},
 	"core_invocation_state": {MaxRows: ruleYDefaultMaxRows, MaxBytes: ruleYDefaultMaxBytes},
+}
+
+// isSQLiteConstraint returns true if err is a SQLite constraint error.
+func isSQLiteConstraint(err error) bool {
+	var coder interface{ Code() int }
+	if !errors.As(err, &coder) {
+		return false
+	}
+	switch coder.Code() {
+	case int(sqlite3.SQLITE_CONSTRAINT), int(sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY), int(sqlite3.SQLITE_CONSTRAINT_UNIQUE):
+		return true
+	default:
+		return false
+	}
 }
 
 // RuleYStore provides a constrained key/value surface backed by the Core DB.
@@ -393,7 +409,10 @@ func (s *RuleYStore) CAS(ctx context.Context, namespace, key string, expectVersi
 			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
 		)
 		if err != nil {
-			return 0, ErrRuleYCASMismatch
+			if isSQLiteConstraint(err) {
+				return 0, ErrRuleYCASMismatch
+			}
+			return 0, err
 		}
 		affected, err := res.RowsAffected()
 		if err != nil {

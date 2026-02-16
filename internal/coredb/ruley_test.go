@@ -335,6 +335,22 @@ func TestRuleYStoreCASVerifyAffectedRow(t *testing.T) {
 	if string(entry.Value) != "racer" {
 		t.Fatalf("expected value 'racer', got %q", entry.Value)
 	}
+
+	// Test 5: CAS create with canceled context should propagate error (not convert to mismatch)
+	t.Run("cas create propagates non-constraint errors", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := store.CAS(ctx, "core_triggers", "ctx:cancel", 0, []byte("v"), RuleYPutOptions{})
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+		if errors.Is(err, ErrRuleYCASMismatch) {
+			t.Fatalf("expected propagated error, got CAS mismatch")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	})
 }
 
 func TestRuleYStorePutConcurrentExistingKeyIncrementsVersion(t *testing.T) {
