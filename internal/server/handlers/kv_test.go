@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -17,10 +19,8 @@ func TestKVHandlerPutGetDelete(t *testing.T) {
 	ctx := context.Background()
 	store := coredb.NewRuleYStore(openTestDB(t))
 	h := NewKVHandler(KVConfig{
-		Store: store,
-		Allowlist: map[string]KVNamespaceConfig{
-			"core_triggers": {},
-		},
+		Store:     store,
+		Allowlist: map[string]KVNamespaceConfig{"core_triggers": {}},
 	})
 
 	putBody := map[string]string{"value": base64.StdEncoding.EncodeToString([]byte("bar"))}
@@ -217,4 +217,56 @@ func openTestDB(t *testing.T) *coredb.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+type fakeRuleYStore struct{}
+
+func (f *fakeRuleYStore) Put(ctx context.Context, namespace, key string, value []byte, opts coredb.RuleYPutOptions) (int64, error) {
+	return 0, errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func (f *fakeRuleYStore) Get(ctx context.Context, namespace, key string) (coredb.RuleYGetResult, bool, error) {
+	return coredb.RuleYGetResult{}, false, errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func (f *fakeRuleYStore) Del(ctx context.Context, namespace, key string) (bool, error) {
+	return false, errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func (f *fakeRuleYStore) Scan(ctx context.Context, namespace, prefix, cursor string, limit int) ([]coredb.RuleYItem, string, error) {
+	return nil, "", errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func TestKVHandlerInternalErrorIsSanitized(t *testing.T) {
+	ctx := context.Background()
+	h := NewKVHandler(KVConfig{
+		Store: &fakeRuleYStore{},
+		Allowlist: map[string]KVNamespaceConfig{
+			"core_triggers": {},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/kv/core_triggers/foo", nil).WithContext(ctx)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.Code)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if detail, ok := body["detail"]; ok && detail != nil {
+		detailStr := fmt.Sprintf("%v", detail)
+		if strings.Contains(detailStr, "leaky internal") || strings.Contains(detailStr, "/var/lib/flowd") {
+			t.Fatalf("response detail leaked internal error: %v", detail)
+		}
+	}
+
+	if body["title"] != "kv operation failed" {
+		t.Fatalf("expected title 'kv operation failed', got %v", body["title"])
+	}
 }

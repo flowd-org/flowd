@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,9 +32,17 @@ type KVNamespaceConfig struct {
 	MaxRows  int64
 }
 
+// RuleYStore is an interface for KV store operations (testable).
+type RuleYStore interface {
+	Put(ctx context.Context, namespace, key string, value []byte, opts coredb.RuleYPutOptions) (int64, error)
+	Get(ctx context.Context, namespace, key string) (coredb.RuleYGetResult, bool, error)
+	Del(ctx context.Context, namespace, key string) (bool, error)
+	Scan(ctx context.Context, namespace, prefix, cursor string, limit int) ([]coredb.RuleYItem, string, error)
+}
+
 // KVConfig configures the KV handler.
 type KVConfig struct {
-	Store     *coredb.RuleYStore
+	Store     RuleYStore
 	Allowlist map[string]KVNamespaceConfig
 }
 
@@ -50,7 +59,7 @@ func NewKVHandler(cfg KVConfig) http.Handler {
 }
 
 type kvHandler struct {
-	store     *coredb.RuleYStore
+	store     RuleYStore
 	allowlist map[string]KVNamespaceConfig
 }
 
@@ -224,7 +233,13 @@ func (h *kvHandler) writeStoreError(w http.ResponseWriter, r *http.Request, name
 	case errors.Is(err, coredb.ErrRuleYCASMismatch):
 		response.Write(w, response.New(http.StatusConflict, "cas mismatch"))
 	default:
-		response.Write(w, response.New(http.StatusInternalServerError, "kv operation failed", response.WithDetail(err.Error())))
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			logger.Error("kv.internal_error",
+				slog.String("namespace", strings.ToLower(strings.TrimSpace(namespace))),
+				slog.Any("err", err),
+			)
+		}
+		response.Write(w, response.New(http.StatusInternalServerError, "kv operation failed"))
 	}
 }
 
