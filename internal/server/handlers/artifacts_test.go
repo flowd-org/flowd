@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -155,4 +156,90 @@ func TestArtifactsHandler_LogsStreamingFailures(t *testing.T) {
 			t.Fatalf("expected reason io_error, got %v", last.attrs["reason"])
 		}
 	})
+}
+
+func TestArtifactsHandler_NoPathLeakOnError(t *testing.T) {
+	const artifactID = "018f22b0-5678-7abc-8def-0123456789ab"
+
+	dataDir := t.TempDir()
+	prevDataDir := paths.DataDir()
+	paths.SetDataDirOverride(dataDir)
+	t.Cleanup(func() { paths.SetDataDirOverride(prevDataDir) })
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	metaStore := coredb.NewArtifactStore(db)
+	byteStore := artifacts.NewStore(artifacts.Options{})
+	if _, err := byteStore.Write(context.Background(), artifactID, strings.NewReader("hello")); err != nil {
+		t.Fatalf("write artifact bytes: %v", err)
+	}
+	if err := metaStore.Create(context.Background(), coredb.ArtifactRecord{
+		ArtifactID:  artifactID,
+		Tenant:      "acme",
+		JobID:       "demo",
+		RunID:       "run-1",
+		Name:        "stdout",
+		ContentType: "text/plain; charset=utf-8",
+		SizeBytes:   5,
+	}); err != nil {
+		t.Fatalf("create artifact metadata: %v", err)
+	}
+
+	// Open the byte file and set permissions to 0 so subsequent opens fail with path in error
+	f, err := byteStore.Open(artifactID)
+	if err != nil {
+		t.Fatalf("open artifact bytes: %v", err)
+	}
+	path := f.Name()
+	f.Close()
+
+	// Set permissions to 0 to force permission denied error that includes the path
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("chmod 0: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	capturer := &artifactCaptureHandler{}
+	logger := slog.New(capturer)
+	ctx := requestctx.WithLogger(context.Background(), logger)
+	ctx = requestctx.WithPrincipal(ctx, "tester")
+	ctx = requestctx.WithTenant(ctx, "acme")
+	req := httptest.NewRequest(http.MethodGet, "/artifacts/"+artifactID, nil).WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	NewArtifactsHandler(ArtifactsConfig{MetadataStore: metaStore, ByteStore: byteStore}).ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if strings.Contains(body, path) {
+		t.Errorf("response body leaks internal path: %q contains %q", body, path)
+	}
+	if strings.Contains(body, "/") && !strings.Contains(body, "artifact not found") && !strings.Contains(body, "tenant mismatch") {
+		// The response should be a generic error without any path-like content
+		t.Errorf("response body appears to contain filesystem path: %q", body)
+	}
+
+	// Verify the error was logged server-side
+	found := false
+	for _, rec := range capturer.records {
+		if rec.msg == "artifact.open.failed" {
+			found = true
+			if code, ok := rec.attrs["code"].(string); !ok || code != "artifact/open-failed" {
+				t.Errorf("expected code 'artifact/open-failed', got %v", code)
+			}
+			if artID, ok := rec.attrs["artifact_id"].(string); !ok || artID != artifactID {
+				t.Errorf("expected artifact_id %q, got %v", artifactID, artID)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected 'artifact.open.failed' log record not found")
+	}
 }

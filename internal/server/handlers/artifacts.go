@@ -54,7 +54,14 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			response.Write(w, response.New(http.StatusNotFound, "artifact not found"))
 			return
 		}
-		response.Write(w, response.New(http.StatusInternalServerError, "artifact lookup failed", response.WithDetail(err.Error())))
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			logger.Error("artifact.lookup.failed",
+				slog.String("code", "artifact/lookup-failed"),
+				slog.String("artifact_id", artifactID),
+				slog.String("error", err.Error()),
+			)
+		}
+		response.Write(w, response.New(http.StatusInternalServerError, "artifact lookup failed"))
 		return
 	}
 	if !found {
@@ -82,7 +89,14 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			response.Write(w, response.New(http.StatusNotFound, "artifact not found"))
 			return
 		}
-		response.Write(w, response.New(http.StatusInternalServerError, "artifact read failed", response.WithDetail(err.Error())))
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			logger.Error("artifact.open.failed",
+				slog.String("code", "artifact/open-failed"),
+				slog.String("artifact_id", record.ArtifactID),
+				slog.String("error", err.Error()),
+			)
+		}
+		response.Write(w, response.New(http.StatusInternalServerError, "artifact read failed"))
 		return
 	}
 	defer f.Close()
