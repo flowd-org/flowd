@@ -41,7 +41,27 @@ func Run(ctx context.Context, cfg Config) error {
 	logger := newLogger(norm)
 	janitorCtx, janitorCancel := context.WithCancel(ctx)
 	defer janitorCancel()
-	janitor := coredb.NewRuleYJanitor(db, coredb.RuleYJanitorOptions{})
+	// Derive janitor drain capacity from the largest namespace quota to satisfy ≤60s deletion SLA.
+	// Worst case: all rows in a namespace expire at once. We must delete maxNamespaceMaxRows in one tick.
+	var maxRows int
+	for _, nsCfg := range norm.RuleY.Allowlist {
+		if int(nsCfg.MaxRows) > maxRows {
+			maxRows = int(nsCfg.MaxRows)
+		}
+	}
+	if maxRows <= 0 {
+		maxRows = defaultRuleYMaxRows
+	}
+	// Use batch * maxIterations >= maxRows. Default batch=256, so maxIterations = ceil(maxRows/256).
+	const batch = 256
+	maxIter := (maxRows + batch - 1) / batch
+	if maxIter < 16 {
+		maxIter = 16 // keep some headroom for small namespaces
+	}
+	janitor := coredb.NewRuleYJanitor(db, coredb.RuleYJanitorOptions{
+		Batch:         batch,
+		MaxIterations: maxIter,
+	})
 	janitorErrCh := make(chan error, 1)
 	go func() {
 		janitorErrCh <- janitor.Run(janitorCtx)

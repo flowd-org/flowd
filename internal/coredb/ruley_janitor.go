@@ -16,10 +16,11 @@ const (
 
 // RuleYJanitorOptions controls janitor runtime behavior.
 type RuleYJanitorOptions struct {
-	Now      func() time.Time
-	Tick     <-chan time.Time
-	Interval time.Duration
-	Batch    int
+	Now           func() time.Time
+	Tick          <-chan time.Time
+	Interval      time.Duration
+	Batch         int
+	MaxIterations int // Max sweeps per tick (default: 16)
 }
 
 // RuleYJanitor removes expired KV rows in bounded batches.
@@ -29,6 +30,7 @@ type RuleYJanitor struct {
 	tick     <-chan time.Time
 	interval time.Duration
 	batch    int
+	maxIter  int // max sweeps per tick (bounded)
 }
 
 // NewRuleYJanitor constructs a janitor with defaults suitable for server mode.
@@ -45,12 +47,17 @@ func NewRuleYJanitor(db *DB, opts RuleYJanitorOptions) *RuleYJanitor {
 	if batch <= 0 {
 		batch = defaultRuleYJanitorBatch
 	}
+	maxIterations := opts.MaxIterations
+	if maxIterations <= 0 {
+		maxIterations = 16
+	}
 	return &RuleYJanitor{
 		db:       db,
 		now:      nowFn,
 		tick:     opts.Tick,
 		interval: interval,
 		batch:    batch,
+		maxIter:  maxIterations,
 	}
 }
 
@@ -83,10 +90,9 @@ func (j *RuleYJanitor) SweepUntilDrained(ctx context.Context) (int64, error) {
 	if j == nil || j.db == nil || j.db.sql == nil {
 		return 0, ErrRuleYUnavailable
 	}
-	const maxIterations = 16 // Bound the number of sweeps per tick
 	var totalDeleted int64
 
-	for i := 0; i < maxIterations; i++ {
+	for i := 0; i < j.maxIter; i++ {
 		deleted, err := j.Sweep(ctx)
 		if err != nil {
 			return totalDeleted, err

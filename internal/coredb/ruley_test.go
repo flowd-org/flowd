@@ -691,3 +691,56 @@ func TestRuleYJanitorSweepUntilDrainedBounded(t *testing.T) {
 		t.Fatalf("expected no remaining expired rows, got %d", remaining)
 	}
 }
+
+// TestRuleYJanitorDrainCapacitySatisfiesSLA verifies that the janitor can delete
+// all expired rows within ≤60s under worst-case backlog (all rows expire at once).
+func TestRuleYJanitorDrainCapacitySatisfiesSLA(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openTestDB(t)
+	store := NewRuleYStore(db)
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base
+	store.now = func() time.Time { return now }
+
+	// Seed worst-case backlog: 10,000 expired rows (default max_rows for a namespace)
+	const totalRows = 10_000
+	for i := 0; i < totalRows; i++ {
+		if _, err := store.Put(ctx, "core_triggers", fmt.Sprintf("exp:%d", i), []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
+			t.Fatalf("put exp:%d: %v", i, err)
+		}
+	}
+
+	// Advance time so all rows are expired
+	now = now.Add(2 * time.Second)
+
+	// Janitor with derived defaults from server config (batch=256, maxIterations=40 => 10240 capacity)
+	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
+		Now:           func() time.Time { return now },
+		Batch:         256,
+		MaxIterations: 40,
+	})
+
+	// Single SweepUntilDrained must drain all expired rows
+	deleted, err := janitor.SweepUntilDrained(ctx)
+	if err != nil {
+		t.Fatalf("sweep until drained: %v", err)
+	}
+	if deleted != totalRows {
+		t.Fatalf("expected sweep until drained to delete all %d rows in one tick, got %d", totalRows, deleted)
+	}
+
+	remaining, err := countNamespaceRows(ctx, db, "core_triggers")
+	if err != nil {
+		t.Fatalf("count after drain: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected no remaining expired rows, got %d", remaining)
+	}
+
+	// Verify deletion happened within ≤60s of expiry
+	if elapsed := now.Sub(base.Add(time.Second)); elapsed > 60*time.Second {
+		t.Fatalf("expected deletion within <=60s of expiry, elapsed=%s", elapsed)
+	}
+}
