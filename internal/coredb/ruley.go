@@ -139,7 +139,7 @@ func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byt
 	defer func() { _ = tx.Rollback() }()
 
 	nowMillis := s.now().UnixMilli()
-	existingVersion, existed, existedCounted, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
+	_, existed, existedCounted, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
 	if err != nil {
 		return 0, err
 	}
@@ -161,40 +161,26 @@ func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byt
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+
+	// Atomically upsert the row and increment version in a single statement.
+	// This ensures:
+	// - No duplicate versions under concurrent writers (version is incremented by the DB)
+	// - No raw UNIQUE/constraint errors for concurrent first-writers (conflict handled by ON CONFLICT)
 	newVersion := int64(1)
-	if existed {
-		newVersion = existingVersion + 1
-		_, err = tx.ExecContext(ctx,
-			`UPDATE kv
-			SET v = ?, content_type = ?, version = ?, updated_at = ?, expires_at = ?
-			WHERE ns = ? AND k = ?`,
-			value, contentType, newVersion, updatedAt, expiresAt, ns, normalizedKey,
-		)
-		if err != nil {
-			return 0, err
-		}
-	} else {
-		// First writer for a missing key: attempt INSERT and handle concurrent first-writers gracefully.
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
-		)
-		if err != nil {
-			return 0, err
-		}
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return 0, err
-		}
-		if affected != 1 {
-			// Another writer created the key concurrently or no row was inserted.
-			existingVersion, _, _, _, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
-			if err != nil {
-				return 0, err
-			}
-			newVersion = existingVersion
-		}
+	row := tx.QueryRowContext(ctx,
+		`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
+		VALUES (?, ?, ?, ?, 1, ?, ?)
+		ON CONFLICT(ns, k) DO UPDATE SET
+		  v = excluded.v,
+		  content_type = excluded.content_type,
+		  version = kv.version + 1,
+		  updated_at = excluded.updated_at,
+		  expires_at = excluded.expires_at
+		RETURNING version`,
+		ns, normalizedKey, value, contentType, updatedAt, expiresAt,
+	)
+	if err := row.Scan(&newVersion); err != nil {
+		return 0, err
 	}
 
 	if err := tx.Commit(); err != nil {
