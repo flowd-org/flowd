@@ -46,6 +46,16 @@ func Run(ctx context.Context, cfg Config) error {
 	go func() {
 		janitorErrCh <- janitor.Run(janitorCtx)
 	}()
+
+	// Janitor supervisor: detect failures during steady state and trigger shutdown.
+	// This ensures janitor errors are surfaced immediately rather than only on shutdown.
+	go func() {
+		if err := <-janitorErrCh; err != nil && !errors.Is(err, coredb.ErrRuleYUnavailable) {
+			slog.Default().Error("Rule-Y KV janitor failed", slog.String("error", err.Error()))
+			janitorCancel()
+		}
+	}()
+
 	runtimeDetector := norm.RuntimeDetector
 	if runtimeDetector == nil {
 		runtimeDetector = func() (container.Runtime, error) {
