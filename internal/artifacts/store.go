@@ -76,7 +76,13 @@ func (s *Store) Write(ctx context.Context, artifactID string, src io.Reader) (in
 		}
 		return 0, fmt.Errorf("artifacts: open target: %w", err)
 	}
-	defer f.Close()
+
+	closed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
+		}
+	}()
 
 	limitReader := io.LimitReader(src, s.maxArtifactBytes+1)
 	written, err := copyWithContext(ctx, f, limitReader)
@@ -98,6 +104,7 @@ func (s *Store) Write(ctx context.Context, artifactID string, src io.Reader) (in
 		_ = os.Remove(targetPath)
 		return 0, fmt.Errorf("artifacts: close: %w", closeErr)
 	}
+	closed = true
 
 	return written, nil
 }
