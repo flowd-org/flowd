@@ -93,11 +93,7 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		normalizedTenant = defaultTenant
 	}
 	if normalizedTenant != resolvedTenant {
-		response.Write(w, response.New(http.StatusForbidden, "tenant mismatch",
-			response.WithType(response.ProblemTypeTenantMismatch),
-			response.WithExtension("code", response.ProblemCodeTenantMismatch),
-			response.WithDetail("artifact is not accessible for this tenant"),
-		))
+		response.Write(w, response.New(http.StatusNotFound, "artifact not found"))
 		return
 	}
 

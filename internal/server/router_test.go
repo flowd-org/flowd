@@ -356,8 +356,8 @@ func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
 
 		handler.ServeHTTP(resp, req)
 
-		if resp.Code != http.StatusForbidden {
-			t.Fatalf("expected 403, got %d", resp.Code)
+		if resp.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.Code)
 		}
 	})
 
@@ -369,8 +369,8 @@ func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
 
 		handler.ServeHTTP(resp, req)
 
-		if resp.Code != http.StatusForbidden {
-			t.Fatalf("expected 403, got %d", resp.Code)
+		if resp.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.Code)
 		}
 
 		var problem map[string]any
