@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -177,21 +176,7 @@ func Run(ctx context.Context, cfg Config) error {
 				<-errCh
 			}()
 			return janitorErr
-		case <-time.After(norm.ShutdownTimeout):
-			// Safety: if we've been running too long without any event, stop anyway.
-			janitorCancel()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
-			defer cancel()
-			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return err
-			}
-			if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return err
-			}
-			if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
-				return janitorErr
-			}
-			return errors.New("shutdown timeout reached")
+
 		}
 	}
 }
