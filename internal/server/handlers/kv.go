@@ -141,7 +141,7 @@ func (h *kvHandler) handleGet(w http.ResponseWriter, r *http.Request, namespace,
 		"timestamp": entry.UpdatedAt.Format(time.RFC3339Nano),
 		"version":   entry.Version,
 	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(r.Context(), w, resp, http.StatusOK)
 }
 
 func (h *kvHandler) handleDelete(w http.ResponseWriter, r *http.Request, namespace, key string) {
@@ -205,7 +205,7 @@ func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace
 	if nextCursor != "" {
 		resp["nextCursor"] = base64.StdEncoding.EncodeToString([]byte(nextCursor))
 	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(r.Context(), w, resp, http.StatusOK)
 }
 
 func (h *kvHandler) writeStoreError(w http.ResponseWriter, r *http.Request, namespace string, err error) {
@@ -256,10 +256,15 @@ func namespaceForbiddenProblem() response.Problem {
 	)
 }
 
-func writeJSON(w http.ResponseWriter, payload any, status int) {
+func writeJSON(ctx context.Context, w http.ResponseWriter, payload any, status int) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "encode response failed", response.WithDetail(err.Error())))
+		if logger := requestctx.Logger(ctx); logger != nil {
+			logger.Error("kv/encode-response-failed",
+				slog.Any("err", err),
+			)
+		}
+		response.Write(w, response.New(http.StatusInternalServerError, "encode response failed"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
