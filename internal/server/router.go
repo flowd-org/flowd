@@ -39,12 +39,18 @@ func Run(ctx context.Context, cfg Config) error {
 	norm := cfg.normalize()
 	paths.SetDataDirOverride(norm.DataDir)
 
-	db, err := coredb.Open(ctx, norm.CoreDBOptions)
-	if err != nil {
-		return fmt.Errorf("open core db: %w", err)
+	db := norm.CoreDB
+	if db == nil {
+		opened, err := coredb.Open(ctx, norm.CoreDBOptions)
+		if err != nil {
+			return fmt.Errorf("open core db: %w", err)
+		}
+		db = opened
+		defer db.Close()
+		norm.CoreDB = db
 	}
-	defer db.Close()
-	norm.CoreDB = db
+	// if db was provided: do NOT Close it here
+	// proceed using db for janitor + handlers
 
 	logger := newLogger(norm)
 	janitorCtx, janitorCancel := context.WithCancel(ctx)
