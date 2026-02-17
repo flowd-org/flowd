@@ -397,16 +397,12 @@ func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
 func TestRun_StopsOnJanitorFailure(t *testing.T) {
 	const sentinelErr = "janitor failed"
 
-	// Override the janitor start function to return a channel that immediately sends an error.
+	// Override the janitor start function to immediately return an error.
 	originalStartRuleYJanitor := startRuleYJanitor
 	defer func() { startRuleYJanitor = originalStartRuleYJanitor }()
 
 	startRuleYJanitor = func(ctx context.Context, j *coredb.RuleYJanitor) error {
-		ch := make(chan error, 1)
-		go func() {
-			ch <- errors.New(sentinelErr)
-		}()
-		return nil // Run returns immediately
+		return errors.New(sentinelErr)
 	}
 
 	// Use a unique temp directory to avoid SQLite locking issues with concurrent tests.

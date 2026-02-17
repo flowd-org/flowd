@@ -72,7 +72,7 @@ func Run(ctx context.Context, cfg Config) error {
 	})
 	janitorErrCh := make(chan error, 1)
 	go func() {
-		janitorErrCh <- janitor.Run(janitorCtx)
+		janitorErrCh <- startRuleYJanitor(janitorCtx, janitor)
 	}()
 
 	runtimeDetector := norm.RuntimeDetector
