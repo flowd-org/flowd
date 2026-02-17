@@ -88,7 +88,11 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Write(w, *prob)
 		return
 	}
-	if strings.TrimSpace(record.Tenant) != strings.TrimSpace(resolvedTenant) {
+	normalizedTenant := strings.TrimSpace(record.Tenant)
+	if normalizedTenant == "" {
+		normalizedTenant = defaultTenant
+	}
+	if normalizedTenant != resolvedTenant {
 		response.Write(w, response.New(http.StatusForbidden, "tenant mismatch",
 			response.WithType(response.ProblemTypeTenantMismatch),
 			response.WithExtension("code", response.ProblemCodeTenantMismatch),
