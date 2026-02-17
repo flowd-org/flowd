@@ -141,7 +141,9 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if record.SizeBytes >= 0 {
 				attrs = append(attrs, slog.Int64("expected_bytes", record.SizeBytes))
 			}
-			attrs = append(attrs, slog.String("error", copyErr.Error()))
+			// Sanitize the error attribute to avoid leaking filesystem paths
+			_, safeAttrs := safeLogError(copyErr)
+			attrs = append(attrs, safeAttrs...)
 
 			switch reason {
 			case "context_canceled":
