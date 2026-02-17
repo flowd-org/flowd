@@ -67,15 +67,6 @@ func Run(ctx context.Context, cfg Config) error {
 		janitorErrCh <- janitor.Run(janitorCtx)
 	}()
 
-	// Janitor supervisor: detect failures during steady state and trigger shutdown.
-	// This ensures janitor errors are surfaced immediately rather than only on shutdown.
-	go func() {
-		if err := <-janitorErrCh; err != nil && !errors.Is(err, coredb.ErrRuleYUnavailable) {
-			slog.Default().Error("Rule-Y KV janitor failed", slog.String("error", err.Error()))
-			janitorCancel()
-		}
-	}()
-
 	runtimeDetector := norm.RuntimeDetector
 	if runtimeDetector == nil {
 		runtimeDetector = func() (container.Runtime, error) {
@@ -119,9 +110,6 @@ func Run(ctx context.Context, cfg Config) error {
 	select {
 	case <-ctx.Done():
 		janitorCancel()
-		if err := <-janitorErrCh; err != nil && !errors.Is(err, coredb.ErrRuleYUnavailable) {
-			return err
-		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -130,9 +118,14 @@ func Run(ctx context.Context, cfg Config) error {
 		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
+		// Wait for janitor to finish after shutdown.
+		if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+			return janitorErr
+		}
 		return ctx.Err()
 	case err := <-errCh:
 		janitorCancel()
+		// Wait for janitor to finish after server stops.
 		if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
 			return janitorErr
 		}
