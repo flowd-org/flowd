@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -22,6 +23,13 @@ import (
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/server/sse"
 )
+
+// startRuleYJanitor is an injection hook for testing. In production, it calls janitor.Run.
+var startRuleYJanitor = startRuleYJanitorReal
+
+func startRuleYJanitorReal(ctx context.Context, j *coredb.RuleYJanitor) error {
+	return j.Run(ctx)
+}
 
 // Run boots the HTTP server until the context is canceled or an unrecoverable error occurs.
 func Run(ctx context.Context, cfg Config) error {
@@ -107,32 +115,78 @@ func Run(ctx context.Context, cfg Config) error {
 		errCh <- server.ListenAndServe()
 	}()
 
-	select {
-	case <-ctx.Done():
-		janitorCancel()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// Supervise janitor during steady state and stop the HTTP server on non-benign errors.
+	// This select runs until one of: context cancellation, server error, or janitor failure.
+	for {
+		select {
+		case <-ctx.Done():
+			janitorCancel()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			// Wait for janitor to finish after shutdown.
+			if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				return janitorErr
+			}
+			return ctx.Err()
+		case err := <-errCh:
+			janitorCancel()
+			// Wait for janitor to finish after server stops.
+			if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				return janitorErr
+			}
+			if err == nil || errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
 			return err
-		}
-		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		// Wait for janitor to finish after shutdown.
-		if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+		case janitorErr := <-janitorErrCh:
+			// Janitor failed during steady state.
+			if janitorErr == nil || errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				// Benign error - continue shutdown path.
+				janitorCancel()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+				defer cancel()
+				if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				return janitorErr
+			}
+			logger.Error("server.ruley.janitor_failed", slog.String("error", janitorErr.Error()))
+			janitorCancel()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			// Drain errCh to avoid goroutine leak.
+			go func() {
+				<-errCh
+			}()
 			return janitorErr
+		case <-time.After(norm.ShutdownTimeout):
+			// Safety: if we've been running too long without any event, stop anyway.
+			janitorCancel()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				return janitorErr
+			}
+			return errors.New("shutdown timeout reached")
 		}
-		return ctx.Err()
-	case err := <-errCh:
-		janitorCancel()
-		// Wait for janitor to finish after server stops.
-		if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
-			return janitorErr
-		}
-		if err == nil || errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
 	}
 }
 

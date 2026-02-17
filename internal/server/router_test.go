@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -389,4 +390,50 @@ func TestArtifactsDownloadEndpointAuthzAndTenantIsolation(t *testing.T) {
 			t.Fatalf("response must not leak tenant identifiers, got %s", body)
 		}
 	})
+}
+
+// TestRun_StopsOnJanitorFailure verifies that the server stops when the janitor fails
+// during steady state (not during shutdown).
+func TestRun_StopsOnJanitorFailure(t *testing.T) {
+	const sentinelErr = "janitor failed"
+
+	// Override the janitor start function to return a channel that immediately sends an error.
+	originalStartRuleYJanitor := startRuleYJanitor
+	defer func() { startRuleYJanitor = originalStartRuleYJanitor }()
+
+	startRuleYJanitor = func(ctx context.Context, j *coredb.RuleYJanitor) error {
+		ch := make(chan error, 1)
+		go func() {
+			ch <- errors.New(sentinelErr)
+		}()
+		return nil // Run returns immediately
+	}
+
+	// Use a unique temp directory to avoid SQLite locking issues with concurrent tests.
+	tempDir := t.TempDir()
+	cfg := Config{
+		Bind:    "127.0.0.1:0",
+		Profile: "permissive",
+		DataDir: tempDir,
+	}
+	cfg = cfg.normalize()
+
+	db, err := coredb.Open(context.Background(), cfg.CoreDBOptions)
+	if err != nil {
+		t.Fatalf("open core db: %v", err)
+	}
+	defer db.Close()
+	cfg.CoreDB = db
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = Run(ctx, cfg)
+
+	if err == nil {
+		t.Fatal("expected Run to return an error")
+	}
+	if !strings.Contains(err.Error(), sentinelErr) {
+		t.Fatalf("expected error to contain %q, got %v", sentinelErr, err)
+	}
 }
