@@ -414,17 +414,10 @@ func TestRun_StopsOnJanitorFailure(t *testing.T) {
 	}
 	cfg = cfg.normalize()
 
-	db, err := coredb.Open(context.Background(), cfg.CoreDBOptions)
-	if err != nil {
-		t.Fatalf("open core db: %v", err)
-	}
-	defer db.Close()
-	cfg.CoreDB = db
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = Run(ctx, cfg)
+	err := Run(ctx, cfg)
 
 	if err == nil {
 		t.Fatal("expected Run to return an error")
