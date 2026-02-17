@@ -231,11 +231,18 @@ func TestArtifactsHandler_NoPathLeakOnError(t *testing.T) {
 	for _, rec := range capturer.records {
 		if rec.msg == "artifact.open.failed" {
 			found = true
-			if code, ok := rec.attrs["code"].(string); !ok || code != "artifact/open-failed" {
-				t.Errorf("expected code 'artifact/open-failed', got %v", code)
+			code, ok := rec.attrs["code"].(string)
+			if !ok || (code != "artifact/open-failed" && code != "artifact_path_error") {
+				t.Errorf("expected code 'artifact/open-failed' or 'artifact_path_error', got %v", code)
 			}
 			if artID, ok := rec.attrs["artifact_id"].(string); !ok || artID != artifactID {
 				t.Errorf("expected artifact_id %q, got %v", artifactID, artID)
+			}
+			// Ensure no path leakage in any string attribute
+			for k, v := range rec.attrs {
+				if s, ok := v.(string); ok && strings.Contains(s, "/") {
+					t.Errorf("log attr %q leaks filesystem path: %q", k, s)
+				}
 			}
 		}
 	}

@@ -32,6 +32,19 @@ type artifactsHandler struct {
 	bytes *artifacts.Store
 }
 
+// safeLogError returns a safe error string and attributes for logging.
+// If the error is an os.PathError, it omits the path to avoid leaking filesystem paths.
+func safeLogError(err error) (code string, attrs []any) {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return "artifact_path_error", []any{
+			slog.String("op", pe.Op),
+			slog.String("error", pe.Err.Error()),
+		}
+	}
+	return "artifact_internal_error", []any{slog.String("error", err.Error())}
+}
+
 func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.Write(w, response.New(http.StatusMethodNotAllowed, "method not allowed"))
@@ -54,12 +67,13 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			response.Write(w, response.New(http.StatusNotFound, "artifact not found"))
 			return
 		}
+		code, attrs := safeLogError(err)
 		if logger := requestctx.Logger(r.Context()); logger != nil {
-			logger.Error("artifact.lookup.failed",
-				slog.String("code", "artifact/lookup-failed"),
+			attrs = append(attrs,
+				slog.String("code", code),
 				slog.String("artifact_id", artifactID),
-				slog.String("error", err.Error()),
 			)
+			logger.Error("artifact.lookup.failed", attrs...)
 		}
 		response.Write(w, response.New(http.StatusInternalServerError, "artifact lookup failed"))
 		return
@@ -89,12 +103,13 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			response.Write(w, response.New(http.StatusNotFound, "artifact not found"))
 			return
 		}
+		code, attrs := safeLogError(err)
 		if logger := requestctx.Logger(r.Context()); logger != nil {
-			logger.Error("artifact.open.failed",
-				slog.String("code", "artifact/open-failed"),
+			attrs = append(attrs,
+				slog.String("code", code),
 				slog.String("artifact_id", record.ArtifactID),
-				slog.String("error", err.Error()),
 			)
+			logger.Error("artifact.open.failed", attrs...)
 		}
 		response.Write(w, response.New(http.StatusInternalServerError, "artifact read failed"))
 		return
