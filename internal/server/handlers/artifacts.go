@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"strconv"
@@ -119,6 +120,13 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	contentType := strings.TrimSpace(record.ContentType)
 	if contentType == "" {
 		contentType = "application/octet-stream"
+	} else {
+		// Validate the stored Content-Type is a valid MIME type
+		// If invalid, fall back to a safe default
+		_, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			contentType = "application/octet-stream"
+		}
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
