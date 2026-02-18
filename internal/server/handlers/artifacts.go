@@ -121,6 +121,8 @@ func (h *artifactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if record.SizeBytes >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(record.SizeBytes, 10))
 	}

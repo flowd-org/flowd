@@ -247,6 +247,58 @@ func TestArtifactsHandler_NoPathLeakOnError(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected 'artifact.open.failed' log record not found")
+		t.Errorf("expected log message artifact.open.failed not found")
+	}
+}
+
+func TestArtifactsHandler_AntiCachingHeaders(t *testing.T) {
+	const artifactID = "018f22b0-9abc-7def-0123-456789abcdef"
+
+	dataDir := t.TempDir()
+	prevDataDir := paths.DataDir()
+	paths.SetDataDirOverride(dataDir)
+	t.Cleanup(func() { paths.SetDataDirOverride(prevDataDir) })
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	metaStore := coredb.NewArtifactStore(db)
+	byteStore := artifacts.NewStore(artifacts.Options{})
+	// Use a valid UUIDv7 for artifact ID
+	uuidv7 := "018f22b0-9abc-7000-8000-000000000000"
+	if _, err := byteStore.Write(context.Background(), uuidv7, strings.NewReader("test content")); err != nil {
+		t.Fatalf("write artifact bytes: %v", err)
+	}
+	if err := metaStore.Create(context.Background(), coredb.ArtifactRecord{
+		ArtifactID:  uuidv7,
+		Tenant:      "acme",
+		JobID:       "demo",
+		RunID:       "run-1",
+		Name:        "stdout",
+		ContentType: "text/plain; charset=utf-8",
+		SizeBytes:   12,
+	}); err != nil {
+		t.Fatalf("create artifact metadata: %v", err)
+	}
+
+	ctx := requestctx.WithPrincipal(context.Background(), "tester")
+	ctx = requestctx.WithTenant(ctx, "acme")
+	req := httptest.NewRequest(http.MethodGet, "/artifacts/"+uuidv7, nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	NewArtifactsHandler(ArtifactsConfig{MetadataStore: metaStore, ByteStore: byteStore}).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("expected Cache-Control: no-store, got %q", got)
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("expected X-Content-Type-Options: nosniff, got %q", got)
 	}
 }
