@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/engine"
 	"github.com/flowd-org/flowd/internal/executor/container"
@@ -30,6 +35,15 @@ import (
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/server/sse"
 )
+
+func uuidV7UnixMillis(id uuid.UUID) int64 {
+	return int64(id[0])<<40 |
+		int64(id[1])<<32 |
+		int64(id[2])<<24 |
+		int64(id[3])<<16 |
+		int64(id[4])<<8 |
+		int64(id[5])
+}
 
 var idempotencySeq uint64
 
@@ -1826,6 +1840,199 @@ argspec:
 	}
 	if saved.Runtime != runtimeName {
 		t.Fatalf("expected stored runtime %s, got %s", runtimeName, saved.Runtime)
+	}
+}
+
+func TestRunsHandlerRegistersBuiltInArtifactsOnCompletion(t *testing.T) {
+	root := t.TempDir()
+	writeJobConfig(t, root, "demo", `
+version: v1
+job:
+  id: demo
+  name: Demo Job
+`)
+	scriptPath := filepath.Join(root, "demo", "100_main.sh")
+	script := "#!/usr/bin/env bash\nset -euo pipefail\necho 'hello stdout'\necho 'hello stderr' >&2\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	runStore := runstore.New()
+	sink := &recordingSink{}
+	h := NewRunsHandler(RunsConfig{Root: root, Store: runStore, Events: sink, DB: db})
+
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"demo","tenant":"acme"}`))
+	req.Header.Set("Content-Type", "application/json")
+	addIdempotencyHeader(req)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	runID, _ := created["id"].(string)
+	if runID == "" {
+		t.Fatal("expected run id")
+	}
+
+	waitFor(func() bool {
+		run, ok := runStore.Get(runID)
+		if !ok {
+			return false
+		}
+		return run.Status == "completed" || run.Status == "failed" || run.Status == "canceled"
+	}, 2*time.Second, t)
+	run, ok := runStore.Get(runID)
+	if !ok {
+		t.Fatalf("run not found: %s", runID)
+	}
+	if run.Status != "completed" && run.Status != "failed" && run.Status != "canceled" {
+		t.Fatalf("expected terminal status, got %s (events=%d)", run.Status, sink.count())
+	}
+	if run.Result == nil {
+		t.Fatalf("expected result payload with artifacts, got nil")
+	}
+	artifactMap, ok := run.Result["artifacts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result.artifacts map, got %#v", run.Result["artifacts"])
+	}
+	if len(artifactMap) != 3 {
+		t.Fatalf("expected 3 built-in artifacts, got %d (%#v)", len(artifactMap), artifactMap)
+	}
+
+	meta := coredb.NewArtifactStore(db)
+	bytesStore := artifacts.NewStore(artifacts.Options{})
+	for _, name := range []string{"plan.json", "stdout", "stderr"} {
+		value, ok := artifactMap[name]
+		if !ok {
+			t.Fatalf("missing artifact id for %s", name)
+		}
+		artifactID, ok := value.(string)
+		if !ok || artifactID == "" {
+			t.Fatalf("invalid artifact id for %s: %#v", name, value)
+		}
+		record, found, err := meta.Get(context.Background(), artifactID)
+		if err != nil {
+			t.Fatalf("artifact metadata get for %s: %v", name, err)
+		}
+		if !found {
+			t.Fatalf("artifact metadata not found for %s (%s)", name, artifactID)
+		}
+		if record.RunID != runID || record.Tenant != "acme" || record.JobID != "demo" || record.Name != name {
+			t.Fatalf("unexpected metadata for %s: %+v", name, record)
+		}
+		f, err := bytesStore.Open(artifactID)
+		if err != nil {
+			t.Fatalf("open artifact bytes for %s: %v", name, err)
+		}
+		content, err := io.ReadAll(f)
+		_ = f.Close()
+		if err != nil {
+			t.Fatalf("read artifact bytes for %s: %v", name, err)
+		}
+		if name == "plan.json" && len(content) == 0 {
+			t.Fatalf("expected non-empty bytes for %s", name)
+		}
+	}
+}
+
+func TestRegisterBuiltInRunArtifactsCleansUpBytesOnMetadataFailure(t *testing.T) {
+	runDir := t.TempDir()
+	for name, content := range map[string]string{
+		"plan.json": "{\"ok\":true}\n",
+		"stdout":    "hello stdout\n",
+		"stderr":    "hello stderr\n",
+	} {
+		if err := os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write built-in %s: %v", name, err)
+		}
+	}
+
+	db, err := coredb.Open(context.Background(), coredb.Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open coredb: %v", err)
+	}
+	meta := coredb.NewArtifactStore(db)
+	if err := db.Close(); err != nil {
+		t.Fatalf("close coredb: %v", err)
+	}
+
+	bytesRoot := t.TempDir()
+	h := &RunsHandler{
+		artifactMeta:  meta,
+		artifactBytes: artifacts.NewStore(artifacts.Options{RootDir: bytesRoot}),
+	}
+
+	registered, err := h.registerBuiltInRunArtifacts(context.Background(), RunPayload{
+		ID:     "run-1",
+		Tenant: "acme",
+		JobID:  "demo",
+	}, runDir)
+	if err == nil {
+		t.Fatal("expected metadata persistence error")
+	}
+	if len(registered) != 0 {
+		t.Fatalf("expected no registered artifacts on metadata failure, got %#v", registered)
+	}
+
+	var fileCount int
+	if walkErr := filepath.WalkDir(bytesRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.Type().IsRegular() {
+			fileCount++
+		}
+		return nil
+	}); walkErr != nil {
+		t.Fatalf("walk artifact bytes root: %v", walkErr)
+	}
+	if fileCount != 0 {
+		t.Fatalf("expected artifact bytes cleanup after metadata failure, found %d files", fileCount)
+	}
+}
+
+func TestNewUUIDv7(t *testing.T) {
+	before := time.Now().UTC().UnixMilli() - 2000
+	ids := make([]uuid.UUID, 0, 8)
+	for i := 0; i < cap(ids); i++ {
+		id, err := newUUIDv7()
+		if err != nil {
+			t.Fatalf("newUUIDv7: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	after := time.Now().UTC().UnixMilli() + 2000
+
+	prevMillis := int64(0)
+	for i, id := range ids {
+		if got := id.Version(); got != 7 {
+			t.Fatalf("id[%d] version = %d, want 7", i, got)
+		}
+		if got := id.Variant(); got != uuid.RFC4122 {
+			t.Fatalf("id[%d] variant = %d, want RFC4122", i, got)
+		}
+		millis := uuidV7UnixMillis(id)
+		if millis < before || millis > after {
+			t.Fatalf("id[%d] millis = %d outside [%d, %d]", i, millis, before, after)
+		}
+		if i > 0 && millis < prevMillis {
+			t.Fatalf("id[%d] millis regressed: %d < %d", i, millis, prevMillis)
+		}
+		prevMillis = millis
+		if decoded := binary.BigEndian.Uint16(id[6:8]) >> 12; decoded != 0x7 {
+			t.Fatalf("id[%d] high bits do not encode v7", i)
+		}
 	}
 }
 

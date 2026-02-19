@@ -8,14 +8,15 @@ import (
 )
 
 const (
-	ScopeJobsRead     = "jobs:read"
-	ScopeRunsRead     = "runs:read"
-	ScopeRunsWrite    = "runs:write"
-	ScopeEventsRead   = "events:read"
-	ScopeSourcesRead  = "sources:read"
-	ScopeSourcesWrite = "sources:write"
-	ScopeRuleYRead    = "ruley:read"
-	ScopeRuleYWrite   = "ruley:write"
+	ScopeJobsRead      = "jobs:read"
+	ScopeRunsRead      = "runs:read"
+	ScopeRunsWrite     = "runs:write"
+	ScopeEventsRead    = "events:read"
+	ScopeSourcesRead   = "sources:read"
+	ScopeSourcesWrite  = "sources:write"
+	ScopeRuleYRead     = "ruley:read"
+	ScopeRuleYWrite    = "ruley:write"
+	ScopeArtifactsRead = "artifacts:read"
 )
 
 // RequiredScopes returns the scope set required to access the given method/path.
@@ -43,6 +44,8 @@ func RequiredScopes(method, path string) []string {
 			return []string{ScopeEventsRead}
 		case strings.HasPrefix(path, "/kv/"):
 			return []string{ScopeRuleYRead}
+		case strings.HasPrefix(path, "/artifacts/"):
+			return []string{ScopeArtifactsRead}
 		case path == "/health/storage":
 			return []string{ScopeJobsRead}
 		case path == "/limits":

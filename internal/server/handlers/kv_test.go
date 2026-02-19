@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flowd-org/flowd/internal/coredb"
@@ -16,10 +19,8 @@ func TestKVHandlerPutGetDelete(t *testing.T) {
 	ctx := context.Background()
 	store := coredb.NewRuleYStore(openTestDB(t))
 	h := NewKVHandler(KVConfig{
-		Store: store,
-		Allowlist: map[string]KVNamespaceConfig{
-			"core_triggers": {},
-		},
+		Store:     store,
+		Allowlist: map[string]KVNamespaceConfig{"core_triggers": {}},
 	})
 
 	putBody := map[string]string{"value": base64.StdEncoding.EncodeToString([]byte("bar"))}
@@ -130,7 +131,7 @@ func TestKVHandlerQuotaExceeded(t *testing.T) {
 	h := NewKVHandler(KVConfig{
 		Store: store,
 		Allowlist: map[string]KVNamespaceConfig{
-			"core_triggers": {LimitBytes: 9},
+			"core_triggers": {MaxBytes: 9},
 		},
 	})
 
@@ -152,6 +153,59 @@ func TestKVHandlerQuotaExceeded(t *testing.T) {
 	if resp2.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", resp2.Code)
 	}
+	var problem map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode quota problem: %v", err)
+	}
+	if got := problem["type"]; got != kvQuotaExceededProblemType {
+		t.Fatalf("expected type %q, got %v", kvQuotaExceededProblemType, got)
+	}
+	if got := problem["code"]; got != "kv/quota-exceeded" {
+		t.Fatalf("expected code kv/quota-exceeded, got %v", got)
+	}
+}
+
+func TestKVHandlerScanLimitCappedAt1000(t *testing.T) {
+	ctx := context.Background()
+	store := coredb.NewRuleYStore(openTestDB(t))
+	h := NewKVHandler(KVConfig{
+		Store: store,
+		Allowlist: map[string]KVNamespaceConfig{
+			"core_triggers": {},
+		},
+	})
+
+	for i := 0; i < 1005; i++ {
+		key := fmt.Sprintf("app:%04d", i)
+		putBody := map[string]string{"value": base64.StdEncoding.EncodeToString([]byte("value"))}
+		buf, _ := json.Marshal(putBody)
+		req := httptest.NewRequest(http.MethodPut, "/kv/core_triggers/"+key, bytes.NewReader(buf)).WithContext(ctx)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put %s failed: %d", key, rec.Code)
+		}
+	}
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/kv/core_triggers?prefix=app:&limit=5000", nil).WithContext(ctx))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Items      []map[string]any `json:"items"`
+		NextCursor string           `json:"nextCursor"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode scan response: %v", err)
+	}
+	if len(body.Items) != 1000 {
+		t.Fatalf("expected 1000 items when limit=5000, got %d", len(body.Items))
+	}
+	if body.NextCursor == "" {
+		t.Fatal("expected nextCursor for capped page")
+	}
 }
 
 func openTestDB(t *testing.T) *coredb.DB {
@@ -163,4 +217,56 @@ func openTestDB(t *testing.T) *coredb.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+type fakeRuleYStore struct{}
+
+func (f *fakeRuleYStore) Put(ctx context.Context, namespace, key string, value []byte, opts coredb.RuleYPutOptions) (int64, error) {
+	return 0, errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func (f *fakeRuleYStore) Get(ctx context.Context, namespace, key string) (coredb.RuleYGetResult, bool, error) {
+	return coredb.RuleYGetResult{}, false, errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func (f *fakeRuleYStore) Del(ctx context.Context, namespace, key string) (bool, error) {
+	return false, errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func (f *fakeRuleYStore) Scan(ctx context.Context, namespace, prefix, cursor string, limit int) ([]coredb.RuleYItem, string, error) {
+	return nil, "", errors.New("leaky internal: /var/lib/flowd/test")
+}
+
+func TestKVHandlerInternalErrorIsSanitized(t *testing.T) {
+	ctx := context.Background()
+	h := NewKVHandler(KVConfig{
+		Store: &fakeRuleYStore{},
+		Allowlist: map[string]KVNamespaceConfig{
+			"core_triggers": {},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/kv/core_triggers/foo", nil).WithContext(ctx)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.Code)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if detail, ok := body["detail"]; ok && detail != nil {
+		detailStr := fmt.Sprintf("%v", detail)
+		if strings.Contains(detailStr, "leaky internal") || strings.Contains(detailStr, "/var/lib/flowd") {
+			t.Fatalf("response detail leaked internal error: %v", detail)
+		}
+	}
+
+	if body["title"] != "kv operation failed" {
+		t.Fatalf("expected title 'kv operation failed', got %v", body["title"])
+	}
 }

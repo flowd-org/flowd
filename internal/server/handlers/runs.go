@@ -20,6 +20,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/configloader"
 	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/engine"
@@ -160,6 +163,8 @@ type RunsHandler struct {
 	policy         *policy.Context
 	verifier       verify.ImageVerifier
 	runtime        container.Runtime
+	artifactMeta   *coredb.ArtifactStore
+	artifactBytes  *artifacts.Store
 	running        sync.Map // runID -> *runExecutionContext
 }
 
@@ -210,8 +215,12 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 	}
 
 	var dbRuns *coredb.RunStore
+	var artifactMeta *coredb.ArtifactStore
+	var artifactBytes *artifacts.Store
 	if cfg.DB != nil {
 		dbRuns = coredb.NewRunStore(cfg.DB)
+		artifactMeta = coredb.NewArtifactStore(cfg.DB)
+		artifactBytes = artifacts.NewStore(artifacts.Options{})
 	}
 
 	return &RunsHandler{
@@ -230,6 +239,8 @@ func NewRunsHandler(cfg RunsConfig) *RunsHandler {
 		policy:         cfg.Policy,
 		verifier:       cfg.Verifier,
 		runtime:        cfg.Runtime,
+		artifactMeta:   artifactMeta,
+		artifactBytes:  artifactBytes,
 	}
 }
 
@@ -1514,6 +1525,23 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 	finished := time.Now().UTC()
 	execCtx.runPayload.FinishedAt = &finished
 	execCtx.runPayload.Status = status
+	artifactIDs, artifactErr := h.registerBuiltInRunArtifacts(runCtx, execCtx.runPayload, runDir)
+	if artifactErr != nil {
+		if logger := requestctx.Logger(runCtx); logger != nil {
+			logger.Warn("run.artifact.registration_failed",
+				slog.String("run_id", runID),
+				slog.String("code", "artifact/registration-failed"),
+			)
+		} else {
+			slog.Warn("run.artifact.registration_failed",
+				slog.String("run_id", runID),
+				slog.String("code", "artifact/registration-failed"),
+			)
+		}
+	}
+	if len(artifactIDs) > 0 {
+		h.attachBuiltInArtifactIDs(runID, artifactIDs)
+	}
 	if sink != nil {
 		metrics.RecordRunFinished(status)
 		sink.EmitRunFinish(runID, status, runErr)
@@ -1528,6 +1556,118 @@ func (h *RunsHandler) executeRun(execCtx *runExecutionContext) {
 			h.publishRunCanceled(run, finished, "canceled")
 		}
 	}
+}
+
+func (h *RunsHandler) registerBuiltInRunArtifacts(ctx context.Context, payload RunPayload, runDir string) (map[string]string, error) {
+	if h == nil || h.artifactMeta == nil || h.artifactBytes == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(payload.Tenant) == "" || strings.TrimSpace(payload.JobID) == "" || strings.TrimSpace(payload.ID) == "" {
+		return nil, nil
+	}
+	builtIns := []struct {
+		name        string
+		contentType string
+	}{
+		{name: "plan.json", contentType: "application/json"},
+		{name: "stdout", contentType: "text/plain; charset=utf-8"},
+		{name: "stderr", contentType: "text/plain; charset=utf-8"},
+	}
+	registered := make(map[string]string, len(builtIns))
+	var errs []error
+	for _, artifact := range builtIns {
+		path := filepath.Join(runDir, artifact.name)
+		file, err := os.Open(path)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("open built-in artifact %s: %w", artifact.name, err))
+			continue
+		}
+		id, err := newUUIDv7()
+		if err != nil {
+			_ = file.Close()
+			errs = append(errs, fmt.Errorf("generate artifact id for %s: %w", artifact.name, err))
+			continue
+		}
+		artifactID := strings.ToLower(id.String())
+		sizeBytes, err := h.artifactBytes.Write(ctx, artifactID, file)
+		_ = file.Close()
+		if err != nil {
+			reason := artifactWriteFailureReason(err)
+			metrics.RecordArtifactWriteFailed(reason)
+			if logger := requestctx.Logger(ctx); logger != nil {
+				logger.Warn("artifact.write.failed",
+					slog.String("run_id", payload.ID),
+					slog.String("artifact_name", artifact.name),
+					slog.String("reason", reason),
+				)
+			}
+			errs = append(errs, fmt.Errorf("write built-in artifact %s: %w", artifact.name, err))
+			continue
+		}
+		err = h.artifactMeta.Create(ctx, coredb.ArtifactRecord{
+			ArtifactID:  artifactID,
+			Tenant:      payload.Tenant,
+			JobID:       payload.JobID,
+			RunID:       payload.ID,
+			Name:        artifact.name,
+			ContentType: artifact.contentType,
+			SizeBytes:   sizeBytes,
+		})
+		if err != nil {
+			if cleanupErr := h.artifactBytes.Delete(artifactID); cleanupErr != nil {
+				errs = append(errs, fmt.Errorf("cleanup built-in artifact bytes %s: %w", artifact.name, cleanupErr))
+			}
+			errs = append(errs, fmt.Errorf("persist built-in artifact metadata %s: %w", artifact.name, err))
+			continue
+		}
+		registered[artifact.name] = artifactID
+	}
+	return registered, errors.Join(errs...)
+}
+
+func artifactWriteFailureReason(err error) string {
+	switch {
+	case err == nil:
+		return "unknown"
+	case errors.Is(err, artifacts.ErrArtifactTooLarge):
+		return "size_cap"
+	case errors.Is(err, artifacts.ErrImmutableWrite):
+		return "immutable_write"
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	default:
+		return "io_error"
+	}
+}
+
+func (h *RunsHandler) attachBuiltInArtifactIDs(runID string, artifactIDs map[string]string) {
+	if h == nil || len(artifactIDs) == 0 {
+		return
+	}
+	run, ok := h.store.Get(runID)
+	if !ok {
+		return
+	}
+	result := map[string]any{}
+	for k, v := range run.Result {
+		result[k] = v
+	}
+	builtIns := make(map[string]any, len(artifactIDs))
+	for name, artifactID := range artifactIDs {
+		builtIns[name] = artifactID
+	}
+	result["artifacts"] = builtIns
+	run.Result = result
+	h.store.Update(run)
+	if h.dbRuns != nil {
+		record := runRecordFromStore(run)
+		record = scrubRunRecord(record, newPersistenceScrubber(nil, nil))
+		_ = h.dbRuns.Update(context.Background(), record)
+	}
+}
+
+func newUUIDv7() (uuid.UUID, error) {
+	return uuid.NewV7()
 }
 
 func (h *RunsHandler) updateRunStatus(runID, status string, finished *time.Time) {

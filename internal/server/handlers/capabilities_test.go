@@ -54,6 +54,13 @@ func TestCapabilitiesHandlerResponse(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw body: %v", err)
+	}
+	if _, ok := raw["kv"]; ok {
+		t.Fatal("capabilities must not advertise /kv")
+	}
 
 	if body.Core.SpecVersion != buildinfo.CoreSpecVersion {
 		t.Fatalf("expected core.spec_version=%q, got %q", buildinfo.CoreSpecVersion, body.Core.SpecVersion)

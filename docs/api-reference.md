@@ -17,6 +17,7 @@ This document covers two classes of endpoints:
 
 - API endpoints (most of this reference) live under the versioned API prefix.
 - Operational endpoints (probes, metrics, SSE) are rooted at the server base URL (no `/api/v1` prefix).
+- Artifact downloads are also rooted at the server base URL: `GET /artifacts/{artifact_id}` (not `GET /api/v1/artifacts/{artifact_id}`).
 
 When running in serve mode, the versioned API base URL is:
 
@@ -28,6 +29,12 @@ Operational base URL:
 
 ```
 http://localhost:8080
+```
+
+Example artifact download URL:
+
+```
+http://localhost:8080/artifacts/{artifact_id}
 ```
 
 ## Authentication
@@ -43,6 +50,10 @@ The following probe endpoints are intentionally public (no bearer token required
 `GET /metrics` may also be unauthenticated when the server binds to a loopback address (for other bind addresses, it requires a bearer token with the usual scopes).
 
 All other endpoints in this document require authentication with the appropriate scopes.
+
+The server also exposes internal-only endpoints under `/kv/*` for Rule-Y runtime state.
+These endpoints are not a stable public API, are not advertised in `/capabilities`, and
+may change without notice.
 
 ## Endpoints
 
@@ -399,45 +410,20 @@ Cancels a running job.
 
 ### Artifacts
 
-#### List Artifacts
+#### Download Artifact
 
 ```http
-GET /api/v1/artifacts
-```
-
-Returns a list of all artifacts.
-
-**Query Parameters:**
-- `run_id` (optional): Filter by run ID
-- `limit` (optional): Maximum number of results
-
-**Response:**
-```json
-{
-  "artifacts": [
-    {
-      "id": "artifact_01HX...",
-      "run_id": "run_01HX...",
-      "name": "backup-archive",
-      "path": "/workspace/backup.tar.gz",
-      "media_type": "application/gzip",
-      "size_bytes": 12345678,
-      "created_at": "2024-01-15T10:35:00Z"
-    }
-  ]
-}
-```
-
-#### Get Artifact
-
-```http
-GET /api/v1/artifacts/{artifact_id}
+GET /artifacts/{artifact_id}
 ```
 
 Downloads the artifact file.
 
+- Auth required.
+- Required scope: `artifacts:read`.
+- Tenant-isolated: artifacts are only downloadable by principals in the same tenant.
+
 **Response:**
-Binary content with appropriate `Content-Type` header.
+Binary content with appropriate `Content-Type` (and usually `Content-Length`) headers.
 
 ### System
 

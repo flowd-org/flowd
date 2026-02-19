@@ -60,6 +60,8 @@ type ContainerResources struct {
 
 // RuleYNamespaceConfig captures the per-namespace restrictions for the Rule-Y KV store.
 type RuleYNamespaceConfig struct {
+	MaxBytes   int64 `yaml:"max_bytes,omitempty" json:"max_bytes,omitempty"`
+	MaxRows    int64 `yaml:"max_rows,omitempty" json:"max_rows,omitempty"`
 	LimitBytes int64 `yaml:"limit_bytes,omitempty" json:"limit_bytes,omitempty"`
 }
 

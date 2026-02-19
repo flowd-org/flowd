@@ -1,29 +1,48 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flowd-org/flowd/internal/coredb"
+	"github.com/flowd-org/flowd/internal/metrics"
+	"github.com/flowd-org/flowd/internal/server/requestctx"
 	"github.com/flowd-org/flowd/internal/server/response"
 )
 
 const namespaceForbiddenProblemType = "https://flowd.org/problems/namespace-forbidden"
+const kvQuotaExceededProblemType = "https://flowd.org/problems/kv/quota-exceeded"
+
+const (
+	kvDefaultScanLimit = 256
+	kvMaxScanLimit     = 1000
+)
 
 // KVNamespaceConfig controls namespace-specific Rule-Y behaviour.
 type KVNamespaceConfig struct {
-	LimitBytes int64
+	MaxBytes int64
+	MaxRows  int64
+}
+
+// RuleYStore is an interface for KV store operations (testable).
+type RuleYStore interface {
+	Put(ctx context.Context, namespace, key string, value []byte, opts coredb.RuleYPutOptions) (int64, error)
+	Get(ctx context.Context, namespace, key string) (coredb.RuleYGetResult, bool, error)
+	Del(ctx context.Context, namespace, key string) (bool, error)
+	Scan(ctx context.Context, namespace, prefix, cursor string, limit int) ([]coredb.RuleYItem, string, error)
 }
 
 // KVConfig configures the KV handler.
 type KVConfig struct {
-	Store     *coredb.RuleYStore
+	Store     RuleYStore
 	Allowlist map[string]KVNamespaceConfig
 }
 
@@ -40,7 +59,7 @@ func NewKVHandler(cfg KVConfig) http.Handler {
 }
 
 type kvHandler struct {
-	store     *coredb.RuleYStore
+	store     RuleYStore
 	allowlist map[string]KVNamespaceConfig
 }
 
@@ -64,19 +83,19 @@ func (h *kvHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		h.handlePut(w, r, namespace, keyPath, cfg.LimitBytes)
+		h.handlePut(w, r, namespace, keyPath, cfg)
 	case http.MethodDelete:
 		h.handleDelete(w, r, namespace, keyPath)
 	case http.MethodGet:
 		if keyPath == "" {
-			h.handleScan(w, r, namespace, cfg.LimitBytes)
+			h.handleScan(w, r, namespace)
 			return
 		}
 		h.handleGet(w, r, namespace, keyPath)
 	}
 }
 
-func (h *kvHandler) handlePut(w http.ResponseWriter, r *http.Request, namespace, key string, limit int64) {
+func (h *kvHandler) handlePut(w http.ResponseWriter, r *http.Request, namespace, key string, cfg KVNamespaceConfig) {
 	if key == "" {
 		response.Write(w, response.New(http.StatusBadRequest, "key required"))
 		return
@@ -94,8 +113,8 @@ func (h *kvHandler) handlePut(w http.ResponseWriter, r *http.Request, namespace,
 		return
 	}
 
-	if err := h.store.Put(r.Context(), namespace, []byte(key), value, limit); err != nil {
-		h.writeStoreError(w, err)
+	if _, err := h.store.Put(r.Context(), namespace, key, value, coredb.RuleYPutOptions{MaxBytes: cfg.MaxBytes, MaxRows: cfg.MaxRows}); err != nil {
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -106,9 +125,9 @@ func (h *kvHandler) handleGet(w http.ResponseWriter, r *http.Request, namespace,
 		response.Write(w, response.New(http.StatusBadRequest, "key required"))
 		return
 	}
-	value, ts, found, err := h.store.Get(r.Context(), namespace, []byte(key))
+	entry, found, err := h.store.Get(r.Context(), namespace, key)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 	if !found {
@@ -118,10 +137,11 @@ func (h *kvHandler) handleGet(w http.ResponseWriter, r *http.Request, namespace,
 
 	resp := map[string]any{
 		"key":       key,
-		"value":     base64.StdEncoding.EncodeToString(value),
-		"timestamp": ts.Format(time.RFC3339Nano),
+		"value":     base64.StdEncoding.EncodeToString(entry.Value),
+		"timestamp": entry.UpdatedAt.Format(time.RFC3339Nano),
+		"version":   entry.Version,
 	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(r.Context(), w, resp, http.StatusOK)
 }
 
 func (h *kvHandler) handleDelete(w http.ResponseWriter, r *http.Request, namespace, key string) {
@@ -129,9 +149,9 @@ func (h *kvHandler) handleDelete(w http.ResponseWriter, r *http.Request, namespa
 		response.Write(w, response.New(http.StatusBadRequest, "key required"))
 		return
 	}
-	deleted, err := h.store.Delete(r.Context(), namespace, []byte(key))
+	deleted, err := h.store.Del(r.Context(), namespace, key)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 	if !deleted {
@@ -141,30 +161,33 @@ func (h *kvHandler) handleDelete(w http.ResponseWriter, r *http.Request, namespa
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace string, _ int64) {
+func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace string) {
 	q := r.URL.Query()
-	prefix := []byte(q.Get("prefix"))
+	prefix := q.Get("prefix")
 
-	var cursor []byte
+	var cursor string
 	if c := q.Get("cursor"); c != "" {
 		decoded, err := base64.StdEncoding.DecodeString(c)
 		if err != nil {
 			response.Write(w, response.New(http.StatusBadRequest, "cursor must be base64", response.WithDetail(err.Error())))
 			return
 		}
-		cursor = decoded
+		cursor = string(decoded)
 	}
 
-	limit := 256
+	limit := kvDefaultScanLimit
 	if v := q.Get("limit"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
 			limit = parsed
 		}
 	}
+	if limit > kvMaxScanLimit {
+		limit = kvMaxScanLimit
+	}
 
 	items, nextCursor, err := h.store.Scan(r.Context(), namespace, prefix, cursor, limit)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, namespace, err)
 		return
 	}
 
@@ -172,34 +195,59 @@ func (h *kvHandler) handleScan(w http.ResponseWriter, r *http.Request, namespace
 	encoded := make([]map[string]any, len(items))
 	for i, item := range items {
 		encoded[i] = map[string]any{
-			"key":       string(item.Key),
+			"key":       item.Key,
 			"value":     base64.StdEncoding.EncodeToString(item.Value),
-			"timestamp": item.Timestamp.Format(time.RFC3339Nano),
+			"timestamp": item.UpdatedAt.Format(time.RFC3339Nano),
+			"version":   item.Version,
 		}
 	}
 	resp["items"] = encoded
-	if len(nextCursor) > 0 {
-		resp["nextCursor"] = base64.StdEncoding.EncodeToString(nextCursor)
+	if nextCursor != "" {
+		resp["nextCursor"] = base64.StdEncoding.EncodeToString([]byte(nextCursor))
 	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(r.Context(), w, resp, http.StatusOK)
 }
 
-func (h *kvHandler) writeStoreError(w http.ResponseWriter, err error) {
+func (h *kvHandler) writeStoreError(w http.ResponseWriter, r *http.Request, namespace string, err error) {
 	if err == nil {
 		return
 	}
 	switch {
 	case errors.Is(err, coredb.ErrRuleYUnavailable):
 		response.Write(w, response.New(http.StatusServiceUnavailable, "storage unavailable"))
-	case errors.Is(err, coredb.ErrRuleYNamespaceQuota) || coredb.IsQuotaExceeded(err):
-		response.Write(w, storageQuotaExceededProblem())
-	case errors.Is(err, coredb.ErrRuleYKeyTooLarge):
-		response.Write(w, response.New(http.StatusBadRequest, "key exceeds maximum length"))
+	case errors.Is(err, coredb.ErrRuleYQuotaExceeded):
+		metrics.RecordKVQuotaExceeded(namespace)
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			logger.Warn("kv.quota_exceeded",
+				slog.String("namespace", strings.ToLower(strings.TrimSpace(namespace))),
+				slog.String("code", "kv/quota-exceeded"),
+			)
+		}
+		response.Write(w, kvQuotaExceededProblem())
+	case errors.Is(err, coredb.ErrRuleYNamespaceForbidden):
+		response.Write(w, namespaceForbiddenProblem())
+	case errors.Is(err, coredb.ErrRuleYInvalidKey):
+		response.Write(w, response.New(http.StatusBadRequest, "invalid key"))
 	case errors.Is(err, coredb.ErrRuleYValueTooLarge):
 		response.Write(w, response.New(http.StatusBadRequest, "value exceeds maximum length"))
+	case errors.Is(err, coredb.ErrRuleYCASMismatch):
+		response.Write(w, response.New(http.StatusConflict, "cas mismatch"))
 	default:
-		response.Write(w, response.New(http.StatusInternalServerError, "kv operation failed", response.WithDetail(err.Error())))
+		if logger := requestctx.Logger(r.Context()); logger != nil {
+			logger.Error("kv.internal_error",
+				slog.String("namespace", strings.ToLower(strings.TrimSpace(namespace))),
+				slog.Any("err", err),
+			)
+		}
+		response.Write(w, response.New(http.StatusInternalServerError, "kv operation failed"))
 	}
+}
+
+func kvQuotaExceededProblem() response.Problem {
+	return response.New(http.StatusTooManyRequests, "kv quota exceeded",
+		response.WithType(kvQuotaExceededProblemType),
+		response.WithExtension("code", "kv/quota-exceeded"),
+	)
 }
 
 func namespaceForbiddenProblem() response.Problem {
@@ -208,10 +256,15 @@ func namespaceForbiddenProblem() response.Problem {
 	)
 }
 
-func writeJSON(w http.ResponseWriter, payload any, status int) {
+func writeJSON(ctx context.Context, w http.ResponseWriter, payload any, status int) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		response.Write(w, response.New(http.StatusInternalServerError, "encode response failed", response.WithDetail(err.Error())))
+		if logger := requestctx.Logger(ctx); logger != nil {
+			logger.Error("kv/encode-response-failed",
+				slog.Any("err", err),
+			)
+		}
+		response.Write(w, response.New(http.StatusInternalServerError, "encode response failed"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -183,6 +183,7 @@ func TestAuthMiddlewareProtectsHealthStorageAndIntrospectionEndpoints(t *testing
 		{name: "health storage", path: "/health/storage"},
 		{name: "limits", path: "/limits"},
 		{name: "capabilities", path: "/capabilities"},
+		{name: "artifact download", path: "/artifacts/018f22b0-1234-7abc-8def-0123456789ab"},
 	}
 
 	for _, tt := range tests {

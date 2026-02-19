@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
 	"github.com/flowd-org/flowd/internal/executor/container"
 	"github.com/flowd-org/flowd/internal/paths"
@@ -22,6 +23,13 @@ import (
 	"github.com/flowd-org/flowd/internal/server/sse"
 )
 
+// startRuleYJanitor is an injection hook for testing. In production, it calls janitor.Run.
+var startRuleYJanitor = startRuleYJanitorReal
+
+func startRuleYJanitorReal(ctx context.Context, j *coredb.RuleYJanitor) error {
+	return j.Run(ctx)
+}
+
 // Run boots the HTTP server until the context is canceled or an unrecoverable error occurs.
 func Run(ctx context.Context, cfg Config) error {
 	if cfg.DataDir != "" {
@@ -30,14 +38,48 @@ func Run(ctx context.Context, cfg Config) error {
 	norm := cfg.normalize()
 	paths.SetDataDirOverride(norm.DataDir)
 
-	db, err := coredb.Open(ctx, norm.CoreDBOptions)
-	if err != nil {
-		return fmt.Errorf("open core db: %w", err)
+	db := norm.CoreDB
+	if db == nil {
+		opened, err := coredb.Open(ctx, norm.CoreDBOptions)
+		if err != nil {
+			return fmt.Errorf("open core db: %w", err)
+		}
+		db = opened
+		defer db.Close()
+		norm.CoreDB = db
 	}
-	defer db.Close()
-	norm.CoreDB = db
+	// if db was provided: do NOT Close it here
+	// proceed using db for janitor + handlers
 
 	logger := newLogger(norm)
+	janitorCtx, janitorCancel := context.WithCancel(ctx)
+	defer janitorCancel()
+	// Derive janitor drain capacity from the largest namespace quota to satisfy ≤60s deletion SLA.
+	// Worst case: all rows in a namespace expire at once. We must delete maxNamespaceMaxRows in one tick.
+	var maxRows int
+	for _, nsCfg := range norm.RuleY.Allowlist {
+		if int(nsCfg.MaxRows) > maxRows {
+			maxRows = int(nsCfg.MaxRows)
+		}
+	}
+	if maxRows <= 0 {
+		maxRows = defaultRuleYMaxRows
+	}
+	// Use batch * maxIterations >= maxRows. Default batch=256, so maxIterations = ceil(maxRows/256).
+	const batch = 256
+	maxIter := (maxRows + batch - 1) / batch
+	if maxIter < 16 {
+		maxIter = 16 // keep some headroom for small namespaces
+	}
+	janitor := coredb.NewRuleYJanitor(db, coredb.RuleYJanitorOptions{
+		Batch:         batch,
+		MaxIterations: maxIter,
+	})
+	janitorErrCh := make(chan error, 1)
+	go func() {
+		janitorErrCh <- startRuleYJanitor(janitorCtx, janitor)
+	}()
+
 	runtimeDetector := norm.RuntimeDetector
 	if runtimeDetector == nil {
 		runtimeDetector = func() (container.Runtime, error) {
@@ -78,22 +120,64 @@ func Run(ctx context.Context, cfg Config) error {
 		errCh <- server.ListenAndServe()
 	}()
 
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// Supervise janitor during steady state and stop the HTTP server on non-benign errors.
+	// This select runs until one of: context cancellation, server error, or janitor failure.
+	for {
+		select {
+		case <-ctx.Done():
+			janitorCancel()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			// Wait for janitor to finish after shutdown.
+			if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				return janitorErr
+			}
+			return ctx.Err()
+		case err := <-errCh:
+			janitorCancel()
+			// Wait for janitor to finish after server stops.
+			if janitorErr := <-janitorErrCh; janitorErr != nil && !errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				return janitorErr
+			}
+			if err == nil || errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
 			return err
+		case janitorErr := <-janitorErrCh:
+			// Janitor failed during steady state.
+			if janitorErr == nil || errors.Is(janitorErr, coredb.ErrRuleYUnavailable) {
+				// Benign error - continue shutdown path.
+				janitorCancel()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+				defer cancel()
+				if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				return janitorErr
+			}
+			logger.Error("server.ruley.janitor_failed", slog.String("error", janitorErr.Error()))
+			janitorCancel()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), norm.ShutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			// Drain errCh to avoid goroutine leak.
+			go func() {
+				<-errCh
+			}()
+			return janitorErr
+
 		}
-		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return ctx.Err()
-	case err := <-errCh:
-		if err == nil || errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
 	}
 }
 
@@ -163,9 +247,12 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 
 	kvStore := coredb.NewRuleYStore(cfg.CoreDB)
 	kvAllow := make(map[string]handlers.KVNamespaceConfig, len(cfg.RuleY.Allowlist))
+	storeAllow := make(map[string]coredb.RuleYNamespaceQuota, len(cfg.RuleY.Allowlist))
 	for ns, entry := range cfg.RuleY.Allowlist {
-		kvAllow[ns] = handlers.KVNamespaceConfig{LimitBytes: entry.LimitBytes}
+		kvAllow[ns] = handlers.KVNamespaceConfig{MaxBytes: entry.MaxBytes, MaxRows: entry.MaxRows}
+		storeAllow[ns] = coredb.RuleYNamespaceQuota{MaxRows: entry.MaxRows, MaxBytes: entry.MaxBytes}
 	}
+	kvStore.SetAllowlist(storeAllow)
 	mux.Handle("/kv/", handlers.NewKVHandler(handlers.KVConfig{
 		Store:     kvStore,
 		Allowlist: kvAllow,
@@ -196,6 +283,10 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	runGet := handlers.NewRunGetHandler(handlers.RunGetConfig{Store: runStore, DB: cfg.CoreDB})
 	runEvents := handlers.NewRunEventsHandler(runStore, hub, journal)
 	runEventsExport := handlers.NewRunEventsExportHandler(runStore, journal, cfg.ExtensionEnabled("export"))
+	artifactsHandler := handlers.NewArtifactsHandler(handlers.ArtifactsConfig{
+		MetadataStore: coredb.NewArtifactStore(cfg.CoreDB),
+		ByteStore:     artifacts.NewStore(artifacts.Options{}),
+	})
 	startupHealth := handlers.NewStartupzHandler()
 	readyHealth := handlers.NewReadyzHandler(cfg.CoreDB)
 	storageHealth := handlers.NewStorageHealthHandler(cfg.CoreDB)
@@ -234,6 +325,7 @@ func buildHandler(cfg Config, policyCtx *policy.Context, verifier policyverify.I
 	mux.Handle("/limits", limitsHandler)
 	mux.Handle("/capabilities", capabilitiesHandler)
 	mux.Handle("/runs", runHandler)
+	mux.Handle("/artifacts/", artifactsHandler)
 	mux.Handle("/runs/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ":cancel") {
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/runs/"), ":cancel")

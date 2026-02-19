@@ -4,154 +4,269 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
+	"regexp"
+	"strings"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
-	ruleYDefaultNamespaceLimit = 32 << 20 // 32 MiB
-	ruleYMaxKeyBytes           = 256
-	ruleYMaxValueBytes         = 8 << 10 // 8 KiB
+	ruleYDefaultMaxRows  = 10_000
+	ruleYDefaultMaxBytes = 10 << 20 // 10 MiB
+	ruleYMaxValueBytes   = 1 << 20  // 1 MiB
+	ruleYMaxScanLimit    = 1000
 )
+
+var ruleYKeyPattern = regexp.MustCompile(`^[a-z0-9._:/-]{1,128}$`)
+
+var defaultRuleYNamespaces = map[string]RuleYNamespaceQuota{
+	"core_triggers":         {MaxRows: ruleYDefaultMaxRows, MaxBytes: ruleYDefaultMaxBytes},
+	"core_invocation_state": {MaxRows: ruleYDefaultMaxRows, MaxBytes: ruleYDefaultMaxBytes},
+}
+
+// isSQLiteConstraint returns true if err is a SQLite constraint error.
+func isSQLiteConstraint(err error) bool {
+	var coder interface{ Code() int }
+	if !errors.As(err, &coder) {
+		return false
+	}
+	switch coder.Code() {
+	case int(sqlite3.SQLITE_CONSTRAINT), int(sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY), int(sqlite3.SQLITE_CONSTRAINT_UNIQUE):
+		return true
+	default:
+		return false
+	}
+}
 
 // RuleYStore provides a constrained key/value surface backed by the Core DB.
 type RuleYStore struct {
-	db             *DB
-	namespaceLimit int64
-	maxKeyBytes    int
-	maxValueBytes  int
-	now            func() time.Time
+	db        *DB
+	now       func() time.Time
+	allowlist map[string]RuleYNamespaceQuota
 }
 
 // NewRuleYStore constructs a Rule-Y store backed by the provided DB.
 func NewRuleYStore(db *DB) *RuleYStore {
-	return &RuleYStore{
-		db:             db,
-		namespaceLimit: ruleYDefaultNamespaceLimit,
-		maxKeyBytes:    ruleYMaxKeyBytes,
-		maxValueBytes:  ruleYMaxValueBytes,
-		now:            func() time.Time { return time.Now().UTC() },
+	allow := make(map[string]RuleYNamespaceQuota, len(defaultRuleYNamespaces))
+	for ns, q := range defaultRuleYNamespaces {
+		allow[ns] = q
 	}
+	return &RuleYStore{
+		db:        db,
+		now:       func() time.Time { return time.Now().UTC() },
+		allowlist: allow,
+	}
+}
+
+// RuleYNamespaceQuota defines per-namespace row/bytes limits.
+type RuleYNamespaceQuota struct {
+	MaxRows  int64
+	MaxBytes int64
+}
+
+// SetAllowlist replaces the namespace allowlist used by the store.
+func (s *RuleYStore) SetAllowlist(allowlist map[string]RuleYNamespaceQuota) {
+	if s == nil {
+		return
+	}
+	next := make(map[string]RuleYNamespaceQuota, len(allowlist))
+	for ns, q := range allowlist {
+		normalized := strings.ToLower(strings.TrimSpace(ns))
+		if normalized == "" {
+			continue
+		}
+		if q.MaxRows <= 0 {
+			q.MaxRows = ruleYDefaultMaxRows
+		}
+		if q.MaxBytes <= 0 {
+			q.MaxBytes = ruleYDefaultMaxBytes
+		}
+		next[normalized] = q
+	}
+	s.allowlist = next
 }
 
 // ErrRuleYUnavailable indicates the backing DB has not been initialised.
 var ErrRuleYUnavailable = errors.New("coredb: ruley store unavailable")
 
-// ErrRuleYNamespaceQuota indicates the namespace would exceed its byte budget.
-var ErrRuleYNamespaceQuota = errors.New("coredb: ruley namespace quota exceeded")
+// ErrRuleYNamespaceForbidden indicates namespace is not in the explicit allowlist.
+var ErrRuleYNamespaceForbidden = errors.New("coredb: ruley namespace forbidden")
 
-// ErrRuleYKeyTooLarge indicates the supplied key exceeds the configured limit.
-var ErrRuleYKeyTooLarge = errors.New("coredb: ruley key exceeds maximum length")
+// ErrRuleYQuotaExceeded indicates the namespace would exceed configured limits.
+var ErrRuleYQuotaExceeded = errors.New("coredb: kv/quota-exceeded")
+
+// ErrRuleYInvalidKey indicates the key does not satisfy Rule-Y constraints.
+var ErrRuleYInvalidKey = errors.New("coredb: ruley key invalid")
 
 // ErrRuleYValueTooLarge indicates the supplied value exceeds the configured limit.
 var ErrRuleYValueTooLarge = errors.New("coredb: ruley value exceeds maximum length")
 
-// RuleYItem represents a key/value pair returned from a prefix scan.
-type RuleYItem struct {
-	Key       []byte
-	Value     []byte
-	Timestamp time.Time
+// ErrRuleYCASMismatch indicates the expected version did not match current value.
+var ErrRuleYCASMismatch = errors.New("coredb: ruley cas mismatch")
+
+// RuleYPutOptions controls write behavior.
+type RuleYPutOptions struct {
+	ContentType string
+	TTL         time.Duration
+	MaxRows     int64
+	MaxBytes    int64
 }
 
-// Put stores the provided key/value pair within the namespace, applying the
-// per-namespace quota. When limitBytes <= 0 the store's default limit applies.
-func (s *RuleYStore) Put(ctx context.Context, namespace string, key, value []byte, limitBytes int64) error {
+// RuleYGetResult contains metadata for a successful key lookup.
+type RuleYGetResult struct {
+	Value       []byte
+	ContentType string
+	Version     int64
+	UpdatedAt   time.Time
+}
+
+// RuleYItem represents a key/value pair returned from a prefix scan.
+type RuleYItem struct {
+	Key         string
+	Value       []byte
+	ContentType string
+	Version     int64
+	UpdatedAt   time.Time
+}
+
+// Put stores key/value and returns the new per-key version.
+func (s *RuleYStore) Put(ctx context.Context, namespace, key string, value []byte, opts RuleYPutOptions) (int64, error) {
 	if s == nil || s.db == nil || s.db.sql == nil {
-		return ErrRuleYUnavailable
+		return 0, ErrRuleYUnavailable
 	}
-	if err := s.validateKeyValue(key, value); err != nil {
-		return err
+	ns, quota, err := s.normalizeNamespace(namespace)
+	if err != nil {
+		return 0, err
 	}
-	limit := s.resolveLimit(limitBytes)
+	normalizedKey, err := normalizeRuleYKey(key)
+	if err != nil {
+		return 0, err
+	}
+	if len(value) > ruleYMaxValueBytes {
+		return 0, ErrRuleYValueTooLarge
+	}
 
 	conn := s.db.SQL()
-	if err := EnsureKVNamespace(ctx, conn, namespace); err != nil {
-		return err
-	}
-
-	table, err := tableName(namespace)
-	if err != nil {
-		return err
-	}
-
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	current, err := namespaceSize(ctx, tx, table)
+	nowMillis := s.now().UnixMilli()
+	_, existed, existedCounted, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	effectiveQuota := quota
+	if opts.MaxRows > 0 {
+		effectiveQuota.MaxRows = opts.MaxRows
+	}
+	if opts.MaxBytes > 0 {
+		effectiveQuota.MaxBytes = opts.MaxBytes
+	}
+	newEntryBytes := len(normalizedKey) + len(value)
+	if err := enforceRuleYQuota(ctx, tx, ns, nowMillis, effectiveQuota, existed, existedCounted, oldBytes, newEntryBytes); err != nil {
+		return 0, err
 	}
 
-	delta, err := sizeDelta(ctx, tx, table, key, len(key)+len(value))
-	if err != nil {
-		return err
+	updatedAt := nowMillis
+	expiresAt := nullableExpiryMillis(updatedAt, opts.TTL)
+	contentType := strings.TrimSpace(opts.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
 
-	if limit > 0 && current+delta > limit {
-		return ErrRuleYNamespaceQuota
+	// Atomically upsert the row and increment version in a single statement.
+	// This ensures:
+	// - No duplicate versions under concurrent writers (version is incremented by the DB)
+	// - No raw UNIQUE/constraint errors for concurrent first-writers (conflict handled by ON CONFLICT)
+	newVersion := int64(1)
+	row := tx.QueryRowContext(ctx,
+		`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
+		VALUES (?, ?, ?, ?, 1, ?, ?)
+		ON CONFLICT(ns, k) DO UPDATE SET
+		  v = excluded.v,
+		  content_type = excluded.content_type,
+		  version = kv.version + 1,
+		  updated_at = excluded.updated_at,
+		  expires_at = excluded.expires_at
+		RETURNING version`,
+		ns, normalizedKey, value, contentType, updatedAt, expiresAt,
+	)
+	if err := row.Scan(&newVersion); err != nil {
+		return 0, err
 	}
 
-	ts := s.now().UnixMilli()
-	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO %s (k, v, ts) VALUES (?, ?, ?)
-ON CONFLICT(k) DO UPDATE SET v=excluded.v, ts=excluded.ts;`, table),
-		key, value, ts,
-	); err != nil {
-		return err
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
-
-	return tx.Commit()
+	return newVersion, nil
 }
 
 // Get returns the value for key within namespace.
-func (s *RuleYStore) Get(ctx context.Context, namespace string, key []byte) ([]byte, time.Time, bool, error) {
+func (s *RuleYStore) Get(ctx context.Context, namespace, key string) (RuleYGetResult, bool, error) {
 	if s == nil || s.db == nil || s.db.sql == nil {
-		return nil, time.Time{}, false, ErrRuleYUnavailable
+		return RuleYGetResult{}, false, ErrRuleYUnavailable
 	}
-	conn := s.db.SQL()
-	if err := EnsureKVNamespace(ctx, conn, namespace); err != nil {
-		return nil, time.Time{}, false, err
-	}
-	table, err := tableName(namespace)
+	ns, _, err := s.normalizeNamespace(namespace)
 	if err != nil {
-		return nil, time.Time{}, false, err
+		return RuleYGetResult{}, false, err
+	}
+	normalizedKey, err := normalizeRuleYKey(key)
+	if err != nil {
+		return RuleYGetResult{}, false, err
 	}
 
+	conn := s.db.SQL()
+	nowMillis := s.now().UnixMilli()
 	row := conn.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT v, ts FROM %s WHERE k = ?", table), key)
+		`SELECT v, content_type, version, updated_at
+		 FROM kv
+		 WHERE ns = ? AND k = ?
+		   AND (expires_at IS NULL OR expires_at > ?)`,
+		ns, normalizedKey, nowMillis,
+	)
 
 	var val []byte
-	var ts int64
-	if err := row.Scan(&val, &ts); err != nil {
+	var contentType string
+	var version int64
+	var updatedAt int64
+	if err := row.Scan(&val, &contentType, &version, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, time.Time{}, false, nil
+			return RuleYGetResult{}, false, nil
 		}
-		return nil, time.Time{}, false, err
+		return RuleYGetResult{}, false, err
 	}
+
 	valueCopy := append([]byte(nil), val...)
-	return valueCopy, time.UnixMilli(ts).UTC(), true, nil
+	return RuleYGetResult{
+		Value:       valueCopy,
+		ContentType: contentType,
+		Version:     version,
+		UpdatedAt:   time.UnixMilli(updatedAt).UTC(),
+	}, true, nil
 }
 
-// Delete removes the key from namespace, returning true when a row was deleted.
-func (s *RuleYStore) Delete(ctx context.Context, namespace string, key []byte) (bool, error) {
+// Del removes the key from namespace, returning true when a row was deleted.
+func (s *RuleYStore) Del(ctx context.Context, namespace, key string) (bool, error) {
 	if s == nil || s.db == nil || s.db.sql == nil {
 		return false, ErrRuleYUnavailable
 	}
-	conn := s.db.SQL()
-	if err := EnsureKVNamespace(ctx, conn, namespace); err != nil {
+	ns, _, err := s.normalizeNamespace(namespace)
+	if err != nil {
 		return false, err
 	}
-	table, err := tableName(namespace)
+	normalizedKey, err := normalizeRuleYKey(key)
 	if err != nil {
 		return false, err
 	}
 
+	conn := s.db.SQL()
 	res, err := conn.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM %s WHERE k = ?", table),
-		key,
+		`DELETE FROM kv WHERE ns = ? AND k = ?`,
+		ns, normalizedKey,
 	)
 	if err != nil {
 		return false, err
@@ -160,145 +275,293 @@ func (s *RuleYStore) Delete(ctx context.Context, namespace string, key []byte) (
 	return affected > 0, nil
 }
 
-// Scan performs a lexicographic prefix scan. The cursor (if provided) must be
-// the last key from a previous page and is treated as exclusive. The method
-// returns up to limit items plus a cursor for the next page when more items are
-// available.
-func (s *RuleYStore) Scan(ctx context.Context, namespace string, prefix, cursor []byte, limit int) ([]RuleYItem, []byte, error) {
+// Scan performs a lexicographic prefix scan and returns an exclusive next cursor.
+func (s *RuleYStore) Scan(ctx context.Context, namespace, prefix, cursor string, limit int) ([]RuleYItem, string, error) {
 	if s == nil || s.db == nil || s.db.sql == nil {
-		return nil, nil, ErrRuleYUnavailable
+		return nil, "", ErrRuleYUnavailable
 	}
-	if limit <= 0 || limit > 256 {
-		limit = 256
+	ns, _, err := s.normalizeNamespace(namespace)
+	if err != nil {
+		return nil, "", err
+	}
+	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	if normalizedPrefix != "" {
+		if err := validateRuleYKeyPrefix(normalizedPrefix); err != nil {
+			return nil, "", err
+		}
+	}
+	normalizedCursor := strings.ToLower(strings.TrimSpace(cursor))
+	if normalizedCursor != "" {
+		if err := validateRuleYKeyPrefix(normalizedCursor); err != nil {
+			return nil, "", err
+		}
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > ruleYMaxScanLimit {
+		limit = ruleYMaxScanLimit
 	}
 
 	conn := s.db.SQL()
-	if err := EnsureKVNamespace(ctx, conn, namespace); err != nil {
-		return nil, nil, err
-	}
-	table, err := tableName(namespace)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	query, args := buildScanQuery(table, prefix, cursor, limit+1)
+	query, args := buildScanQuery(ns, normalizedPrefix, normalizedCursor, limit+1, s.now().UnixMilli())
 	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
 	defer rows.Close()
 
 	var items []RuleYItem
 	for rows.Next() {
-		var k, v []byte
-		var ts int64
-		if err := rows.Scan(&k, &v, &ts); err != nil {
-			return nil, nil, err
+		var k string
+		var v []byte
+		var contentType string
+		var version int64
+		var updatedAt int64
+		if err := rows.Scan(&k, &v, &contentType, &version, &updatedAt); err != nil {
+			return nil, "", err
 		}
 		item := RuleYItem{
-			Key:       append([]byte(nil), k...),
-			Value:     append([]byte(nil), v...),
-			Timestamp: time.UnixMilli(ts).UTC(),
+			Key:         k,
+			Value:       append([]byte(nil), v...),
+			ContentType: contentType,
+			Version:     version,
+			UpdatedAt:   time.UnixMilli(updatedAt).UTC(),
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
 
-	var nextCursor []byte
+	var nextCursor string
 	if len(items) > limit {
-		nextCursor = append([]byte(nil), items[limit-1].Key...)
+		nextCursor = items[limit-1].Key
 		items = items[:limit]
 	}
 
 	return items, nextCursor, nil
 }
 
-// NamespaceSize returns the current byte footprint for namespace.
-func (s *RuleYStore) NamespaceSize(ctx context.Context, namespace string) (int64, error) {
+// CAS updates key/value only when expectVersion matches. expectVersion=0
+// creates the key when missing.
+func (s *RuleYStore) CAS(ctx context.Context, namespace, key string, expectVersion int64, value []byte, opts RuleYPutOptions) (int64, error) {
 	if s == nil || s.db == nil || s.db.sql == nil {
 		return 0, ErrRuleYUnavailable
 	}
-	conn := s.db.SQL()
-	if err := EnsureKVNamespace(ctx, conn, namespace); err != nil {
-		return 0, err
-	}
-	table, err := tableName(namespace)
+	ns, quota, err := s.normalizeNamespace(namespace)
 	if err != nil {
 		return 0, err
 	}
-	return namespaceSize(ctx, conn, table)
+	normalizedKey, err := normalizeRuleYKey(key)
+	if err != nil {
+		return 0, err
+	}
+	if len(value) > ruleYMaxValueBytes {
+		return 0, ErrRuleYValueTooLarge
+	}
+
+	conn := s.db.SQL()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	nowMillis := s.now().UnixMilli()
+	existingVersion, existed, existedCounted, oldBytes, err := readKVExisting(ctx, tx, ns, normalizedKey, nowMillis)
+	if err != nil {
+		return 0, err
+	}
+	if !existed {
+		if expectVersion != 0 {
+			return 0, ErrRuleYCASMismatch
+		}
+	} else if existingVersion != expectVersion {
+		return 0, ErrRuleYCASMismatch
+	}
+	effectiveQuota := quota
+	if opts.MaxRows > 0 {
+		effectiveQuota.MaxRows = opts.MaxRows
+	}
+	if opts.MaxBytes > 0 {
+		effectiveQuota.MaxBytes = opts.MaxBytes
+	}
+	newEntryBytes := len(normalizedKey) + len(value)
+	if err := enforceRuleYQuota(ctx, tx, ns, nowMillis, effectiveQuota, existed, existedCounted, oldBytes, newEntryBytes); err != nil {
+		return 0, err
+	}
+
+	updatedAt := nowMillis
+	expiresAt := nullableExpiryMillis(updatedAt, opts.TTL)
+	contentType := strings.TrimSpace(opts.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	newVersion := expectVersion + 1
+	var affected int64
+	if !existed {
+		newVersion = 1
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			ns, normalizedKey, value, contentType, newVersion, updatedAt, expiresAt,
+		)
+		if err != nil {
+			if isSQLiteConstraint(err) {
+				return 0, ErrRuleYCASMismatch
+			}
+			return 0, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		if affected != 1 {
+			return 0, ErrRuleYCASMismatch
+		}
+	} else {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE kv
+			SET v = ?, content_type = ?, version = ?, updated_at = ?, expires_at = ?
+			WHERE ns = ? AND k = ? AND version = ?`,
+			value, contentType, newVersion, updatedAt, expiresAt, ns, normalizedKey, expectVersion,
+		)
+		if err != nil {
+			return 0, err
+		}
+		affected, _ = res.RowsAffected()
+		if affected == 0 {
+			return 0, ErrRuleYCASMismatch
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newVersion, nil
 }
 
-func (s *RuleYStore) resolveLimit(limit int64) int64 {
-	if limit > 0 {
-		return limit
+func (s *RuleYStore) normalizeNamespace(namespace string) (string, RuleYNamespaceQuota, error) {
+	ns := strings.ToLower(strings.TrimSpace(namespace))
+	if ns == "" {
+		return "", RuleYNamespaceQuota{}, ErrRuleYNamespaceForbidden
 	}
-	return s.namespaceLimit
+	quota, ok := s.allowlist[ns]
+	if !ok {
+		return "", RuleYNamespaceQuota{}, ErrRuleYNamespaceForbidden
+	}
+	if quota.MaxRows <= 0 {
+		quota.MaxRows = ruleYDefaultMaxRows
+	}
+	if quota.MaxBytes <= 0 {
+		quota.MaxBytes = ruleYDefaultMaxBytes
+	}
+	return ns, quota, nil
 }
 
-func (s *RuleYStore) validateKeyValue(key, value []byte) error {
-	if len(key) > s.maxKeyBytes {
-		return ErrRuleYKeyTooLarge
+func normalizeRuleYKey(key string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if !ruleYKeyPattern.MatchString(normalized) {
+		return "", ErrRuleYInvalidKey
 	}
-	if len(value) > s.maxValueBytes {
-		return ErrRuleYValueTooLarge
+	return normalized, nil
+}
+
+// NormalizeRuleYKey validates and canonicalizes a Rule-Y key for cross-package use.
+func NormalizeRuleYKey(key string) (string, error) {
+	return normalizeRuleYKey(key)
+}
+
+func validateRuleYKeyPrefix(prefix string) error {
+	if len(prefix) > 128 {
+		return ErrRuleYInvalidKey
+	}
+	for _, r := range prefix {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == ':' || r == '/' || r == '-' {
+			continue
+		}
+		return ErrRuleYInvalidKey
 	}
 	return nil
 }
 
-func tableName(namespace string) (string, error) {
-	if !namespacePattern.MatchString(namespace) {
-		return "", fmt.Errorf("invalid namespace %q", namespace)
-	}
-	return fmt.Sprintf("core_kv_%s", namespace), nil
-}
-
-func namespaceSize(ctx context.Context, exec interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, table string) (int64, error) {
-	var total sql.NullInt64
-	row := exec.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT COALESCE(SUM(length(k) + length(v)), 0) FROM %s", table),
-	)
-	if err := row.Scan(&total); err != nil {
-		return 0, err
-	}
-	return total.Int64, nil
-}
-
-func sizeDelta(ctx context.Context, tx *sql.Tx, table string, key []byte, newSize int) (int64, error) {
-	var existing sql.NullInt64
-	row := tx.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT length(k) + length(v) FROM %s WHERE k = ?", table),
-		key,
-	)
-	if err := row.Scan(&existing); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, err
+func readKVExisting(ctx context.Context, tx *sql.Tx, namespace, key string, nowMillis int64) (version int64, exists bool, counted bool, bytes int64, err error) {
+	row := tx.QueryRowContext(ctx, `SELECT version, length(k) + length(v), expires_at FROM kv WHERE ns = ? AND k = ?`, namespace, key)
+	var storedVersion int64
+	var storedBytes int64
+	var expiresAt sql.NullInt64
+	if err := row.Scan(&storedVersion, &storedBytes, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, false, 0, nil
 		}
+		return 0, false, false, 0, err
 	}
-	if !existing.Valid {
-		return int64(newSize), nil
-	}
-	return int64(newSize) - existing.Int64, nil
+	counted = !expiresAt.Valid || expiresAt.Int64 > nowMillis
+	return storedVersion, true, counted, storedBytes, nil
 }
 
-func buildScanQuery(table string, prefix, cursor []byte, limit int) (string, []any) {
-	query := fmt.Sprintf("SELECT k, v, ts FROM %s WHERE 1=1", table)
-	args := make([]any, 0, 4)
+func enforceRuleYQuota(ctx context.Context, tx *sql.Tx, namespace string, nowMillis int64, quota RuleYNamespaceQuota, exists bool, existedCounted bool, oldBytes int64, newBytes int) error {
+	if quota.MaxRows <= 0 && quota.MaxBytes <= 0 {
+		return nil
+	}
 
-	if len(prefix) > 0 {
+	var rows int64
+	var bytes int64
+	row := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(length(k) + length(v)), 0)
+		 FROM kv
+		 WHERE ns = ?
+		   AND (expires_at IS NULL OR expires_at > ?)`,
+		namespace, nowMillis,
+	)
+	if err := row.Scan(&rows, &bytes); err != nil {
+		return err
+	}
+	newRows := rows
+	if !exists || !existedCounted {
+		newRows++
+	}
+	if quota.MaxRows > 0 && newRows > quota.MaxRows {
+		return ErrRuleYQuotaExceeded
+	}
+
+	totalBytes := bytes
+	if existedCounted {
+		totalBytes -= oldBytes
+	}
+	totalBytes += int64(newBytes)
+	if quota.MaxBytes > 0 && totalBytes > quota.MaxBytes {
+		return ErrRuleYQuotaExceeded
+	}
+	return nil
+}
+
+func nullableExpiryMillis(updatedAtMillis int64, ttl time.Duration) sql.NullInt64 {
+	if ttl <= 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: updatedAtMillis + ttl.Milliseconds(), Valid: true}
+}
+
+func buildScanQuery(namespace, prefix, cursor string, limit int, nowMillis int64) (string, []any) {
+	query := `SELECT k, v, content_type, version, updated_at
+		FROM kv
+		WHERE ns = ?
+		  AND (expires_at IS NULL OR expires_at > ?)`
+	args := make([]any, 0, 4)
+	args = append(args, namespace, nowMillis)
+
+	if prefix != "" {
 		query += " AND k >= ?"
 		args = append(args, prefix)
-		if upper := nextPrefix(prefix); upper != nil {
+		if upper := nextPrefix(prefix); upper != "" {
 			query += " AND k < ?"
 			args = append(args, upper)
 		}
 	}
 
-	if len(cursor) > 0 {
+	if cursor != "" {
 		query += " AND k > ?"
 		args = append(args, cursor)
 	}
@@ -309,13 +572,13 @@ func buildScanQuery(table string, prefix, cursor []byte, limit int) (string, []a
 	return query, args
 }
 
-func nextPrefix(prefix []byte) []byte {
-	out := append([]byte(nil), prefix...)
+func nextPrefix(prefix string) string {
+	out := []byte(prefix)
 	for i := len(out) - 1; i >= 0; i-- {
 		if out[i] != 0xFF {
 			out[i]++
-			return out[:i+1]
+			return string(out[:i+1])
 		}
 	}
-	return nil
+	return ""
 }
