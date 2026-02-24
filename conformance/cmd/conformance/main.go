@@ -1,9 +1,11 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/flowd-org/flowd/conformance/internal/harness"
 )
 
 func main() {
@@ -11,19 +13,31 @@ func main() {
 }
 
 func run(args []string) int {
-	fs := flag.NewFlagSet("conformance", flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: conformance [options]\n\n")
-		fmt.Fprintf(os.Stderr, "Conformance harness for flowd M1 E2E gate.\n\n")
-		fmt.Fprintf(os.Stderr, "Options:\n")
-		fs.PrintDefaults()
+	// Convert environment to map
+	env := make(map[string]string)
+	for _, e := range os.Environ() {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			env[parts[0]] = parts[1]
+		}
 	}
 
-	if err := fs.Parse(args); err != nil {
-		return 1
+	// Parse configuration
+	cfg, exitCode, err := harness.ParseConfig(args, env)
+	if err != nil {
+		// Redact the token from the error message before printing
+		redactedMsg := harness.RedactSecrets(err.Error(), cfg.Token)
+		fmt.Fprintf(os.Stderr, "Error: %s\n", redactedMsg)
+		return exitCode
 	}
 
-	// Placeholder for T-002: config parsing, token sourcing, exit codes
-	fmt.Println("conformance harness (T-001 scaffold)")
-	return 0
+	// Run the conformance harness
+	fmt.Println("conformance harness starting...")
+	fmt.Printf("  flwd binary: %s\n", cfg.FlwdBinary)
+	fmt.Printf("  bind: %s\n", cfg.Bind)
+	fmt.Printf("  profiles: %v\n", cfg.ULCProfiles)
+
+	// TODO: Implement actual conformance run logic (T-003+)
+
+	return harness.ExitOK
 }
