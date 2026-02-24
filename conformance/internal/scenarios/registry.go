@@ -71,6 +71,7 @@ func All() []Scenario {
 	return []Scenario{
 		ULCSmokeScenario(),
 		APISurfaceScenario(),
+		TenantScenario(),
 	}
 }
 

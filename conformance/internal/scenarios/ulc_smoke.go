@@ -3,14 +3,14 @@ package scenarios
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/flowd-org/flowd/conformance/internal/harness"
 )
 
 // ULCSmokeScenario creates a scenario that validates local-source registration
@@ -77,8 +77,8 @@ func runProfile(ctx context.Context, env Env, profile string) Result {
 	}
 
 	// Create idempotency headers
-	idempotencyKey := fmt.Sprintf("conformance-ulc-smoke-%s-%s", profile, generateUUID())
-	idempotencySHA256 := computeSHA256(bodyBytes)
+	idempotencyKey := fmt.Sprintf("conformance-tenant-%d", time.Now().UnixNano())
+	idempotencySHA256 := harness.ComputeSHA256(bodyBytes)
 
 	// Build request
 	req, err := http.NewRequestWithContext(ctx, "POST", env.BaseURL+"/runs", bytes.NewReader(bodyBytes))
@@ -184,12 +184,6 @@ func getJobIDForProfile(profile string) string {
 func generateUUID() string {
 	// Use a simple timestamp-based UUID for idempotency
 	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
-
-// computeSHA256 computes the SHA256 hash of the canonical JSON body.
-func computeSHA256(body []byte) string {
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
 }
 
 // pollRunCompletion polls the run endpoint until completion or timeout.

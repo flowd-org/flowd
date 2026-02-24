@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 )
 
@@ -42,4 +44,10 @@ func RedactTokenInLine(line, token string) string {
 		return line
 	}
 	return strings.ReplaceAll(line, token, "[REDACTED]")
+}
+
+// computeSHA256 computes the SHA256 hash of the canonical JSON body.
+func ComputeSHA256(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
