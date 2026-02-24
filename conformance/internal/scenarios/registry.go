@@ -69,7 +69,7 @@ func DefaultProfiles() []string {
 // All returns the complete list of registered scenarios.
 func All() []Scenario {
 	return []Scenario{
-		// TODO: Add actual scenarios (T-009+)
+		ULCSmokeScenario(),
 	}
 }
 
