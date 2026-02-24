@@ -1,0 +1,50 @@
+name: conformance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  conformance:
+    name: conformance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build flwd binary
+        run: go build -o ./bin/flwd ./
+
+      - name: Verify bash
+        run: bash --version
+
+      - name: Verify PowerShell
+        run: pwsh -v
+
+      - name: Run root tests
+        run: go test ./...
+
+      - name: Run conformance module tests
+        working-directory: conformance
+        run: go test ./...
+
+      - name: Run conformance harness
+        working-directory: conformance
+        env:
+          FLWD_TOKEN: ${{ secrets.FLWD_TOKEN }}
+        run: go run ./cmd/conformance --flwd-binary ../bin/flwd --report-json ../conformance-report.json
+
+      - name: Upload conformance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report
+          path: conformance-report.json
+          retention-days: 7
