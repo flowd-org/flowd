@@ -39,5 +39,6 @@ func run(args []string) int {
 
 	// TODO: Implement actual conformance run logic (T-003+)
 
+	// For now, return success
 	return harness.ExitOK
 }
