@@ -72,6 +72,8 @@ func All() []Scenario {
 		ULCSmokeScenario(),
 		APISurfaceScenario(),
 		TenantScenario(),
+		ScenarioCanonicalJobIDs(),
+		ScenarioCollisionBehavior(),
 	}
 }
 
