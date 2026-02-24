@@ -70,6 +70,7 @@ func DefaultProfiles() []string {
 func All() []Scenario {
 	return []Scenario{
 		ULCSmokeScenario(),
+		APISurfaceScenario(),
 	}
 }
 

@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/flowd-org/flowd/conformance/internal/harness"
 )
 
 // ULCSmokeScenario creates a scenario that validates local-source registration
@@ -297,12 +295,4 @@ func fetchEvents(ctx context.Context, env Env, runID, profile string) string {
 	}
 
 	return strings.Join(bounded, "\n")
-}
-
-// redactBody redacts secrets from the response body.
-func redactBody(body, token string) string {
-	result := harness.RedactSecrets(body, token)
-	// Also redact Authorization header patterns
-	result = strings.ReplaceAll(result, "Authorization: Bearer ", "Authorization: Bearer [REDACTED] ")
-	return result
 }
