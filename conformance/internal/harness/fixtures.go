@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // FixtureJobIDs returns the expected job IDs for the conformance fixtures.
@@ -43,14 +44,21 @@ func StageFixtures(runRoot string) (stagedRef string, err error) {
 	}
 
 	// Ensure .sh files are executable
-	shFiles, err := filepath.Glob(filepath.Join(dst, "**", "*.sh"))
-	if err != nil {
-		return "", fmt.Errorf("failed to glob .sh files: %w", err)
-	}
-	for _, f := range shFiles {
-		if chmodErr := os.Chmod(f, 0755); chmodErr != nil {
-			return "", fmt.Errorf("failed to chmod %s: %w", f, chmodErr)
+	if err := filepath.WalkDir(dst, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".sh") {
+			if chmodErr := os.Chmod(path, 0755); chmodErr != nil {
+				return fmt.Errorf("failed to chmod %s: %w", path, chmodErr)
+			}
+		}
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("failed to walk and chmod .sh files: %w", err)
 	}
 
 	return "fixtures/tree-v1", nil
@@ -69,12 +77,12 @@ func RegisterLocalSource(ctx context.Context, c *Client, name string, ref string
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/sources", bytes.NewReader(body))
+	req, err := c.NewRequest(ctx, http.MethodPost, "/sources", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	// req.Header.Set("Content-Type", "application/json") // already set by NewRequest via Accept header, but we need Content-Type for POST
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.Token, "")
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
