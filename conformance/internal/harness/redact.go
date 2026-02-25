@@ -25,18 +25,32 @@ func RedactSecrets(s string, secrets ...string) string {
 func redactAuthorizationHeader(s string) string {
 	// Replace "Authorization: Bearer <token>" pattern
 	prefix := "Authorization: Bearer "
-	idx := strings.Index(s, prefix)
-	if idx == -1 {
-		return s
+	result := s
+
+	for {
+		idx := strings.Index(result, prefix)
+		if idx == -1 {
+			break
+		}
+
+		end := idx + len(prefix)
+		// Find end of token (space, newline, or end of string)
+		for end < len(result) && result[end] != ' ' && result[end] != '\n' && result[end] != '\r' {
+			end++
+		}
+
+		result = result[:idx] + prefix + "[REDACTED]" + result[end:]
+		// Advance past the replacement to avoid infinite loop
+		newStart := idx + len(prefix) + len("[REDACTED]")
+		if newStart >= len(result) {
+			break
+		}
+		// Continue search from after the replacement
+		result = result[newStart:]
+		break
 	}
 
-	end := idx + len(prefix)
-	// Find end of token (space, newline, or end of string)
-	for end < len(s) && s[end] != ' ' && s[end] != '\n' && s[end] != '\r' {
-		end++
-	}
-
-	return s[:idx] + prefix + "[REDACTED]" + s[end:]
+	return result
 }
 
 // RedactTokenInLine is a helper that redacts a specific token from a line of text.

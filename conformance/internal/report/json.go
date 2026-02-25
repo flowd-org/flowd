@@ -28,16 +28,43 @@ func WriteJSON(path string, r Report) error {
 func redactTokens(s string) string {
 	// This is a defensive redaction - in practice, tokens should not be in the report
 	// but we redact any Authorization header patterns just in case
-	result := s
-	// Replace "Authorization: Bearer <token>" patterns
-	prefix := "Authorization: Bearer "
-	idx := strings.Index(result, prefix)
-	if idx != -1 {
-		end := idx + len(prefix)
-		for end < len(result) && result[end] != '"' && result[end] != ' ' && result[end] != '\n' && result[end] != '\r' {
+	const prefix = "Authorization: Bearer "
+	const replacement = prefix + "[REDACTED]"
+
+	var result strings.Builder
+	result.Grow(len(s))
+
+	start := 0
+	for start < len(s) {
+		idx := strings.Index(s[start:], prefix)
+		if idx == -1 {
+			result.WriteString(s[start:])
+			break
+		}
+
+		result.WriteString(s[start : start+idx])
+		result.WriteString(replacement)
+
+		// Find end of token (space, newline, or end of string)
+		tokenStart := start + idx + len(prefix)
+		end := tokenStart
+		for end < len(s) && s[end] != ' ' && s[end] != '\n' && s[end] != '\r' {
 			end++
 		}
-		result = result[:idx] + prefix + "\"[REDACTED]\"" + result[end:]
+
+		// Debug output
+		_ = end
+		if len(s) > 40 && end > 40 {
+			_ = end
+		}
+
+		// The end position now points to the delimiter (space, newline, or end)
+		// We want to keep everything from end onwards
+		if end >= len(s) {
+			break
+		}
+		start = end
 	}
-	return result
+
+	return result.String()
 }
