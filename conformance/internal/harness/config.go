@@ -42,7 +42,7 @@ func ParseConfig(args []string, env map[string]string) (Config, int, error) {
 	fs.StringVar(&token, "token", "", "flowd API token (overrides FLWD_TOKEN env var)")
 	fs.StringVar(&bind, "bind", "127.0.0.1:8080", "Bind address for the flwd server")
 	fs.StringVar(&flwdProfile, "flwd-profile", "", "flwd profile to use")
-	fs.StringVar(&ulcProfilesStr, "ulc-profiles", "bash,pwsh", "Comma-separated list of ULC profiles to test")
+	fs.StringVar(&ulcProfilesStr, "ulc-profiles", "ulc.shell.bash,ulc.shell.pwsh", "Comma-separated list of ULC profiles to test (aliases: bash, pwsh)")
 	fs.DurationVar(&timeout, "timeout", 5*time.Minute, "Overall timeout for the conformance run")
 	fs.DurationVar(&scenarioTimeout, "scenario-timeout", 2*time.Minute, "Timeout per scenario")
 	fs.StringVar(&reportJSON, "report-json", "", "Path to write JSON report")
@@ -71,10 +71,16 @@ func ParseConfig(args []string, env map[string]string) (Config, int, error) {
 		return Config{}, ExitUsage, fmt.Errorf("missing token (set --token or FLWD_TOKEN)")
 	}
 
-	// Parse ULC profiles
+	// Parse ULC profiles with alias normalization
 	var ulcProfiles []string
 	if ulcProfilesStr != "" {
-		ulcProfiles = splitCSV(ulcProfilesStr)
+		rawProfiles := splitCSV(ulcProfilesStr)
+		for _, p := range rawProfiles {
+			normalized := normalizeProfile(p)
+			if normalized != "" {
+				ulcProfiles = append(ulcProfiles, normalized)
+			}
+		}
 	}
 
 	cfg := Config{
@@ -106,4 +112,19 @@ func splitCSV(s string) []string {
 		}
 	}
 	return parts
+}
+
+// normalizeProfile converts ULC profile aliases to canonical identifiers.
+// Supported aliases: "bash" -> "ulc.shell.bash", "pwsh" -> "ulc.shell.pwsh".
+// Canonical identifiers are passed through unchanged.
+func normalizeProfile(p string) string {
+	switch p {
+	case "bash":
+		return "ulc.shell.bash"
+	case "pwsh":
+		return "ulc.shell.pwsh"
+	default:
+		// Pass through canonical identifiers and unknown profiles unchanged
+		return p
+	}
 }

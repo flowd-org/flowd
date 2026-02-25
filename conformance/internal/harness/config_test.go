@@ -21,7 +21,7 @@ func TestParseConfig_TokenPrecedence(t *testing.T) {
 			wantToken:       "from-flag",
 			wantExitCode:    ExitOK,
 			wantErr:         false,
-			wantULCProfiles: []string{"bash", "pwsh"},
+			wantULCProfiles: []string{"ulc.shell.bash", "ulc.shell.pwsh"},
 		},
 		{
 			name:            "env used when flag not set",
@@ -30,7 +30,7 @@ func TestParseConfig_TokenPrecedence(t *testing.T) {
 			wantToken:       "from-env",
 			wantExitCode:    ExitOK,
 			wantErr:         false,
-			wantULCProfiles: []string{"bash", "pwsh"},
+			wantULCProfiles: []string{"ulc.shell.bash", "ulc.shell.pwsh"},
 		},
 		{
 			name:            "empty env with no flag fails",
@@ -48,7 +48,7 @@ func TestParseConfig_TokenPrecedence(t *testing.T) {
 			wantToken:       "dummy",
 			wantExitCode:    ExitOK,
 			wantErr:         false,
-			wantULCProfiles: []string{"bash", "pwsh"},
+			wantULCProfiles: []string{"ulc.shell.bash", "ulc.shell.pwsh"},
 		},
 		{
 			name:            "mixed profile input with alias bash,pwsh,ulc.shell.bash",
@@ -57,7 +57,7 @@ func TestParseConfig_TokenPrecedence(t *testing.T) {
 			wantToken:       "dummy",
 			wantExitCode:    ExitOK,
 			wantErr:         false,
-			wantULCProfiles: []string{"bash", "pwsh", "ulc.shell.bash"},
+			wantULCProfiles: []string{"ulc.shell.bash", "ulc.shell.pwsh", "ulc.shell.bash"},
 		},
 	}
 
