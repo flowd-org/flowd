@@ -63,7 +63,7 @@ func runProfile(ctx context.Context, env Env, profile string) Result {
 	}
 
 	// Marshal to JSON with stable ordering
-	bodyBytes, err := json.Marshal(payload)
+	bodyBytes, err := harness.CanonicalJSON(payload)
 	if err != nil {
 		return Result{
 			ScenarioID: "ulc-smoke",

@@ -3,6 +3,7 @@ package harness
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 )
 
@@ -46,7 +47,25 @@ func RedactTokenInLine(line, token string) string {
 	return strings.ReplaceAll(line, token, "[REDACTED]")
 }
 
-// computeSHA256 computes the SHA256 hash of the canonical JSON body.
+// CanonicalJSON returns the canonical JSON bytes for a value.
+// It marshals the value, unmarshals into a generic structure to normalize
+// key ordering and whitespace, then marshals again to produce deterministic output.
+func CanonicalJSON(v any) ([]byte, error) {
+	// First marshal to get raw JSON
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	// Unmarshal into generic structure to normalize
+	var normalized any
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return nil, err
+	}
+	// Marshal again with stable formatting
+	return json.Marshal(normalized)
+}
+
+// ComputeSHA256 computes the SHA256 hash of the canonical JSON body.
 func ComputeSHA256(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])

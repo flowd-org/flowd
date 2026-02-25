@@ -63,7 +63,7 @@ func validateJobID(ctx context.Context, env Env, profile string) Result {
 	}
 
 	// Marshal to JSON with stable ordering
-	bodyBytes, err := json.Marshal(payload)
+	bodyBytes, err := harness.CanonicalJSON(payload)
 	if err != nil {
 		return Result{
 			ScenarioID: "canonical-job-ids",
@@ -344,7 +344,7 @@ func createRun(ctx context.Context, env Env, jobID, profile string) (string, err
 		},
 	}
 
-	bodyBytes, err := json.Marshal(payload)
+	bodyBytes, err := harness.CanonicalJSON(payload)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}

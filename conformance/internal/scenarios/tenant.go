@@ -38,7 +38,7 @@ func runTenant(ctx context.Context, env Env) Result {
 		},
 	}
 
-	bodyBytes, err := json.Marshal(payload)
+	bodyBytes, err := harness.CanonicalJSON(payload)
 	if err != nil {
 		return Result{
 			ScenarioID: "tenant",
