@@ -1,7 +1,6 @@
 package scenarios
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,21 +30,21 @@ func runAPISurface(ctx context.Context, env Env) Result {
 
 	// Run all endpoint checks
 	endpoints := []struct {
-		name     string
-		path     string
-		expected int
-		check    func(resp *http.Response, token string) error
+		name        string
+		path        string
+		expected    int
+		allowStatus func(int) bool
+		check       func(statusCode int, body []byte, token string) error
 	}{
-		{"healthz", "/healthz", 200, checkHealthz},
-		{"healthz", "/healthz", 204, checkHealthz}, // Accept 204 as well
-		{"startupz", "/startupz", 200, checkJSONResponse},
-		{"readyz", "/readyz", 200, checkJSONResponse},
-		{"capabilities", "/capabilities", 200, checkCapabilities},
-		{"limits", "/limits", 200, checkLimits},
+		{"healthz", "/healthz", 200, func(s int) bool { return s == 200 || s == 204 }, checkHealthz},
+		{"startupz", "/startupz", 200, func(s int) bool { return s == 200 }, checkJSONResponse},
+		{"readyz", "/readyz", 200, func(s int) bool { return s == 200 }, checkJSONResponse},
+		{"capabilities", "/capabilities", 200, func(s int) bool { return s == 200 }, checkCapabilities},
+		{"limits", "/limits", 200, func(s int) bool { return s == 200 }, checkLimits},
 	}
 
 	for _, ep := range endpoints {
-		result := checkEndpoint(ctx, env, ep.name, ep.path, ep.expected, ep.check)
+		result := checkEndpoint(ctx, env, ep.name, ep.path, ep.expected, ep.allowStatus, ep.check)
 		if !result.Passed {
 			return result
 		}
@@ -60,7 +59,7 @@ func runAPISurface(ctx context.Context, env Env) Result {
 }
 
 // checkEndpoint makes a GET request to the endpoint and validates the response.
-func checkEndpoint(ctx context.Context, env Env, name, path string, expected int, check func(*http.Response, string) error) Result {
+func checkEndpoint(ctx context.Context, env Env, name, path string, expected int, allowStatus func(int) bool, check func(int, []byte, string) error) Result {
 	start := time.Now()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", env.BaseURL+path, nil)
@@ -92,11 +91,11 @@ func checkEndpoint(ctx context.Context, env Env, name, path string, expected int
 	}
 	defer resp.Body.Close()
 
-	// Read body for diagnostics
+	// Read body once for diagnostics and validators
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
-	// Check status code
-	if resp.StatusCode != expected {
+	// Check status code (allow expected or acceptable alternatives)
+	if !allowStatus(resp.StatusCode) {
 		return Result{
 			ScenarioID: "api-surface",
 			Profile:    "api-surface",
@@ -108,8 +107,8 @@ func checkEndpoint(ctx context.Context, env Env, name, path string, expected int
 		}
 	}
 
-	// Run additional checks
-	if err := check(resp, env.Token); err != nil {
+	// Run additional checks with statusCode and body
+	if err := check(resp.StatusCode, body, env.Token); err != nil {
 		return Result{
 			ScenarioID: "api-surface",
 			Profile:    "api-surface",
@@ -131,23 +130,18 @@ func checkEndpoint(ctx context.Context, env Env, name, path string, expected int
 
 // checkHealthz validates the healthz response.
 // Accepts 200 or 204 status codes with no body.
-func checkHealthz(resp *http.Response, token string) error {
+func checkHealthz(statusCode int, body []byte, token string) error {
 	// healthz should return 200 or 204 with no body
-	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		return fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	if statusCode != 200 && statusCode != 204 {
+		return fmt.Errorf("unexpected status code %d", statusCode)
 	}
 	return nil
 }
 
 // checkJSONResponse validates a generic JSON response.
-func checkJSONResponse(resp *http.Response, token string) error {
-	var bodyBytes bytes.Buffer
-	if _, err := bodyBytes.ReadFrom(resp.Body); err != nil {
-		return fmt.Errorf("failed to read body: %v", err)
-	}
-
-	body := bodyBytes.String()
-	if err := validateJSON(body); err != nil {
+func checkJSONResponse(statusCode int, body []byte, token string) error {
+	bodyStr := string(body)
+	if err := validateJSON(bodyStr); err != nil {
 		return fmt.Errorf("invalid JSON: %v", err)
 	}
 	return nil
@@ -166,14 +160,9 @@ func validateJSON(s string) error {
 }
 
 // checkCapabilities validates the /capabilities response.
-func checkCapabilities(resp *http.Response, token string) error {
-	var bodyBytes bytes.Buffer
-	if _, err := bodyBytes.ReadFrom(resp.Body); err != nil {
-		return fmt.Errorf("failed to read body: %v", err)
-	}
-
+func checkCapabilities(statusCode int, body []byte, token string) error {
 	var data map[string]interface{}
-	if err := json.Unmarshal(bodyBytes.Bytes(), &data); err != nil {
+	if err := json.Unmarshal(body, &data); err != nil {
 		return fmt.Errorf("invalid JSON: %v", err)
 	}
 
@@ -200,14 +189,9 @@ func checkCapabilities(resp *http.Response, token string) error {
 }
 
 // checkLimits validates the /limits response.
-func checkLimits(resp *http.Response, token string) error {
-	var bodyBytes bytes.Buffer
-	if _, err := bodyBytes.ReadFrom(resp.Body); err != nil {
-		return fmt.Errorf("failed to read body: %v", err)
-	}
-
+func checkLimits(statusCode int, body []byte, token string) error {
 	var data map[string]interface{}
-	if err := json.Unmarshal(bodyBytes.Bytes(), &data); err != nil {
+	if err := json.Unmarshal(body, &data); err != nil {
 		return fmt.Errorf("invalid JSON: %v", err)
 	}
 
