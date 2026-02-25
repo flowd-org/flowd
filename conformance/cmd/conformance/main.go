@@ -136,14 +136,16 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 	// Print failure details for failed scenarios (bounded output)
 	if r.FailedCount > 0 {
 		fmt.Println("\nFailed scenarios:")
-		for i, result := range r.Results {
+		failedPrinted := 0
+		for _, result := range r.Results {
 			if !result.Passed {
 				// Limit to first 10 failures to avoid overwhelming output
-				if i >= 10 {
+				if failedPrinted >= 10 {
 					fmt.Printf("  ... and %d more\n", r.FailedCount-10)
 					break
 				}
 				fmt.Println(report.FormatFailureBlock(result))
+				failedPrinted++
 			}
 		}
 	}
