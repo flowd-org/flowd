@@ -174,12 +174,6 @@ func getJobIDForProfile(profile string) string {
 	}
 }
 
-// generateUUID generates a simple UUID-like string.
-func generateUUID() string {
-	// Use a simple timestamp-based UUID for idempotency
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
-
 // pollRunCompletion polls the run endpoint until completion or timeout.
 func pollRunCompletion(ctx context.Context, env Env, runID, profile string, start time.Time) error {
 	pollURL := fmt.Sprintf("%s/runs/%s", env.BaseURL, runID)

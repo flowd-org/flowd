@@ -29,19 +29,13 @@ func ScenarioCanonicalJobIDs() Scenario {
 func runCanonicalJobIDs(ctx context.Context, env Env) Result {
 	start := time.Now()
 
-	// For each profile, create a run and verify the job ID is stable and canonical
-	profiles := []string{"ulc.shell.bash", "ulc.shell.pwsh"}
-	for _, profile := range profiles {
-		result := validateJobID(ctx, env, profile)
-		if !result.Passed {
-			return result
-		}
-	}
+	// Run only the profile specified in env.Profile
+	result := validateJobID(ctx, env, env.Profile)
 
 	return Result{
 		ScenarioID: "canonical-job-ids",
-		Profile:    strings.Join(profiles, ","),
-		Passed:     true,
+		Profile:    env.Profile,
+		Passed:     result.Passed,
 		Duration:   time.Since(start),
 	}
 }
@@ -257,19 +251,13 @@ func ScenarioCollisionBehavior() Scenario {
 func runCollisionBehavior(ctx context.Context, env Env) Result {
 	start := time.Now()
 
-	// For each profile, create two runs with the same job ID and verify collision handling
-	profiles := []string{"ulc.shell.bash", "ulc.shell.pwsh"}
-	for _, profile := range profiles {
-		result := validateCollision(ctx, env, profile)
-		if !result.Passed {
-			return result
-		}
-	}
+	// Run only the profile specified in env.Profile
+	result := validateCollision(ctx, env, env.Profile)
 
 	return Result{
 		ScenarioID: "collision-behavior",
-		Profile:    strings.Join(profiles, ","),
-		Passed:     true,
+		Profile:    env.Profile,
+		Passed:     result.Passed,
 		Duration:   time.Since(start),
 	}
 }
