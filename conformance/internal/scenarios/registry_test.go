@@ -2,6 +2,9 @@ package scenarios
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,4 +314,150 @@ func containsString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestAPISurfaceScenario_Healthz204 tests that healthz returning 204 is accepted
+func TestAPISurfaceScenario_Healthz204(t *testing.T) {
+	// Create a test server that returns 204 for /healthz and valid JSON for other endpoints
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusNoContent)
+		case "/startupz", "/readyz":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status": "ok"}`))
+		case "/capabilities":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"core": {"version": "1.0.0", "spec_version": "1.0.0"}}`))
+		case "/limits":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"algorithm": "sha256", "queue_max_depth": 1000, "backpressure_mode": "block", "queue_stats": {}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := &harness.Client{
+		BaseURL: server.URL,
+		Token:   "test-token",
+		HTTP:    &http.Client{},
+	}
+
+	env := Env{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: client,
+		Profile:    "api-surface",
+	}
+
+	scenario := APISurfaceScenario()
+	result := scenario.Run(context.Background(), env)
+
+	if !result.Passed {
+		t.Errorf("Expected APISurfaceScenario to pass with 204 healthz, got failure: %v", result.Failure)
+	}
+}
+
+// TestAPISurfaceScenario_JSONBodyReachesValidator tests that a valid JSON body reaches the validator
+func TestAPISurfaceScenario_JSONBodyReachesValidator(t *testing.T) {
+	// Create a test server that returns valid JSON for all endpoints
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusNoContent)
+		case "/startupz", "/readyz":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status": "ok"}`))
+		case "/capabilities":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"core": {"version": "1.0.0", "spec_version": "1.0.0"}}`))
+		case "/limits":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"algorithm": "sha256", "queue_max_depth": 1000, "backpressure_mode": "block", "queue_stats": {}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := &harness.Client{
+		BaseURL: server.URL,
+		Token:   "test-token",
+		HTTP:    &http.Client{},
+	}
+
+	env := Env{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: client,
+		Profile:    "api-surface",
+	}
+
+	scenario := APISurfaceScenario()
+	result := scenario.Run(context.Background(), env)
+
+	if !result.Passed {
+		t.Errorf("Expected APISurfaceScenario to pass with valid JSON response, got failure: %v", result.Failure)
+	}
+}
+
+// TestAPISurfaceScenario_EmptyBodyFails tests that an empty response body fails validation
+func TestAPISurfaceScenario_EmptyBodyFails(t *testing.T) {
+	// Create a test server that returns empty body for /capabilities but valid for others
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusNoContent)
+		case "/startupz", "/readyz":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status": "ok"}`))
+		case "/capabilities":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			// Write truly empty response body
+			w.Write(nil)
+		case "/limits":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"algorithm": "sha256", "queue_max_depth": 1000, "backpressure_mode": "block", "queue_stats": {}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := &harness.Client{
+		BaseURL: server.URL,
+		Token:   "test-token",
+		HTTP:    &http.Client{},
+	}
+
+	env := Env{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: client,
+		Profile:    "api-surface",
+	}
+
+	scenario := APISurfaceScenario()
+	result := scenario.Run(context.Background(), env)
+
+	if result.Passed {
+		t.Errorf("Expected APISurfaceScenario to fail with empty response body, but it passed")
+	}
+
+	// Verify the failure contains either "empty response body" or "unexpected end of JSON input"
+	// (both indicate the empty body was properly rejected)
+	if result.Failure != nil && !strings.Contains(result.Failure.Message, "empty response body") &&
+		!strings.Contains(result.Failure.Message, "unexpected end of JSON input") {
+		t.Errorf("Expected failure message to contain 'empty response body' or 'unexpected end of JSON input', got: %v", result.Failure.Message)
+	}
 }
