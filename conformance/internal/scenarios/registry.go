@@ -32,6 +32,7 @@ type Env struct {
 	FlwdProcess     *harness.FlwdProcess
 	ScenarioTimeout time.Duration
 	Verbose         bool
+	Profile         string
 }
 
 // Scenario represents a single conformance scenario.
@@ -112,7 +113,11 @@ func RunSuite(ctx context.Context, env Env, scenarios []Scenario, profiles []str
 			// Wrap scenario execution in timeout
 			timeoutCtx, cancel := context.WithTimeout(ctx, env.ScenarioTimeout)
 
-			result := scenario.Run(timeoutCtx, env)
+			// Bind the current profile to a copy of env for the scenario
+			profileEnv := env
+			profileEnv.Profile = profile
+
+			result := scenario.Run(timeoutCtx, profileEnv)
 			result.ScenarioID = scenario.ID
 			result.Profile = profile
 

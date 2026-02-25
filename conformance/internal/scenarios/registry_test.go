@@ -1,8 +1,21 @@
 package scenarios
 
 import (
+	"context"
 	"testing"
+	"time"
 )
+
+// FakeScenario creates a scenario with a custom Run function for testing.
+func FakeScenario(id, name string, runFunc func(ctx context.Context, env Env) Result) Scenario {
+	return Scenario{
+		ID:             id,
+		Name:           name,
+		ConformanceIDs: []string{"TEST-001"},
+		Profiles:       DefaultProfiles(),
+		Run:            runFunc,
+	}
+}
 
 func TestScenario_Validate(t *testing.T) {
 	tests := []struct {
@@ -113,6 +126,34 @@ func TestAll_ValidateAll(t *testing.T) {
 		err := s.Validate()
 		if err != nil {
 			t.Errorf("Scenario %s failed validation: %v", s.ID, err)
+		}
+	}
+}
+
+func TestRunSuite_ProfileAttribution(t *testing.T) {
+	// Create a fake scenario that returns a result with the profile from env
+	fakeScenario := FakeScenario("fake", "Fake Scenario", func(ctx context.Context, env Env) Result {
+		return Result{Passed: true, Profile: env.Profile}
+	})
+
+	profiles := []string{"ulc.shell.bash", "ulc.shell.pwsh"}
+	env := Env{Profile: "", ScenarioTimeout: 30 * time.Second}
+
+	// Run suite with 2 scenarios x 2 profiles = 4 expected results
+	report := RunSuite(context.Background(), env, []Scenario{fakeScenario, fakeScenario}, profiles)
+
+	if len(report.Results) != 4 {
+		t.Errorf("expected 4 results (2 scenarios x 2 profiles), got %d", len(report.Results))
+	}
+
+	// Verify each result has exactly one profile and correct scenario ID
+	for _, r := range report.Results {
+		if r.ScenarioID != "fake" {
+			t.Errorf("expected ScenarioID 'fake', got '%s'", r.ScenarioID)
+		}
+		// Each result should have exactly one profile (not comma-separated)
+		if r.Profile != "ulc.shell.bash" && r.Profile != "ulc.shell.pwsh" {
+			t.Errorf("expected exactly one profile, got '%s'", r.Profile)
 		}
 	}
 }

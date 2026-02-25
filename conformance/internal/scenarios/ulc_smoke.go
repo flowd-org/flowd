@@ -29,19 +29,13 @@ func ULCSmokeScenario() Scenario {
 func runULCSmoke(ctx context.Context, env Env) Result {
 	start := time.Now()
 
-	// For each profile, create and run a smoke test
-	profiles := []string{"ulc.shell.bash", "ulc.shell.pwsh"}
-	for _, profile := range profiles {
-		result := runProfile(ctx, env, profile)
-		if !result.Passed {
-			return result
-		}
-	}
+	// Run only the profile specified in env.Profile
+	result := runProfile(ctx, env, env.Profile)
 
 	return Result{
 		ScenarioID: "ulc-smoke",
-		Profile:    strings.Join(profiles, ","),
-		Passed:     true,
+		Profile:    env.Profile,
+		Passed:     result.Passed,
 		Duration:   time.Since(start),
 	}
 }
