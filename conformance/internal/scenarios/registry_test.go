@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/flowd-org/flowd/conformance/internal/harness"
+	"github.com/flowd-org/flowd/conformance/internal/report"
 )
 
 // FakeScenario creates a scenario with a custom Run function for testing.
@@ -155,5 +158,54 @@ func TestRunSuite_ProfileAttribution(t *testing.T) {
 		if r.Profile != "ulc.shell.bash" && r.Profile != "ulc.shell.pwsh" {
 			t.Errorf("expected exactly one profile, got '%s'", r.Profile)
 		}
+	}
+}
+
+// TestRunSuite_EmptyScenarios produces a valid report with zero counts
+// This test ensures the harness handles the no-op case gracefully
+func TestRunSuite_EmptyScenarios(t *testing.T) {
+	ctx := context.Background()
+	env := Env{
+		BaseURL:         "http://localhost:8080",
+		Token:           "test-token",
+		HTTPClient:      &harness.Client{},
+		ScenarioTimeout: 30 * time.Second,
+		Verbose:         false,
+		Profile:         "ulc.shell.bash",
+	}
+
+	// Run with empty scenarios
+	report := RunSuite(ctx, env, []Scenario{}, []string{"ulc.shell.bash"})
+
+	// Verify the report is valid (even if empty)
+	if report.ScenarioCount != 0 {
+		t.Errorf("Expected ScenarioCount=0, got %d", report.ScenarioCount)
+	}
+	if len(report.Results) != 0 {
+		t.Errorf("Expected Results length=0, got %d", len(report.Results))
+	}
+	if report.PassedCount != 0 || report.FailedCount != 0 {
+		t.Errorf("Expected all counts=0, got passed=%d failed=%d", report.PassedCount, report.FailedCount)
+	}
+}
+
+// TestFormatSummary_EmptyReport formats summary for an empty report
+func TestFormatSummary_EmptyReport(t *testing.T) {
+	rep := report.Report{
+		SuiteMeta: report.SuiteMeta{
+			Name:       "empty-suite",
+			Profiles:   []string{"ulc.shell.bash"},
+			TotalTests: 0,
+		},
+		ScenarioCount: 0,
+		PassedCount:   0,
+		FailedCount:   0,
+		Results:       []report.ScenarioResult{},
+	}
+
+	summary := report.FormatSummary(rep)
+	expected := "CONFORMANCE PASS: 0 passed, 0 failed out of 0 scenarios"
+	if summary != expected {
+		t.Errorf("FormatSummary() = %q, want %q", summary, expected)
 	}
 }
