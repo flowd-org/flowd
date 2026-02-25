@@ -408,6 +408,58 @@ func TestAPISurfaceScenario_JSONBodyReachesValidator(t *testing.T) {
 	}
 }
 
+// TestRunSuite_RequiredScenariosAlwaysRun verifies that required scenarios
+// (api-surface, tenant) run at least once even when selected profiles don't match their profile tags
+func TestRunSuite_RequiredScenariosAlwaysRun(t *testing.T) {
+	// Use only ULC profiles that don't match api-surface or tenant profiles
+	profiles := []string{"ulc.shell.bash", "ulc.shell.pwsh"}
+	env := Env{Profile: "", ScenarioTimeout: 30 * time.Second}
+
+	// Create fake scenarios that mimic the required scenarios' profile tags
+	apiSurfaceFake := Scenario{
+		ID:             "api-surface",
+		Name:           "API Surface - Health Probes & Endpoints",
+		ConformanceIDs: []string{"M1-003", "M1-004"},
+		Profiles:       []string{"api-surface"}, // Different from selected profiles
+		Run:            func(ctx context.Context, env Env) Result { return Result{Passed: true, Profile: env.Profile} },
+	}
+	tenantFake := Scenario{
+		ID:             "tenant",
+		Name:           "Tenant Propagation",
+		ConformanceIDs: []string{"M1-005"},
+		Profiles:       []string{"tenant"}, // Different from selected profiles
+		Run:            func(ctx context.Context, env Env) Result { return Result{Passed: true, Profile: env.Profile} },
+	}
+
+	// Run suite with only required scenarios - they should still run once
+	report := RunSuite(context.Background(), env, []Scenario{apiSurfaceFake, tenantFake}, profiles)
+
+	// Check that both required scenarios appear in results (each once, with first profile)
+	foundAPISurface := false
+	foundTenant := false
+	for _, r := range report.Results {
+		if r.ScenarioID == "api-surface" {
+			foundAPISurface = true
+			if r.Profile != "ulc.shell.bash" {
+				t.Errorf("api-surface should run with first profile 'ulc.shell.bash', got '%s'", r.Profile)
+			}
+		}
+		if r.ScenarioID == "tenant" {
+			foundTenant = true
+			if r.Profile != "ulc.shell.bash" {
+				t.Errorf("tenant should run with first profile 'ulc.shell.bash', got '%s'", r.Profile)
+			}
+		}
+	}
+
+	if !foundAPISurface {
+		t.Errorf("Required scenario 'api-surface' was filtered out; expected at least one result")
+	}
+	if !foundTenant {
+		t.Errorf("Required scenario 'tenant' was filtered out; expected at least one result")
+	}
+}
+
 // TestAPISurfaceScenario_EmptyBodyFails tests that an empty response body fails validation
 func TestAPISurfaceScenario_EmptyBodyFails(t *testing.T) {
 	// Create a test server that returns empty body for /capabilities but valid for others

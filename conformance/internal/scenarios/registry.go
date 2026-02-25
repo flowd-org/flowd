@@ -85,6 +85,12 @@ func All() []Scenario {
 func RunSuite(ctx context.Context, env Env, scenarios []Scenario, profiles []string) report.Report {
 	var results []report.ScenarioResult
 
+	// Required scenarios that must always run at least once regardless of profile selection
+	requiredScenarioIDs := map[string]bool{
+		"api-surface": true,
+		"tenant":      true,
+	}
+
 	for _, scenario := range scenarios {
 		// Validate scenario before running
 		if err := scenario.Validate(); err != nil {
@@ -107,8 +113,11 @@ func RunSuite(ctx context.Context, env Env, scenarios []Scenario, profiles []str
 		if len(scenario.Profiles) > 0 {
 			// Intersect scenario profiles with selected profiles
 			runProfiles = intersectProfiles(scenario.Profiles, profiles)
-			if len(runProfiles) == 0 {
-				continue // No matching profiles
+			// For required scenarios, if no matching profiles, still run once with the first selected profile
+			if len(runProfiles) == 0 && requiredScenarioIDs[scenario.ID] {
+				runProfiles = []string{profiles[0]}
+			} else if len(runProfiles) == 0 {
+				continue // No matching profiles and not a required scenario
 			}
 		}
 
