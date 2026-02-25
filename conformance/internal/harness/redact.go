@@ -26,28 +26,29 @@ func redactAuthorizationHeader(s string) string {
 	// Replace "Authorization: Bearer <token>" pattern
 	prefix := "Authorization: Bearer "
 	result := s
+	start := 0
 
 	for {
-		idx := strings.Index(result, prefix)
-		if idx == -1 {
+		idx := strings.Index(result[start:], prefix)
+		if idx < 0 {
 			break
 		}
+		// Adjust index relative to full string
+		globalIdx := start + idx
 
-		end := idx + len(prefix)
+		end := globalIdx + len(prefix)
 		// Find end of token (space, newline, or end of string)
 		for end < len(result) && result[end] != ' ' && result[end] != '\n' && result[end] != '\r' {
 			end++
 		}
 
-		result = result[:idx] + prefix + "[REDACTED]" + result[end:]
-		// Advance past the replacement to avoid infinite loop
-		newStart := idx + len(prefix) + len("[REDACTED]")
-		if newStart >= len(result) {
+		// Write unchanged prefix, then prefix+[REDACTED], then continue
+		result = result[:globalIdx] + prefix + "[REDACTED]" + result[end:]
+		// Advance start past the replacement to avoid infinite loop
+		start = globalIdx + len(prefix) + len("[REDACTED]")
+		if start >= len(result) {
 			break
 		}
-		// Continue search from after the replacement
-		result = result[newStart:]
-		break
 	}
 
 	return result
