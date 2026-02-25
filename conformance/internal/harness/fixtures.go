@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -20,9 +20,84 @@ func FixtureJobIDs() []string {
 	}
 }
 
+// copyDir recursively copies a directory from src to dst using Go stdlib.
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return fmt.Errorf("failed to create destination dir %s: %w", dst, err)
+	}
+
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return fmt.Errorf("failed to create dir %s: %w", filepath.Dir(target), err)
+		}
+
+		in, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("failed to open %s: %w", path, err)
+		}
+		defer in.Close()
+
+		out, err := os.Create(target)
+		if err != nil {
+			return fmt.Errorf("failed to create %s: %w", target, err)
+		}
+		defer out.Close()
+
+		if _, err := io.Copy(out, in); err != nil {
+			return fmt.Errorf("failed to copy %s to %s: %w", path, target, err)
+		}
+
+		// Preserve mode bits, ensure .sh files are executable
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("failed to get info for %s: %w", path, err)
+		}
+		mode := info.Mode()
+		if strings.HasSuffix(path, ".sh") {
+			mode |= 0111 // ensure executable bits
+		}
+		if err := os.Chmod(target, mode); err != nil {
+			return fmt.Errorf("failed to chmod %s: %w", target, err)
+		}
+
+		return nil
+	})
+}
+
 // StageFixtures copies the fixture tree into the run root and returns the relative ref.
 func StageFixtures(runRoot string) (stagedRef string, err error) {
-	src := filepath.Join("conformance", "fixtures", "tree-v1")
+	// Try candidate paths for the source fixture tree, including from internal/harness subdir.
+	candidates := []string{
+		filepath.Join("..", "..", "fixtures", "tree-v1"),
+		filepath.Join("..", "fixtures", "tree-v1"),
+		filepath.Join("fixtures", "tree-v1"),
+		filepath.Join("conformance", "fixtures", "tree-v1"),
+	}
+
+	var src string
+	for _, c := range candidates {
+		if _, statErr := os.Stat(c); statErr == nil {
+			src = c
+			break
+		}
+	}
+	if src == "" {
+		return "", fmt.Errorf("fixture source not found in candidates: %v", candidates)
+	}
+
 	dst := filepath.Join(runRoot, "scripts", "fixtures", "tree-v1")
 
 	// Remove existing destination if present
@@ -37,13 +112,12 @@ func StageFixtures(runRoot string) (stagedRef string, err error) {
 		return "", fmt.Errorf("failed to create fixtures directory: %w", mkErr)
 	}
 
-	// Copy the fixture tree
-	cmd := exec.Command("cp", "-r", src, dst)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("failed to copy fixtures: %w, output: %s", err, out)
+	// Copy the fixture tree using Go stdlib
+	if copyErr := copyDir(src, dst); copyErr != nil {
+		return "", fmt.Errorf("failed to copy fixtures: %w", copyErr)
 	}
 
-	// Ensure .sh files are executable
+	// Ensure .sh files are executable (in case source mode bits differ)
 	if err := filepath.WalkDir(dst, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
