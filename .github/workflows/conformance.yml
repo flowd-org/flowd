@@ -10,6 +10,8 @@ jobs:
   conformance:
     name: conformance
     runs-on: ubuntu-latest
+    env:
+      FLWD_TOKEN: ${{ secrets.FLWD_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -36,10 +38,13 @@ jobs:
         working-directory: conformance
         run: go test ./...
 
+      - name: Check conformance token availability
+        if: ${{ env.FLWD_TOKEN == '' }}
+        run: echo "FLWD_TOKEN not available (likely fork PR); skipping conformance harness"
+
       - name: Run conformance harness
         working-directory: conformance
-        env:
-          FLWD_TOKEN: ${{ secrets.FLWD_TOKEN }}
+        if: ${{ env.FLWD_TOKEN != '' }}
         run: go run ./cmd/conformance --flwd-binary ../bin/flwd --report-json ../conformance-report.json
 
       - name: Upload conformance report
