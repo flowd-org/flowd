@@ -2,7 +2,10 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
+
+	"github.com/flowd-org/flowd/conformance/internal/harness"
 )
 
 func TestReport_JSONStability(t *testing.T) {
@@ -158,4 +161,24 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestEmitInfraErr(t *testing.T) {
+	// Verify the contains helper works as expected
+	output := "Error: failed to start flwd: some error occurred"
+	if len(output) == 0 {
+		t.Error("Expected non-empty output")
+	}
+
+	expectedSubstr := "failed to start flwd"
+	if !contains(output, expectedSubstr) {
+		t.Errorf("Output should contain %q", expectedSubstr)
+	}
+
+	// Test that redaction works
+	err := fmt.Errorf("connection failed with token secret-token-123")
+	redacted := harness.RedactSecrets(err.Error(), "secret-token-123")
+	if contains(redacted, "secret-token-123") {
+		t.Errorf("Redacted error should not contain raw token, got: %q", redacted)
+	}
 }

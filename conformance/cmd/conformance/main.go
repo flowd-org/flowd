@@ -54,7 +54,7 @@ func run(args []string) int {
 	// Create temp run directory
 	runRoot, err := os.MkdirTemp("", "flowd-conformance-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to create run directory: %v\n", err)
+		emitInfraErr(cfg, "failed to create run directory: %v", err)
 		return harness.ExitInfra
 	}
 	defer os.RemoveAll(runRoot)
@@ -62,6 +62,7 @@ func run(args []string) int {
 	// Start flwd process
 	fp, exitCode, err := harness.StartFlwd(ctx, cfg, runRoot)
 	if err != nil {
+		emitInfraErr(cfg, "failed to start flwd: %v", err)
 		return exitCode
 	}
 	defer fp.Cleanup(ctx)
@@ -86,6 +87,12 @@ func run(args []string) int {
 	return harness.ExitOK
 }
 
+// emitInfraErr prints a redaction-safe infrastructure error to stderr.
+func emitInfraErr(cfg harness.Config, format string, err error) {
+	msg := fmt.Sprintf(format, harness.RedactSecrets(err.Error(), cfg.Token))
+	fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+}
+
 // runConformanceTests runs the conformance test suite against the running flwd server.
 func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string, runRoot string) (int, error) {
 	// Create HTTP client
@@ -100,6 +107,7 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 	fmt.Println("Staging fixtures...")
 	stagedRef, err := harness.StageFixtures(runRoot)
 	if err != nil {
+		emitInfraErr(cfg, "failed to stage fixtures: %v", err)
 		return harness.ExitInfra, fmt.Errorf("failed to stage fixtures: %w", err)
 	}
 	fmt.Printf("Staged fixtures at %s\n", stagedRef)
@@ -107,6 +115,7 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 	// Register local source
 	fmt.Println("Registering local source...")
 	if err := harness.RegisterLocalSource(ctx, client, scenarios.FixtureSourceName, stagedRef); err != nil {
+		emitInfraErr(cfg, "failed to register source: %v", err)
 		return harness.ExitInfra, fmt.Errorf("failed to register source: %w", err)
 	}
 	fmt.Println("Source registered")
@@ -155,6 +164,7 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 	// Write JSON report if requested
 	if cfg.ReportJSON != "" {
 		if err := report.WriteJSON(cfg.ReportJSON, r); err != nil {
+			emitInfraErr(cfg, "failed to write JSON report: %v", err)
 			return harness.ExitInfra, fmt.Errorf("failed to write JSON report: %w", err)
 		}
 		fmt.Printf("JSON report written to %s\n", cfg.ReportJSON)
