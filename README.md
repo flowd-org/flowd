@@ -252,6 +252,15 @@ Policy overrides (e.g., `rootfs_writable`, `network`) granted for permissive/dis
 - `E_ADDON_MANIFEST` — the manifest is missing or violates the schema; inspect the problem details for the failing field and rebuild the image.
 - `E_OCI` — the container runtime failed while pulling or extracting; verify the runtime has network access and the ref exists.
 
+## Conformance
+
+A black-box E2E conformance harness for testing the flowd M1 API surface against ULC (Universal Language Client) profiles.
+
+This is a separate Go module (`github.com/flowd-org/flowd/conformance`) that runs against a running `flwd` instance and executes a suite of scenarios defined by ULC profiles.
+
+- **Quickstart**: see `conformance/README.md` for build and run instructions.
+- **CI gate**: This check runs as a required GitHub check named `conformance`.
+
 ## Container Executor
 
 - Configure a job with `executor: container` and an interpreter like `container:alpine:3.20`.
