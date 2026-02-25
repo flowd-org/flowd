@@ -79,6 +79,101 @@ func All() []Scenario {
 
 // RunSuite runs all scenarios under the specified profiles and returns a report.
 func RunSuite(ctx context.Context, env Env, scenarios []Scenario, profiles []string) report.Report {
-	// TODO: Implement suite runner (T-008)
-	return report.Report{}
+	var results []report.ScenarioResult
+
+	for _, scenario := range scenarios {
+		// Validate scenario before running
+		if err := scenario.Validate(); err != nil {
+			results = append(results, report.ScenarioResult{
+				ScenarioID:   scenario.ID,
+				ScenarioName: scenario.Name,
+				Profile:      profiles[0], // Use first profile for validation failures
+				Passed:       false,
+				DurationMs:   0,
+				Failure: &report.FailureDetail{
+					Expected: "scenario to be valid",
+					Actual:   err.Error(),
+				},
+			})
+			continue
+		}
+
+		// Determine profiles to run for this scenario
+		runProfiles := profiles
+		if len(scenario.Profiles) > 0 {
+			// Intersect scenario profiles with selected profiles
+			runProfiles = intersectProfiles(scenario.Profiles, profiles)
+			if len(runProfiles) == 0 {
+				continue // No matching profiles
+			}
+		}
+
+		for _, profile := range runProfiles {
+			// Wrap scenario execution in timeout
+			timeoutCtx, cancel := context.WithTimeout(ctx, env.ScenarioTimeout)
+
+			result := scenario.Run(timeoutCtx, env)
+			result.ScenarioID = scenario.ID
+			result.Profile = profile
+
+			cancel()
+
+			// Map scenario.Result to report.ScenarioResult
+			scenarioResult := report.ScenarioResult{
+				ScenarioID:   scenario.ID,
+				ScenarioName: scenario.Name,
+				Profile:      profile,
+				Passed:       result.Passed,
+				DurationMs:   int(result.Duration.Milliseconds()),
+			}
+
+			if !result.Passed && result.Failure != nil {
+				scenarioResult.Failure = &report.FailureDetail{
+					Expected: "",
+					Actual:   result.Failure.Message,
+				}
+			}
+
+			results = append(results, scenarioResult)
+		}
+	}
+
+	// Count passed/failed
+	passed := 0
+	failed := 0
+	for _, r := range results {
+		if r.Passed {
+			passed++
+		} else {
+			failed++
+		}
+	}
+
+	return report.Report{
+		SuiteMeta: report.SuiteMeta{
+			Name:       "conformance",
+			Profiles:   profiles,
+			TotalTests: len(results),
+		},
+		ScenarioCount: len(results),
+		PassedCount:   passed,
+		FailedCount:   failed,
+		Results:       results,
+	}
+}
+
+// intersectProfiles returns the intersection of scenarioProfiles and selectedProfiles.
+func intersectProfiles(scenarioProfiles, selectedProfiles []string) []string {
+	selected := make(map[string]bool)
+	for _, p := range selectedProfiles {
+		selected[p] = true
+	}
+
+	var result []string
+	for _, p := range scenarioProfiles {
+		if selected[p] {
+			result = append(result, p)
+		}
+	}
+	return result
 }
