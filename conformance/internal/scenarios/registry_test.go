@@ -238,3 +238,77 @@ func TestFormatSummary_EmptyReport(t *testing.T) {
 		t.Errorf("FormatSummary() = %q, want %q", summary, expected)
 	}
 }
+
+// TestRunSuite_EmptyScenarios_FailsGate validates that empty scenario execution
+// does not produce PASS semantics - it should fail the gate with a clear error.
+func TestRunSuite_EmptyScenarios_FailsGate(t *testing.T) {
+	ctx := context.Background()
+	env := Env{
+		BaseURL:         "http://localhost:8080",
+		Token:           "test-token",
+		HTTPClient:      &harness.Client{},
+		ScenarioTimeout: 30 * time.Second,
+		Verbose:         false,
+		Profile:         "ulc.shell.bash",
+	}
+
+	// Run with empty scenarios - should fail with 1 failed result
+	rep := RunSuite(ctx, env, []Scenario{}, []string{"ulc.shell.bash"})
+
+	// Verify the report shows failure for empty suite
+	if rep.ScenarioCount != 0 {
+		t.Errorf("Expected ScenarioCount=0, got %d", rep.ScenarioCount)
+	}
+	if len(rep.Results) != 1 {
+		t.Errorf("Expected Results length=1 (empty-suite failure), got %d", len(rep.Results))
+	}
+	if rep.PassedCount != 0 {
+		t.Errorf("Expected PassedCount=0, got %d", rep.PassedCount)
+	}
+	if rep.FailedCount != 1 {
+		t.Errorf("Expected FailedCount=1 (empty suite fails), got %d", rep.FailedCount)
+	}
+	// Verify the failure has expected details
+	if len(rep.Results) > 0 {
+		r := rep.Results[0]
+		if r.ScenarioID != "empty-suite" {
+			t.Errorf("Expected ScenarioID='empty-suite', got '%s'", r.ScenarioID)
+		}
+		if r.ScenarioName != "Empty conformance suite" {
+			t.Errorf("Expected ScenarioName='Empty conformance suite', got '%s'", r.ScenarioName)
+		}
+		if r.Profile != "ulc.shell.bash" {
+			t.Errorf("Expected Profile='ulc.shell.bash', got '%s'", r.Profile)
+		}
+		if r.Passed {
+			t.Errorf("Expected Passed=false (empty suite fails), got true")
+		}
+		if r.Failure == nil {
+			t.Errorf("Expected Failure to be non-nil")
+		} else {
+			if r.Failure.Expected != "at least one scenario to run" {
+				t.Errorf("Expected Expected='at least one scenario to run', got '%s'", r.Failure.Expected)
+			}
+			if r.Failure.Actual != "no scenarios matched the selected profiles" {
+				t.Errorf("Expected Actual='no scenarios matched the selected profiles', got '%s'", r.Failure.Actual)
+			}
+		}
+	}
+	// Verify report summary indicates failure
+	summary := report.FormatSummary(rep)
+	if summary == "" || !containsString(summary, "0 passed") {
+		t.Errorf("Expected summary to indicate 0 passed, got '%s'", summary)
+	}
+	if summary == "" || !containsString(summary, "1 failed") {
+		t.Errorf("Expected summary to indicate 1 failed, got '%s'", summary)
+	}
+}
+
+func containsString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
