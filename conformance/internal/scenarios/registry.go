@@ -154,6 +154,33 @@ func RunSuite(ctx context.Context, env Env, scenarios []Scenario, profiles []str
 		}
 	}
 
+	// Block empty conformance suite passes
+	if len(results) == 0 {
+		return report.Report{
+			SuiteMeta: report.SuiteMeta{
+				Name:       "conformance",
+				Profiles:   profiles,
+				TotalTests: 0,
+			},
+			ScenarioCount: 0,
+			PassedCount:   0,
+			FailedCount:   1,
+			Results: []report.ScenarioResult{
+				{
+					ScenarioID:   "empty-suite",
+					ScenarioName: "Empty conformance suite",
+					Profile:      profiles[0],
+					Passed:       false,
+					DurationMs:   0,
+					Failure: &report.FailureDetail{
+						Expected: "at least one scenario to run",
+						Actual:   "no scenarios matched the selected profiles",
+					},
+				},
+			},
+		}
+	}
+
 	return report.Report{
 		SuiteMeta: report.SuiteMeta{
 			Name:       "conformance",

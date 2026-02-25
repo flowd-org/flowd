@@ -161,8 +161,8 @@ func TestRunSuite_ProfileAttribution(t *testing.T) {
 	}
 }
 
-// TestRunSuite_EmptyScenarios produces a valid report with zero counts
-// This test ensures the harness handles the no-op case gracefully
+// TestRunSuite_EmptyScenarios verifies that an empty conformance suite fails
+// This test ensures the harness blocks empty suites with a clear error
 func TestRunSuite_EmptyScenarios(t *testing.T) {
 	ctx := context.Background()
 	env := Env{
@@ -174,18 +174,47 @@ func TestRunSuite_EmptyScenarios(t *testing.T) {
 		Profile:         "ulc.shell.bash",
 	}
 
-	// Run with empty scenarios
+	// Run with empty scenarios - should now fail with 1 failed result
 	report := RunSuite(ctx, env, []Scenario{}, []string{"ulc.shell.bash"})
 
-	// Verify the report is valid (even if empty)
+	// Verify the report shows failure for empty suite
 	if report.ScenarioCount != 0 {
 		t.Errorf("Expected ScenarioCount=0, got %d", report.ScenarioCount)
 	}
-	if len(report.Results) != 0 {
-		t.Errorf("Expected Results length=0, got %d", len(report.Results))
+	if len(report.Results) != 1 {
+		t.Errorf("Expected Results length=1 (empty-suite failure), got %d", len(report.Results))
 	}
-	if report.PassedCount != 0 || report.FailedCount != 0 {
-		t.Errorf("Expected all counts=0, got passed=%d failed=%d", report.PassedCount, report.FailedCount)
+	if report.PassedCount != 0 {
+		t.Errorf("Expected PassedCount=0, got %d", report.PassedCount)
+	}
+	if report.FailedCount != 1 {
+		t.Errorf("Expected FailedCount=1 (empty suite fails), got %d", report.FailedCount)
+	}
+	// Verify the failure has expected details
+	if len(report.Results) > 0 {
+		r := report.Results[0]
+		if r.ScenarioID != "empty-suite" {
+			t.Errorf("Expected ScenarioID='empty-suite', got '%s'", r.ScenarioID)
+		}
+		if r.ScenarioName != "Empty conformance suite" {
+			t.Errorf("Expected ScenarioName='Empty conformance suite', got '%s'", r.ScenarioName)
+		}
+		if r.Profile != "ulc.shell.bash" {
+			t.Errorf("Expected Profile='ulc.shell.bash', got '%s'", r.Profile)
+		}
+		if r.Passed {
+			t.Errorf("Expected Passed=false (empty suite fails), got true")
+		}
+		if r.Failure == nil {
+			t.Errorf("Expected Failure to be non-nil")
+		} else {
+			if r.Failure.Expected != "at least one scenario to run" {
+				t.Errorf("Expected Expected='at least one scenario to run', got '%s'", r.Failure.Expected)
+			}
+			if r.Failure.Actual != "no scenarios matched the selected profiles" {
+				t.Errorf("Expected Actual='no scenarios matched the selected profiles', got '%s'", r.Failure.Actual)
+			}
+		}
 	}
 }
 
