@@ -10,7 +10,7 @@ This is a separate Go module (`github.com/flowd-org/flowd/conformance`) that run
 
 ```bash
 cd /path/to/flowd
-go build -o bin/flwd ./cmd/flwd
+go build -o ./bin/flwd ./
 ```
 
 2. Run the conformance harness:
@@ -26,12 +26,12 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance --flwd-binary ../bin/flwd
 |------|-------------|---------|-------------|
 | `--flwd-binary` | | *(required)* | Path to the `flwd` binary to test |
 | `--token` | `FLWD_TOKEN` | *(env)* | flowd API token (flag overrides env) |
-| `--bind` | | `127.0.0.1:8080` | Bind address for the flwd server |
-| `--flwd-profile` | | *(none)* | flwd profile to use |
-| `--ulc-profiles` | | `bash,pwsh` | Comma-separated list of ULC profiles to test |
+| `--bind` | | *ignored* | Not currently honored — harness picks a free localhost port via `PickBindAddr()` |
+| `--flwd-profile` | | *(none)* | flwd profile to use (e.g., `ulc.shell.bash`) |
+| `--ulc-profiles` | | `ulc.shell.bash,ulc.shell.pwsh` | Comma-separated list of ULC profile identifiers (see `DefaultProfiles()` in `conformance/internal/scenarios/registry.go`) |
 | `--timeout` | | `5m` | Overall timeout for the conformance run |
 | `--scenario-timeout` | | `2m` | Timeout per scenario |
-| `--report-json` | | *(none)* | Path to write JSON report |
+| `--report-json` | | *(none)* | Path to write JSON report (CI example: `--report-json ../conformance-report.json`) |
 | `--verbose` | | `false` | Enable verbose logging |
 
 ## Exit codes
@@ -55,7 +55,7 @@ When `--report-json` is specified, the harness writes a JSON report with the fol
 {
   "suite_meta": {
     "name": "conformance",
-    "profiles": ["bash", "pwsh"],
+    "profiles": ["ulc.shell.bash", "ulc.shell.pwsh"],
     "total_tests": 12
   },
   "scenario_count": 12,
@@ -65,7 +65,7 @@ When `--report-json` is specified, the harness writes a JSON report with the fol
     {
       "scenario_id": "ulc_smoke",
       "scenario_name": "ULC Smoke Test",
-      "profile": "bash",
+      "profile": "ulc.shell.bash",
       "passed": true,
       "duration_ms": 150,
       "failure": null
