@@ -104,6 +104,51 @@ If `flwd` is started by the harness, its NDJSON logs are written to a temporary 
 
 Currently, the harness runs all scenarios defined by the selected ULC profiles. Individual scenario reruns are not yet supported (see future work in the main repository).
 
+## Troubleshooting
+
+### CI report artifact
+
+When the conformance harness runs in CI (`.github/workflows/conformance.yml`), the JSON report is uploaded as an artifact named `conformance-report` containing `conformance-report.json`. This artifact is retained for 7 days.
+
+### Reading failure details
+
+In the JSON report, each failed test appears as an item in the `results[]` array with the following fields:
+
+- `scenario_id`: The stable identifier (e.g., `ulc_smoke`)
+- `profile`: The ULC profile identifier (e.g., `ulc.shell.bash`, `ulc.shell.pwsh`)
+- `failure.actual`: The human-readable failure message explaining why the scenario failed
+
+Example (YAML for readability):
+
+```yaml
+results:
+  - scenario_id: ulc_smoke
+    profile: ulc.shell.bash
+    passed: false
+    failure:
+      actual: "expected status 200, got 500"
+```
+
+### Rerunning locally
+
+To rerun the full conformance suite locally using the same JSON report output as CI:
+
+```bash
+cd conformance
+FLWD_TOKEN=your_api_token go run ./cmd/conformance \
+  --flwd-binary ../bin/flwd \
+  --report-json ../conformance-report.json
+```
+
+For a specific ULC profile, add `--ulc-profiles`:
+
+```bash
+FLWD_TOKEN=your_api_token go run ./cmd/conformance \
+  --flwd-binary ../bin/flwd \
+  --ulc-profiles ulc.shell.bash \
+  --report-json ../conformance-report.json
+```
+
 ## License
 
 MIT — see `LICENSE` in the repository root.
