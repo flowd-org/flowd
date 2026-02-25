@@ -93,3 +93,57 @@ func TestRedactTokenInLine_EmptyToken(t *testing.T) {
 		t.Errorf("RedactTokenInLine() modified line when token is empty: %s", result)
 	}
 }
+
+func TestRedactSecrets_MultipleAuthorizationHeaders(t *testing.T) {
+	token := "secret-token-789"
+	input := "First: Authorization: Bearer " + token + "\nSecond: Authorization: Bearer " + token
+
+	result := RedactSecrets(input, token)
+
+	if strings.Contains(result, token) {
+		t.Errorf("RedactSecrets() did not redact token: %s", result)
+	}
+
+	if !strings.Contains(result, "First: Authorization: Bearer [REDACTED]") {
+		t.Errorf("RedactSecrets() did not redact first header: %s", result)
+	}
+
+	if !strings.Contains(result, "Second: Authorization: Bearer [REDACTED]") {
+		t.Errorf("RedactSecrets() did not redact second header: %s", result)
+	}
+}
+
+func TestRedactSecrets_PreservesPrefixSuffix(t *testing.T) {
+	token := "my-secret"
+	input := "prefix: " + token + " suffix"
+
+	result := RedactSecrets(input, token)
+
+	// Token should be redacted, but prefix/suffix should remain
+	expected := "prefix: [REDACTED] suffix"
+	if result != expected {
+		t.Errorf("RedactSecrets() = %q, want %q", result, expected)
+	}
+
+	// Ensure surrounding text is unchanged
+	if !strings.HasPrefix(result, "prefix: ") || !strings.HasSuffix(result, " suffix") {
+		t.Errorf("RedactSecrets() did not preserve prefix/suffix: %s", result)
+	}
+}
+
+func TestRedactTokenInLine_MultipleOccurrences(t *testing.T) {
+	token := "token-abc"
+	line := "Token: " + token + ", another: " + token + ", end"
+
+	result := RedactTokenInLine(line, token)
+
+	// All occurrences should be redacted
+	if strings.Contains(result, token) {
+		t.Errorf("RedactTokenInLine() did not redact all occurrences: %s", result)
+	}
+
+	count := strings.Count(result, "[REDACTED]")
+	if count != 2 {
+		t.Errorf("RedactTokenInLine() expected 2 [REDACTED], got %d", count)
+	}
+}

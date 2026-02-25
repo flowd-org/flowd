@@ -28,42 +28,42 @@ func WriteJSON(path string, r Report) error {
 func redactTokens(s string) string {
 	// This is a defensive redaction - in practice, tokens should not be in the report
 	// but we redact any Authorization header patterns just in case
-	const prefix = "Authorization: Bearer "
-	const replacement = prefix + "[REDACTED]"
+	// Handle both "Authorization: Bearer <token>" (header format) and JSON "key": "Bearer <token>" formats
+	const headerPrefix = "Authorization: Bearer "
+	const headerReplacement = headerPrefix + "[REDACTED]"
+	const jsonPrefix = `": "Bearer `
+	const jsonReplacement = `": "Bearer [REDACTED]`
 
 	var result strings.Builder
 	result.Grow(len(s))
 
-	start := 0
-	for start < len(s) {
-		idx := strings.Index(s[start:], prefix)
-		if idx == -1 {
-			result.WriteString(s[start:])
-			break
+	i := 0
+	for i < len(s) {
+		// Check for header format at current position
+		if i+len(headerPrefix) <= len(s) && s[i:i+len(headerPrefix)] == headerPrefix {
+			result.WriteString(headerReplacement)
+			i += len(headerPrefix)
+			// Skip token until space, newline, or carriage return
+			for i < len(s) && s[i] != ' ' && s[i] != '\n' && s[i] != '\r' {
+				i++
+			}
+			continue
 		}
 
-		result.WriteString(s[start : start+idx])
-		result.WriteString(replacement)
-
-		// Find end of token (space, newline, or end of string)
-		tokenStart := start + idx + len(prefix)
-		end := tokenStart
-		for end < len(s) && s[end] != ' ' && s[end] != '\n' && s[end] != '\r' {
-			end++
+		// Check for JSON format at current position (look for ": "Bearer <token>")
+		if i+len(jsonPrefix) <= len(s) && s[i:i+len(jsonPrefix)] == jsonPrefix {
+			result.WriteString(jsonReplacement)
+			i += len(jsonPrefix)
+			// Skip token until closing quote
+			for i < len(s) && s[i] != '"' {
+				i++
+			}
+			continue
 		}
 
-		// Debug output
-		_ = end
-		if len(s) > 40 && end > 40 {
-			_ = end
-		}
-
-		// The end position now points to the delimiter (space, newline, or end)
-		// We want to keep everything from end onwards
-		if end >= len(s) {
-			break
-		}
-		start = end
+		// No match, copy character and advance
+		result.WriteByte(s[i])
+		i++
 	}
 
 	return result.String()
