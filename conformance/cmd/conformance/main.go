@@ -54,6 +54,7 @@ func run(args []string) int {
 	// Create temp run directory
 	runRoot, err := os.MkdirTemp("", "flowd-conformance-")
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create run directory: %v\n", err)
 		return harness.ExitInfra
 	}
 	defer os.RemoveAll(runRoot)
@@ -70,6 +71,7 @@ func run(args []string) int {
 	startupTimeout := 30 * time.Second
 	exitCode, err = harness.WaitForReady(ctx, fp.BaseURL, cfg.Token, startupTimeout)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: readiness check failed: %s\n", harness.RedactSecrets(err.Error(), cfg.Token))
 		return exitCode
 	}
 	fmt.Println("flwd is ready")
