@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/flowd-org/flowd/conformance/internal/harness"
+	"github.com/flowd-org/flowd/conformance/internal/report"
+	"github.com/flowd-org/flowd/conformance/internal/scenarios"
 )
 
 func main() {
@@ -107,12 +109,57 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 	}
 	fmt.Println("Source registered")
 
-	// TODO: Implement actual test execution against the server
-	// This will involve:
-	// 1. Listing available jobs
-	// 2. Creating jobs for each profile
-	// 3. Running the jobs
-	// 4. Checking results
+	// Build scenarios environment
+	env := scenarios.Env{
+		BaseURL:         baseURL,
+		Token:           cfg.Token,
+		HTTPClient:      client,
+		FlwdProcess:     nil,
+		ScenarioTimeout: cfg.ScenarioTimeout,
+		Verbose:         cfg.Verbose,
+	}
+
+	// Select scenario list and profiles
+	scenarioList := scenarios.All()
+	profiles := cfg.ULCProfiles
+	if len(profiles) == 0 {
+		profiles = scenarios.DefaultProfiles()
+	}
+
+	// Run the conformance test suite
+	fmt.Println("Running conformance test suite...")
+	r := scenarios.RunSuite(ctx, env, scenarioList, profiles)
+
+	// Print stable one-line summary
+	fmt.Println(report.FormatSummary(r))
+
+	// Print failure details for failed scenarios (bounded output)
+	if r.FailedCount > 0 {
+		fmt.Println("\nFailed scenarios:")
+		for i, result := range r.Results {
+			if !result.Passed {
+				// Limit to first 10 failures to avoid overwhelming output
+				if i >= 10 {
+					fmt.Printf("  ... and %d more\n", r.FailedCount-10)
+					break
+				}
+				fmt.Println(report.FormatFailureBlock(result))
+			}
+		}
+	}
+
+	// Write JSON report if requested
+	if cfg.ReportJSON != "" {
+		if err := report.WriteJSON(cfg.ReportJSON, r); err != nil {
+			return harness.ExitInfra, fmt.Errorf("failed to write JSON report: %w", err)
+		}
+		fmt.Printf("JSON report written to %s\n", cfg.ReportJSON)
+	}
+
+	// Determine exit code based on results
+	if r.FailedCount > 0 {
+		return harness.ExitScenarioFail, nil
+	}
 
 	return harness.ExitOK, nil
 }
