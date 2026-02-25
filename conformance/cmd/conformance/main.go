@@ -104,7 +104,7 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 
 	// Register local source
 	fmt.Println("Registering local source...")
-	if err := harness.RegisterLocalSource(ctx, client, "fixtures", stagedRef); err != nil {
+	if err := harness.RegisterLocalSource(ctx, client, scenarios.FixtureSourceName, stagedRef); err != nil {
 		return harness.ExitInfra, fmt.Errorf("failed to register source: %w", err)
 	}
 	fmt.Println("Source registered")

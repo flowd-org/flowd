@@ -9,6 +9,9 @@ import (
 	"github.com/flowd-org/flowd/conformance/internal/report"
 )
 
+// FixtureSourceName is the canonical source name used for conformance fixtures.
+const FixtureSourceName = "conformance-fixtures"
+
 // Result represents the outcome of running a single scenario under a single profile.
 type Result struct {
 	ScenarioID string

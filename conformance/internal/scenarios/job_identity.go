@@ -58,7 +58,7 @@ func validateJobID(ctx context.Context, env Env, profile string) Result {
 		"job_id": expectedJobID,
 		"args":   map[string]interface{}{},
 		"source": map[string]interface{}{
-			"name": "conformance-fixtures",
+			"name": FixtureSourceName,
 		},
 	}
 
@@ -340,7 +340,7 @@ func createRun(ctx context.Context, env Env, jobID, profile string) (string, err
 		"job_id": jobID,
 		"args":   map[string]interface{}{},
 		"source": map[string]interface{}{
-			"name": "conformance-fixtures",
+			"name": FixtureSourceName,
 		},
 	}
 

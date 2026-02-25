@@ -34,7 +34,7 @@ func runTenant(ctx context.Context, env Env) Result {
 		"tenant": "acme",
 		"args":   map[string]interface{}{},
 		"source": map[string]interface{}{
-			"name": "conformance-fixtures",
+			"name": FixtureSourceName,
 		},
 	}
 
