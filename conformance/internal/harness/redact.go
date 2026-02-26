@@ -95,9 +95,9 @@ func redactAuthorizationHeader(s string) string {
 		// Reconstruct the line - replace "Bearer <token>" with "[REDACTED]"
 		// The prefix should be "Authorization: [whitespace] Bearer" (without the token)
 		// authHeaderPrefix includes everything up to and including "Bearer" + whitespace before token
-		// The correct end position is idx + len("authorization") + 1 + tokenStart
-		// (tokenStart already includes the whitespace after "bearer")
-		authHeaderPrefix := line[idx : idx+len("authorization")+1+tokenStart]
+		// The correct end position is idx + len("authorization") + colonIdx + 1 + tokenStart
+		// (colonIdx accounts for the position of ":" in afterAuth, tokenStart is from afterColon)
+		authHeaderPrefix := line[idx : idx+len("authorization")+colonIdx+1+tokenStart]
 		// Avoid double redaction by checking if token was already redacted
 		tokenPart := afterColon[tokenStart:tokenEnd]
 		if tokenPart == "[REDACTED]" || strings.Contains(tokenPart, "[REDACTED]") {
