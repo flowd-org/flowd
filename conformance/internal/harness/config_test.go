@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -171,6 +172,8 @@ func TestParseConfig_BindFlag(t *testing.T) {
 }
 
 func TestParseConfig_FlwdBinaryCanonicalizedToAbsolute(t *testing.T) {
+	cwd, _ := os.Getwd()
+
 	tests := []struct {
 		name           string
 		args           []string
@@ -183,7 +186,7 @@ func TestParseConfig_FlwdBinaryCanonicalizedToAbsolute(t *testing.T) {
 			name:           "relative path is canonicalized to absolute",
 			args:           []string{"--flwd-binary", "./bin/flwd", "--token", "dummy"},
 			env:            map[string]string{},
-			wantFlwdBinary: filepath.Join("/home/didacog/didacog.eu/flowd/conformance/internal/harness", "bin/flwd"),
+			wantFlwdBinary: filepath.Clean(filepath.Join(cwd, "bin/flwd")),
 			wantExitCode:   ExitOK,
 			wantErr:        false,
 		},
@@ -231,6 +234,8 @@ func TestParseConfig_FlwdBinaryCanonicalizedToAbsolute(t *testing.T) {
 }
 
 func TestParseConfig_FlwdBinaryRelativePathWithDotSegments(t *testing.T) {
+	cwd, _ := os.Getwd()
+
 	// Test that parsing with a relative path containing dot segments succeeds
 	// and produces a normalized absolute path.
 	args := []string{"--flwd-binary", "./../bin/flwd", "--token", "dummy"}
@@ -249,8 +254,13 @@ func TestParseConfig_FlwdBinaryRelativePathWithDotSegments(t *testing.T) {
 	}
 
 	// The path should be cleaned (dot segments resolved)
-	expectedPrefix := "/home/didacog/didacog.eu/flowd"
-	if !filepath.HasPrefix(cfg.FlwdBinary, expectedPrefix) {
-		t.Errorf("ParseConfig() FlwdBinary = %q, expected prefix %q", cfg.FlwdBinary, expectedPrefix)
+	if cfg.FlwdBinary != filepath.Clean(cfg.FlwdBinary) {
+		t.Errorf("ParseConfig() FlwdBinary is not cleaned: %q", cfg.FlwdBinary)
+	}
+
+	// Assert relative input ./../bin/flwd resolves to filepath.Clean(filepath.Join(cwd, "..", "bin", "flwd"))
+	expected := filepath.Clean(filepath.Join(cwd, "..", "bin", "flwd"))
+	if cfg.FlwdBinary != expected {
+		t.Errorf("ParseConfig() FlwdBinary = %q, want %q", cfg.FlwdBinary, expected)
 	}
 }
