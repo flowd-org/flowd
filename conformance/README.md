@@ -17,8 +17,12 @@ go build -o ./bin/flwd ./
 
 ```bash
 cd /path/to/flowd/conformance
-FLWD_TOKEN=your_api_token go run ./cmd/conformance --flwd-binary ../bin/flwd
+FLWD_TOKEN=your_api_token go run ./cmd/conformance \
+  --flwd-binary ../bin/flwd \
+  --report-json ../conformance-report.json
 ```
+
+The harness automatically selects a free port (18080-18089) for the `flwd` server and runs all scenarios defined by the default ULC profiles (`ulc.shell.bash,ulc.shell.pwsh`).
 
 ## Command-line flags
 
@@ -26,7 +30,7 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance --flwd-binary ../bin/flwd
 |------|-------------|---------|-------------|
 | `--flwd-binary` | | *(required)* | Path to the `flwd` binary to test |
 | `--token` | `FLWD_TOKEN` | *(env)* | flowd API token (flag overrides env) |
-| `--bind` | | *ignored* | Not currently honored — harness picks a free localhost port via `PickBindAddr()` |
+| `--bind` | | *auto* | Not user-configurable — harness selects a free localhost port (18080-18089) via `PickBindAddr()` and passes it to `flwd` as `--bind` |
 | `--flwd-profile` | | *(none)* | flwd profile to use (e.g., `ulc.shell.bash`) |
 | `--ulc-profiles` | | `ulc.shell.bash,ulc.shell.pwsh` | Comma-separated list of ULC profile identifiers (see `DefaultProfiles()` in `conformance/internal/scenarios/registry.go`) |
 | `--timeout` | | `5m` | Overall timeout for the conformance run |
@@ -87,7 +91,7 @@ When `--report-json` is specified, the harness writes a JSON report with the fol
 The harness **never** prints tokens to stdout or stderr:
 
 - The raw token is never logged in error messages
-- `Authorization: Bearer <token>` patterns are redacted before output
+- `Authorization: Bearer` patterns are redacted before output
 - JSON reports are defensively scanned for Authorization header patterns
 
 ### Report safety
@@ -141,14 +145,17 @@ results:
 
 ### Rerunning locally
 
-To rerun the full conformance suite locally using the same JSON report output as CI:
+To rerun the full conformance suite locally with verbose logging and JSON report output:
 
 ```bash
 cd conformance
 FLWD_TOKEN=your_api_token go run ./cmd/conformance \
   --flwd-binary ../bin/flwd \
-  --report-json ../conformance-report.json
+  --report-json ../conformance-report.json \
+  --verbose
 ```
+
+The harness automatically binds `flwd` to a free port in the 18080-18089 range and runs all scenarios defined by the selected ULC profiles.
 
 For a specific ULC profile, add `--ulc-profiles`:
 
