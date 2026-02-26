@@ -110,6 +110,16 @@ Currently, the harness runs all scenarios defined by the selected ULC profiles. 
 
 When the conformance harness runs in CI (`.github/workflows/conformance.yml`), the JSON report is uploaded as an artifact named `conformance-report` containing `conformance-report.json`. This artifact is retained for 7 days.
 
+### CI token behavior
+
+The CI workflow distinguishes between trusted paths and fork PRs:
+
+- **Trusted paths** (push to `main`, or PRs on the main repository): The workflow **fails** if `FLWD_TOKEN` is missing, because conformance cannot run without a valid token. Expected log message: `FLWD_TOKEN missing on trusted path (push or internal PR); conformance harness cannot run`
+
+- **Fork PRs**: The workflow **warns** but continues if `FLWD_TOKEN` is missing. Expected log message: `Fork PR without token: conformance harness not executed`. Contributors should run conformance locally before PR submission.
+
+This ensures that maintainers are notified immediately when conformance is skipped on trusted paths, while fork contributors are informed but not blocked by a missing token.
+
 ### Reading failure details
 
 In the JSON report, each failed test appears as an item in the `results[]` array with the following fields:
@@ -151,4 +161,4 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
 
 ## License
 
-MIT — see `LICENSE` in the repository root.
+AGPL-3.0-or-later — see `LICENSE` in the repository root.
