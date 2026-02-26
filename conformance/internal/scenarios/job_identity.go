@@ -37,6 +37,7 @@ func runCanonicalJobIDs(ctx context.Context, env Env) Result {
 		Profile:    env.Profile,
 		Passed:     result.Passed,
 		Duration:   time.Since(start),
+		Failure:    result.Failure,
 	}
 }
 
@@ -259,6 +260,7 @@ func runCollisionBehavior(ctx context.Context, env Env) Result {
 		Profile:    env.Profile,
 		Passed:     result.Passed,
 		Duration:   time.Since(start),
+		Failure:    result.Failure,
 	}
 }
 
