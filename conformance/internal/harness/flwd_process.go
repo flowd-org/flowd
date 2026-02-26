@@ -53,10 +53,14 @@ func StartFlwd(ctx context.Context, cfg Config, runRoot string) (*FlwdProcess, i
 		return nil, ExitInfra, fmt.Errorf("flwd binary is a directory: %s", cfg.FlwdBinary)
 	}
 
-	// Pick a bind address
-	bindAddr, err := PickBindAddr()
-	if err != nil {
-		return nil, ExitInfra, err
+	// Select bind address: explicit from config or auto via PickBindAddr
+	bindAddr := cfg.Bind
+	if bindAddr == "" {
+		addr, err := PickBindAddr()
+		if err != nil {
+			return nil, ExitInfra, err
+		}
+		bindAddr = addr
 	}
 
 	// Build command arguments

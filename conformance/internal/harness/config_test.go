@@ -117,3 +117,54 @@ func TestParseConfig_RequiredFlags(t *testing.T) {
 		t.Errorf("ParseConfig() exitCode = %d, want %d", exitCode, ExitUsage)
 	}
 }
+
+func TestParseConfig_BindFlag(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantBind     string
+		wantExitCode int
+		wantErr      bool
+	}{
+		{
+			name:         "empty bind uses auto",
+			args:         []string{"--flwd-binary", "/path/to/flwd", "--token", "dummy"},
+			wantBind:     "",
+			wantExitCode: ExitOK,
+			wantErr:      false,
+		},
+		{
+			name:         "explicit bind is preserved",
+			args:         []string{"--flwd-binary", "/path/to/flwd", "--token", "dummy", "--bind", "127.0.0.1:19000"},
+			wantBind:     "127.0.0.1:19000",
+			wantExitCode: ExitOK,
+			wantErr:      false,
+		},
+		{
+			name:         "whitespace-only bind trimmed to empty (auto)",
+			args:         []string{"--flwd-binary", "/path/to/flwd", "--token", "dummy", "--bind", "   "},
+			wantBind:     "",
+			wantExitCode: ExitOK,
+			wantErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, exitCode, err := ParseConfig(tt.args, map[string]string{})
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if exitCode != tt.wantExitCode {
+				t.Errorf("ParseConfig() exitCode = %d, want %d", exitCode, tt.wantExitCode)
+			}
+
+			if cfg.Bind != tt.wantBind {
+				t.Errorf("ParseConfig() Bind = %q, want %q", cfg.Bind, tt.wantBind)
+			}
+		})
+	}
+}

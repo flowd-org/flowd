@@ -40,7 +40,7 @@ func ParseConfig(args []string, env map[string]string) (Config, int, error) {
 
 	fs.StringVar(&flwdBinary, "flwd-binary", "", "Path to the flwd binary to test (required)")
 	fs.StringVar(&token, "token", "", "flowd API token (overrides FLWD_TOKEN env var)")
-	fs.StringVar(&bind, "bind", "127.0.0.1:8080", "Bind address for the flwd server")
+	fs.StringVar(&bind, "bind", "", "Bind address for flwd (empty = auto)")
 	fs.StringVar(&flwdProfile, "flwd-profile", "", "flwd profile to use")
 	fs.StringVar(&ulcProfilesStr, "ulc-profiles", "ulc.shell.bash,ulc.shell.pwsh", "Comma-separated list of ULC profiles to test (aliases: bash, pwsh)")
 	fs.DurationVar(&timeout, "timeout", 5*time.Minute, "Overall timeout for the conformance run")
@@ -86,7 +86,7 @@ func ParseConfig(args []string, env map[string]string) (Config, int, error) {
 	cfg := Config{
 		FlwdBinary:      flwdBinary,
 		Token:           token,
-		Bind:            bind,
+		Bind:            strings.TrimSpace(bind),
 		FlwdProfile:     flwdProfile,
 		ULCProfiles:     ulcProfiles,
 		Timeout:         timeout,

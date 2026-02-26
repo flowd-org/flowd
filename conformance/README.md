@@ -22,7 +22,7 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
   --report-json ../conformance-report.json
 ```
 
-The harness automatically selects a free port (18080-18089) for the `flwd` server and runs all scenarios defined by the default ULC profiles (`ulc.shell.bash,ulc.shell.pwsh`).
+The harness automatically selects a free port (18080-18089) for the `flwd` server unless `--bind` is set. It runs all scenarios defined by the default ULC profiles (`ulc.shell.bash,ulc.shell.pwsh`).
 
 ## Command-line flags
 
@@ -30,7 +30,7 @@ The harness automatically selects a free port (18080-18089) for the `flwd` serve
 |------|-------------|---------|-------------|
 | `--flwd-binary` | | *(required)* | Path to the `flwd` binary to test |
 | `--token` | `FLWD_TOKEN` | *(env)* | flowd API token (flag overrides env) |
-| `--bind` | | *auto* | Not user-configurable — harness selects a free localhost port (18080-18089) via `PickBindAddr()` and passes it to `flwd` as `--bind` |
+| `--bind` | | *auto* | Bind address for flwd (empty = auto-select a free port in 18080-18089; set explicitly to override) |
 | `--flwd-profile` | | *(none)* | flwd profile to use (e.g., `ulc.shell.bash`) |
 | `--ulc-profiles` | | `ulc.shell.bash,ulc.shell.pwsh` | Comma-separated list of ULC profile identifiers (see `DefaultProfiles()` in `conformance/internal/scenarios/registry.go`) |
 | `--timeout` | | `5m` | Overall timeout for the conformance run |
@@ -155,7 +155,7 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
   --verbose
 ```
 
-The harness automatically binds `flwd` to a free port in the 18080-18089 range and runs all scenarios defined by the selected ULC profiles.
+The harness automatically binds `flwd` to a free port in the 18080-18089 range unless `--bind` is set, and runs all scenarios defined by the selected ULC profiles.
 
 For a specific ULC profile, add `--ulc-profiles`:
 
@@ -163,6 +163,15 @@ For a specific ULC profile, add `--ulc-profiles`:
 FLWD_TOKEN=your_api_token go run ./cmd/conformance \
   --flwd-binary ../bin/flwd \
   --ulc-profiles ulc.shell.bash \
+  --report-json ../conformance-report.json
+```
+
+To use a specific bind address, add `--bind`:
+
+```bash
+FLWD_TOKEN=your_api_token go run ./cmd/conformance \
+  --flwd-binary ../bin/flwd \
+  --bind 127.0.0.1:19000 \
   --report-json ../conformance-report.json
 ```
 
