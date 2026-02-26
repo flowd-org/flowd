@@ -79,7 +79,7 @@ func run(args []string) int {
 
 	// Run conformance tests
 	exitCode, err = runConformanceTests(ctx, cfg, fp.BaseURL, runRoot)
-	if err != nil {
+	if err != nil || exitCode != harness.ExitOK {
 		return exitCode
 	}
 
