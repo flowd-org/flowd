@@ -1,51 +1,96 @@
 package harness
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
 
-func TestDebugRedact(t *testing.T) {
+func TestRedactSecrets_AuthorizationHeaderWithExtraWhitespace(t *testing.T) {
 	token := "secret-token-xyz"
 	input := "Authorization:    Bearer " + token
 
-	fmt.Printf("Input: %q\n", input)
-	fmt.Printf("Token: %q\n", token)
+	result := RedactSecrets(input, token)
 
-	// First, let's see what RedactSecrets does with just the raw token
-	result1 := strings.ReplaceAll(input, token, "[REDACTED]")
-	fmt.Printf("After raw token replacement: %q\n", result1)
+	// The actual behavior preserves "Bearer" when redacting the token
+	expected := "Authorization:    Bearer [REDACTED]"
+	if result != expected {
+		t.Errorf("RedactSecrets() = %q, want %q", result, expected)
+	}
 
-	// Then let's see what redactAuthorizationHeader does
-	result2 := redactAuthorizationHeader(result1)
-	fmt.Printf("After redactAuthorizationHeader: %q\n", result2)
+	if strings.Contains(result, token) {
+		t.Errorf("RedactSecrets() did not redact token: %s", result)
+	}
 }
 
-func TestDebugRedact2(t *testing.T) {
-	// Test the redactAuthorizationHeader function directly
-	input := "Authorization:    Bearer [REDACTED]"
-	fmt.Printf("\nDirect test:\n")
-	fmt.Printf("Input: %q\n", input)
+func TestRedactAuthorizationHeader_Direct(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{
+			name:   "direct test with [REDACTED]",
+			input:  "Authorization:    Bearer [REDACTED]",
+			expect: "Authorization:    Bearer [REDACTED]",
+		},
+		{
+			name:   "lowercase authorization and bearer",
+			input:  "authorization: bearer token123",
+			expect: "authorization: bearer [REDACTED]",
+		},
+		{
+			name:   "mixed case authorization and bearer",
+			input:  "Authorization: Bearer token123",
+			expect: "Authorization: Bearer [REDACTED]",
+		},
+		{
+			name:   "uppercase authorization and bearer",
+			input:  "AUTHORIZATION: BEARER token123",
+			expect: "AUTHORIZATION: BEARER [REDACTED]",
+		},
+		{
+			name:   "authorization with space before colon",
+			input:  "Authorization : Bearer token123",
+			expect: "Authorization : Bearer [REDACTED]",
+		},
+		{
+			name:   "authorization with tab before colon",
+			input:  "Authorization\t: Bearer token123",
+			expect: "Authorization\t: Bearer [REDACTED]",
+		},
+		{
+			name:   "authorization with multiple spaces before token",
+			input:  "Authorization:    Bearer token123",
+			expect: "Authorization:    Bearer [REDACTED]",
+		},
+		{
+			name:   "authorization with tab before token",
+			input:  "Authorization:\t\tBearer token123",
+			expect: "Authorization:\t\tBearer [REDACTED]",
+		},
+		{
+			name:   "authorization with mixed whitespace before token",
+			input:  "Authorization: \t Bearer token123",
+			expect: "Authorization: \t Bearer [REDACTED]",
+		},
+		{
+			name:   "no authorization header",
+			input:  "some other text",
+			expect: "some other text",
+		},
+		{
+			name:   "empty input",
+			input:  "",
+			expect: "",
+		},
+	}
 
-	result := redactAuthorizationHeader(input)
-	fmt.Printf("Output: %q\n", result)
-
-	// Let's also trace through manually
-	remaining := input[len("Authorization"):]
-	fmt.Printf("After 'authorization': %q\n", remaining)
-
-	colonIdx := strings.Index(remaining, ":")
-	fmt.Printf("Colon index: %d\n", colonIdx)
-
-	afterColon := remaining[colonIdx+1:]
-	fmt.Printf("After colon: %q\n", afterColon)
-
-	lowerAfterColon := strings.ToLower(afterColon)
-	bearerIdx := strings.Index(lowerAfterColon, "bearer")
-	fmt.Printf("Bearer index (case-insensitive): %d\n", bearerIdx)
-
-	if bearerIdx >= 0 {
-		fmt.Printf("After 'bearer': %q\n", afterColon[bearerIdx+len("bearer"):])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := redactAuthorizationHeader(tt.input)
+			if result != tt.expect {
+				t.Errorf("redactAuthorizationHeader() = %q, want %q", result, tt.expect)
+			}
+		})
 	}
 }
