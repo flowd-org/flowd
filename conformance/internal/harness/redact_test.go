@@ -147,3 +147,89 @@ func TestRedactTokenInLine_MultipleOccurrences(t *testing.T) {
 		t.Errorf("RedactTokenInLine() expected 2 [REDACTED], got %d", count)
 	}
 }
+
+func TestRedactSecrets_AuthorizationHeaderVariants(t *testing.T) {
+	token := "secret-token-xyz"
+
+	tests := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{
+			name:   "lowercase authorization and bearer",
+			input:  "authorization: bearer " + token,
+			expect: "authorization: bearer [REDACTED]",
+		},
+		{
+			name:   "mixed case authorization and bearer",
+			input:  "Authorization: Bearer " + token,
+			expect: "Authorization: Bearer [REDACTED]",
+		},
+		{
+			name:   "uppercase authorization and bearer",
+			input:  "AUTHORIZATION: BEARER " + token,
+			expect: "AUTHORIZATION: BEARER [REDACTED]",
+		},
+		{
+			name:   "authorization with space before colon",
+			input:  "Authorization : Bearer " + token,
+			expect: "Authorization : Bearer [REDACTED]",
+		},
+		{
+			name:   "authorization with tab before colon",
+			input:  "Authorization\t: Bearer " + token,
+			expect: "Authorization\t: Bearer [REDACTED]",
+		},
+		{
+			name:   "authorization with multiple spaces before token",
+			input:  "Authorization:    Bearer " + token,
+			expect: "Authorization:    Bearer [REDACTED]",
+		},
+		{
+			name:   "authorization with tab before token",
+			input:  "Authorization:\t\tBearer " + token,
+			expect: "Authorization:\t\tBearer [REDACTED]",
+		},
+		{
+			name:   "authorization with mixed whitespace before token",
+			input:  "Authorization: \t Bearer " + token,
+			expect: "Authorization: \t Bearer [REDACTED]",
+		},
+		{
+			name:   "multiple headers with variants",
+			input:  "First: authorization: bearer " + token + "\nSecond: Authorization : Bearer " + token,
+			expect: "First: authorization: bearer [REDACTED]\nSecond: Authorization : Bearer [REDACTED]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := RedactSecrets(tt.input, token)
+
+			if strings.Contains(result, token) {
+				t.Errorf("RedactSecrets() did not redact token: %s", result)
+			}
+
+			if !strings.Contains(result, "[REDACTED]") {
+				t.Errorf("RedactSecrets() did not produce [REDACTED]: %s", result)
+			}
+
+			// Check the redacted header matches expected format (without token)
+			if !strings.HasPrefix(result, tt.expect) && !strings.Contains(result, "\n"+tt.expect) {
+				// Check if result contains the expected redacted header
+				found := false
+				lines := strings.Split(result, "\n")
+				for _, line := range lines {
+					if strings.TrimSpace(line) == strings.TrimSpace(tt.expect) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("RedactSecrets() expected header %q, got %q", tt.expect, result)
+				}
+			}
+		})
+	}
+}

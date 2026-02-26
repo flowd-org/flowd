@@ -22,36 +22,88 @@ func RedactSecrets(s string, secrets ...string) string {
 }
 
 // redactAuthorizationHeader removes Bearer tokens from Authorization headers.
+// It handles case-insensitive header names, optional spaces around colon,
+// and multiple spaces/tabs before the token value.
 func redactAuthorizationHeader(s string) string {
-	// Replace "Authorization: Bearer <token>" pattern
-	prefix := "Authorization: Bearer "
-	result := s
-	start := 0
-
-	for {
-		idx := strings.Index(result[start:], prefix)
+	// Split into lines to process each line separately
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		// Find "authorization" (case-insensitive) at the start of the line or after whitespace
+		lowerLine := strings.ToLower(line)
+		idx := strings.Index(lowerLine, "authorization")
 		if idx < 0 {
-			break
-		}
-		// Adjust index relative to full string
-		globalIdx := start + idx
-
-		end := globalIdx + len(prefix)
-		// Find end of token (space, newline, or end of string)
-		for end < len(result) && result[end] != ' ' && result[end] != '\n' && result[end] != '\r' {
-			end++
+			continue
 		}
 
-		// Write unchanged prefix, then prefix+[REDACTED], then continue
-		result = result[:globalIdx] + prefix + "[REDACTED]" + result[end:]
-		// Advance start past the replacement to avoid infinite loop
-		start = globalIdx + len(prefix) + len("[REDACTED]")
-		if start >= len(result) {
-			break
+		// Check that "authorization" is not part of a larger word
+		if idx > 0 {
+			prevChar := line[idx-1]
+			if (prevChar >= 'a' && prevChar <= 'z') || (prevChar >= 'A' && prevChar <= 'Z') ||
+				(prevChar >= '0' && prevChar <= '9') || prevChar == '_' {
+				continue
+			}
 		}
+
+		// Find the colon after "authorization"
+		afterAuth := line[idx+len("authorization"):]
+		colonIdx := strings.Index(afterAuth, ":")
+		if colonIdx < 0 {
+			continue
+		}
+
+		// Validate whitespace between "authorization" and ":"
+		prefixPart := afterAuth[:colonIdx]
+		if strings.TrimSpace(prefixPart) != "" {
+			continue
+		}
+
+		// Find "bearer" after the colon
+		afterColon := afterAuth[colonIdx+1:]
+		lowerAfterColon := strings.ToLower(afterColon)
+		bearerIdx := strings.Index(lowerAfterColon, "bearer")
+		if bearerIdx < 0 {
+			continue
+		}
+
+		// Check that "bearer" is not part of a larger word
+		if bearerIdx > 0 {
+			prevChar := afterColon[bearerIdx-1]
+			if (prevChar >= 'a' && prevChar <= 'z') || (prevChar >= 'A' && prevChar <= 'Z') ||
+				(prevChar >= '0' && prevChar <= '9') || prevChar == '_' {
+				continue
+			}
+		}
+
+		// Validate whitespace between ":" and "bearer"
+		middlePart := afterColon[:bearerIdx]
+		if strings.TrimSpace(middlePart) != "" {
+			continue
+		}
+
+		// Find the token start (after "bearer" + optional whitespace)
+		tokenStart := bearerIdx + len("bearer")
+		for tokenStart < len(afterColon) && (afterColon[tokenStart] == ' ' || afterColon[tokenStart] == '\t') {
+			tokenStart++
+		}
+
+		// Find the end of the token
+		tokenEnd := tokenStart
+		for tokenEnd < len(afterColon) && afterColon[tokenEnd] != ' ' && afterColon[tokenEnd] != '\n' && afterColon[tokenEnd] != '\r' {
+			tokenEnd++
+		}
+
+		// Reconstruct the line - preserve original casing up to and including "bearer", then redact token
+		authHeaderPrefix := line[idx : idx+len("authorization")+len(prefixPart)+1+len(middlePart)+bearerIdx+len("bearer")]
+		// Avoid double redaction by checking if token was already redacted
+		tokenPart := afterColon[tokenStart:tokenEnd]
+		if tokenPart == "[REDACTED]" || strings.Contains(tokenPart, "[REDACTED]") {
+			// Token already redacted, nothing to do
+			continue
+		}
+		lines[i] = line[:idx] + authHeaderPrefix + "[REDACTED]" + afterColon[tokenEnd:]
 	}
 
-	return result
+	return strings.Join(lines, "\n")
 }
 
 // RedactTokenInLine is a helper that redacts a specific token from a line of text.
