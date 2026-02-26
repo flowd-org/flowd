@@ -85,6 +85,33 @@ func All() []Scenario {
 func RunSuite(ctx context.Context, env Env, scenarios []Scenario, profiles []string) report.Report {
 	var results []report.ScenarioResult
 
+	// Guard empty profile selection to prevent panics
+	if len(profiles) == 0 {
+		return report.Report{
+			SuiteMeta: report.SuiteMeta{
+				Name:       "conformance",
+				Profiles:   profiles,
+				TotalTests: 0,
+			},
+			ScenarioCount: 0,
+			PassedCount:   0,
+			FailedCount:   1,
+			Results: []report.ScenarioResult{
+				{
+					ScenarioID:   "empty-profile-selection",
+					ScenarioName: "Empty profile selection",
+					Profile:      "",
+					Passed:       false,
+					DurationMs:   0,
+					Failure: &report.FailureDetail{
+						Expected: "at least one profile to run",
+						Actual:   "no profiles provided",
+					},
+				},
+			},
+		}
+	}
+
 	// Required scenarios that must always run at least once regardless of profile selection
 	requiredScenarioIDs := map[string]bool{
 		"api-surface": true,

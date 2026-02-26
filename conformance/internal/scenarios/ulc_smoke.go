@@ -262,13 +262,15 @@ func fetchEvents(ctx context.Context, env Env, runID, profile string) string {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Bound body read to prevent unbounded memory usage
+	const maxBodySize = 64 * 1024 // 64KiB
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return fmt.Sprintf("failed to read events: %v", err)
 	}
 
 	// Redact secrets
-	redacted := redactBody(string(body), env.Token)
+	redacted := redactBody(string(bodyBytes), env.Token)
 
 	// Keep only last N lines (bounded)
 	lines := strings.Split(redacted, "\n")
