@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -166,5 +167,90 @@ func TestParseConfig_BindFlag(t *testing.T) {
 				t.Errorf("ParseConfig() Bind = %q, want %q", cfg.Bind, tt.wantBind)
 			}
 		})
+	}
+}
+
+func TestParseConfig_FlwdBinaryCanonicalizedToAbsolute(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		env            map[string]string
+		wantFlwdBinary string
+		wantExitCode   int
+		wantErr        bool
+	}{
+		{
+			name:           "relative path is canonicalized to absolute",
+			args:           []string{"--flwd-binary", "./bin/flwd", "--token", "dummy"},
+			env:            map[string]string{},
+			wantFlwdBinary: filepath.Join("/home/didacog/didacog.eu/flowd/conformance/internal/harness", "bin/flwd"),
+			wantExitCode:   ExitOK,
+			wantErr:        false,
+		},
+		{
+			name:           "absolute path is preserved and cleaned",
+			args:           []string{"--flwd-binary", "/usr/local/bin/flwd", "--token", "dummy"},
+			env:            map[string]string{},
+			wantFlwdBinary: "/usr/local/bin/flwd",
+			wantExitCode:   ExitOK,
+			wantErr:        false,
+		},
+		{
+			name:           "path with dot segments is normalized",
+			args:           []string{"--flwd-binary", "/usr/local/../local/bin/flwd", "--token", "dummy"},
+			env:            map[string]string{},
+			wantFlwdBinary: "/usr/local/bin/flwd",
+			wantExitCode:   ExitOK,
+			wantErr:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, exitCode, err := ParseConfig(tt.args, tt.env)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if exitCode != tt.wantExitCode {
+				t.Errorf("ParseConfig() exitCode = %d, want %d", exitCode, tt.wantExitCode)
+			}
+
+			if cfg.FlwdBinary != tt.wantFlwdBinary {
+				t.Errorf("ParseConfig() FlwdBinary = %q, want %q", cfg.FlwdBinary, tt.wantFlwdBinary)
+			}
+
+			// Assert that FlwdBinary is absolute
+			if !filepath.IsAbs(cfg.FlwdBinary) {
+				t.Errorf("ParseConfig() FlwdBinary is not absolute: %q", cfg.FlwdBinary)
+			}
+		})
+	}
+}
+
+func TestParseConfig_FlwdBinaryRelativePathWithDotSegments(t *testing.T) {
+	// Test that parsing with a relative path containing dot segments succeeds
+	// and produces a normalized absolute path.
+	args := []string{"--flwd-binary", "./../bin/flwd", "--token", "dummy"}
+	cfg, exitCode, err := ParseConfig(args, map[string]string{})
+
+	if err != nil {
+		t.Errorf("ParseConfig() unexpected error: %v", err)
+	}
+
+	if exitCode != ExitOK {
+		t.Errorf("ParseConfig() exitCode = %d, want %d", exitCode, ExitOK)
+	}
+
+	if !filepath.IsAbs(cfg.FlwdBinary) {
+		t.Errorf("ParseConfig() FlwdBinary is not absolute: %q", cfg.FlwdBinary)
+	}
+
+	// The path should be cleaned (dot segments resolved)
+	expectedPrefix := "/home/didacog/didacog.eu/flowd"
+	if !filepath.HasPrefix(cfg.FlwdBinary, expectedPrefix) {
+		t.Errorf("ParseConfig() FlwdBinary = %q, expected prefix %q", cfg.FlwdBinary, expectedPrefix)
 	}
 }

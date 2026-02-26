@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -60,6 +61,14 @@ func ParseConfig(args []string, env map[string]string) (Config, int, error) {
 	if flwdBinary == "" {
 		return Config{}, ExitUsage, fmt.Errorf("--flwd-binary is required")
 	}
+
+	// Canonicalize flwdBinary to absolute path to ensure startup is independent
+	// of the caller's current working directory.
+	resolved, err := filepath.Abs(flwdBinary)
+	if err != nil {
+		return Config{}, ExitUsage, fmt.Errorf("failed to resolve --flwd-binary: %w", err)
+	}
+	flwdBinary = filepath.Clean(resolved)
 
 	// Token sourcing: flag wins over environment
 	if token == "" {

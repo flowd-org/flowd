@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -37,6 +38,11 @@ func PickBindAddr() (string, error) {
 // It validates the binary exists and is executable, picks a bind address,
 // and starts the process with stdout/stderr captured.
 func StartFlwd(ctx context.Context, cfg Config, runRoot string) (*FlwdProcess, int, error) {
+	// Defensive check: ensure FlwdBinary is an absolute path to prevent cwd-dependent resolution.
+	if !filepath.IsAbs(cfg.FlwdBinary) {
+		return nil, ExitInfra, fmt.Errorf("flwd binary path must be absolute: %s", cfg.FlwdBinary)
+	}
+
 	// Validate binary exists and is executable
 	if _, err := os.Stat(cfg.FlwdBinary); err != nil {
 		if os.IsNotExist(err) {
