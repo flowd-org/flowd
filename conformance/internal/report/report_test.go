@@ -182,3 +182,42 @@ func TestEmitInfraErr(t *testing.T) {
 		t.Errorf("Redacted error should not contain raw token, got: %q", redacted)
 	}
 }
+
+// TestFormatFailureBlock_ActionableFailureText verifies that formatted failure
+// output includes non-empty Actual text for wrapper-path errors.
+func TestFormatFailureBlock_ActionableFailureText(t *testing.T) {
+	result := ScenarioResult{
+		ScenarioID:   "wrapper-path-test",
+		ScenarioName: "Wrapper Path Test",
+		Profile:      "ulc.shell.bash",
+		DurationMs:   250,
+		Failure: &FailureDetail{
+			Expected: "wrapper script returns 0",
+			Actual:   "wrapper script exited with code 1: command not found",
+		},
+	}
+
+	output := FormatFailureBlock(result)
+
+	// Verify output is non-empty
+	if len(output) == 0 {
+		t.Error("FormatFailureBlock() returned empty string")
+	}
+
+	// Verify Expected and Actual are both present and non-empty
+	expectedSubstrings := []string{
+		"Expected: wrapper script returns 0",
+		"Actual: wrapper script exited with code 1: command not found",
+	}
+
+	for _, substr := range expectedSubstrings {
+		if !contains(output, substr) {
+			t.Errorf("FormatFailureBlock() output missing: %q", substr)
+		}
+	}
+
+	// Ensure Actual text is not empty (regression check)
+	if result.Failure.Actual == "" {
+		t.Error("Failure.Actual should be non-empty for actionable failure text")
+	}
+}
