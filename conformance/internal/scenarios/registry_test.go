@@ -595,3 +595,90 @@ func TestRunSuite_WrapperScenarioFailureDetailsPreserved(t *testing.T) {
 		}
 	}
 }
+
+// TestRunSuite_ULCWrapperFailureDetailsPreserved verifies that ULC wrapper
+// scenario failures preserve diagnostic details (Failure.Actual text).
+// This test specifically covers the ULC smoke scenario which uses runProfile
+// and pollRunCompletion to handle wrapper failures.
+func TestRunSuite_ULCWrapperFailureDetailsPreserved(t *testing.T) {
+	// Create a test server that returns a failing response for /runs
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusNoContent)
+		case "/startupz", "/readyz":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status": "ok"}`))
+		case "/capabilities":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"core": {"version": "1.0.0", "spec_version": "1.0.0"}}`))
+		case "/limits":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"algorithm": "sha256", "queue_max_depth": 1000, "backpressure_mode": "block", "queue_stats": {}}`))
+		case "/runs":
+			// Return a 500 error to simulate a wrapper scenario failure
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error": "internal server error"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := &harness.Client{
+		BaseURL: server.URL,
+		Token:   "test-token-ulc-wrapper",
+		HTTP:    &http.Client{},
+	}
+
+	env := Env{
+		BaseURL:         server.URL,
+		Token:           "test-token-ulc-wrapper",
+		HTTPClient:      client,
+		Profile:         "ulc.shell.bash",
+		ScenarioTimeout: 10 * time.Second,
+	}
+
+	// Run the ULC smoke scenario which will fail via runProfile against the test server
+	scenario := ULCSmokeScenario()
+	report := RunSuite(context.Background(), env, []Scenario{scenario}, []string{"ulc.shell.bash"})
+
+	// Verify we have exactly one result
+	if len(report.Results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(report.Results))
+	}
+
+	result := report.Results[0]
+
+	// Verify the scenario failed (expected due to 500 error)
+	if result.Passed {
+		t.Error("Expected scenario to fail with 500 error, but it passed")
+	}
+
+	// Verify failure details are preserved (regression check for RF-002)
+	if result.Failure == nil {
+		t.Error("Expected Failure to be non-nil for failed result")
+	} else {
+		// Verify Actual is non-empty (critical for actionable failure text)
+		if result.Failure.Actual == "" {
+			t.Error("Expected Failure.Actual to be non-empty for actionable failure text")
+		}
+
+		// Verify Actual contains error context from the server response
+		// Should contain the HTTP status code from runProfile
+		if !strings.Contains(result.Failure.Actual, "500") &&
+			!strings.Contains(result.Failure.Actual, "internal server error") &&
+			!strings.Contains(result.Failure.Actual, "POST /runs returned status") {
+			t.Errorf("Expected Failure.Actual to contain error context (status code or body), got: %q", result.Failure.Actual)
+		}
+
+		// Verify token redaction is applied (security check)
+		if strings.Contains(result.Failure.Actual, "test-token-ulc-wrapper") {
+			t.Errorf("Expected token to be redacted from Failure.Actual, but found: %q", result.Failure.Actual)
+		}
+	}
+}
