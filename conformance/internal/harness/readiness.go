@@ -11,6 +11,8 @@ import (
 
 // WaitForReady polls /startupz then /readyz endpoints until the server is ready
 // or the context times out. Returns ExitOK on success, ExitInfra on failure.
+// If processExitCh is non-nil, readiness polling short-circuits when the process exits,
+// using stderrTail for contextual error messages.
 func WaitForReady(ctx context.Context, baseURL string, token string, startupTimeout time.Duration) (int, error) {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
@@ -21,12 +23,38 @@ func WaitForReady(ctx context.Context, baseURL string, token string, startupTime
 	defer cancel()
 
 	// Poll /startupz until it returns 200
-	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token); err != nil {
+	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, nil, ""); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for startup: %w", err)
 	}
 
 	// Poll /readyz until it returns 200
-	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token); err != nil {
+	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, nil, ""); err != nil {
+		return ExitInfra, fmt.Errorf("failed to wait for readiness: %w", err)
+	}
+
+	return ExitOK, nil
+}
+
+// WaitForReadyWithProcess polls /startupz then /readyz endpoints until the server is ready
+// or the context times out. Returns ExitOK on success, ExitInfra on failure.
+// If processExitCh is non-nil, readiness polling short-circuits when the process exits,
+// using stderrTail for contextual error messages.
+func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, startupTimeout time.Duration, processExitCh <-chan error, stderrTail string) (int, error) {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	// Create a context with the overall timeout
+	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
+	defer cancel()
+
+	// Poll /startupz until it returns 200
+	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, processExitCh, stderrTail); err != nil {
+		return ExitInfra, fmt.Errorf("failed to wait for startup: %w", err)
+	}
+
+	// Poll /readyz until it returns 200
+	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, processExitCh, stderrTail); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for readiness: %w", err)
 	}
 
@@ -34,7 +62,8 @@ func WaitForReady(ctx context.Context, baseURL string, token string, startupTime
 }
 
 // pollEndpoint polls a given endpoint until it returns 200 or the context times out.
-func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token string) error {
+// If processExitCh is non-nil, polling short-circuits when the process exits.
+func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token string, processExitCh <-chan error, stderrTail string) error {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -42,6 +71,14 @@ func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for %s: %w", path, ctx.Err())
+		case _, ok := <-processExitCh:
+			if ok {
+				// Process exited
+				if stderrTail != "" {
+					return fmt.Errorf("process exited before %s: %w", path, fmt.Errorf("stderr: %s", RedactStderrTail(stderrTail, 5)))
+				}
+				return fmt.Errorf("process exited before %s", path)
+			}
 		case <-ticker.C:
 			if err := checkEndpoint(ctx, client, baseURL, path, token); err == nil {
 				return nil

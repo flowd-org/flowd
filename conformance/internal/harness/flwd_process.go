@@ -59,6 +59,21 @@ func StartFlwd(ctx context.Context, cfg Config, runRoot string) (*FlwdProcess, i
 		return nil, ExitInfra, fmt.Errorf("flwd binary is a directory: %s", cfg.FlwdBinary)
 	}
 
+	// Validate bootstrap root directory exists and is readable before spawning flwd
+	bootstrapRoot := filepath.Join(runRoot, "scripts", "fixtures", "tree-v1")
+	if _, err := os.Stat(bootstrapRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil, ExitInfra, fmt.Errorf("bootstrap root not found: %s", bootstrapRoot)
+		}
+		return nil, ExitInfra, fmt.Errorf("cannot stat bootstrap root: %w", err)
+	}
+	// Verify directory is readable
+	if f, err := os.Open(bootstrapRoot); err == nil {
+		f.Close()
+	} else {
+		return nil, ExitInfra, fmt.Errorf("bootstrap root not readable: %s", bootstrapRoot)
+	}
+
 	// Select bind address: explicit from config or auto via PickBindAddr
 	bindAddr := cfg.Bind
 	if bindAddr == "" {

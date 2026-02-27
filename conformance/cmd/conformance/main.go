@@ -67,10 +67,18 @@ func run(args []string) int {
 	}
 	defer fp.Cleanup(ctx)
 
-	// Wait for server readiness
+	// Wait for server readiness with process-exit awareness
 	fmt.Println("Waiting for flwd to be ready...")
 	startupTimeout := 30 * time.Second
-	exitCode, err = harness.WaitForReady(ctx, fp.BaseURL, cfg.Token, startupTimeout)
+
+	// Set up process exit channel
+	waitErrCh := make(chan error, 1)
+	go func() {
+		waitErrCh <- fp.Cmd.Wait()
+		close(waitErrCh)
+	}()
+
+	exitCode, err = harness.WaitForReadyWithProcess(ctx, fp.BaseURL, cfg.Token, startupTimeout, waitErrCh, fp.Stderr.String())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: readiness check failed: %s\n", harness.RedactSecrets(err.Error(), cfg.Token))
 		return exitCode
