@@ -78,7 +78,7 @@ func run(args []string) int {
 		close(waitErrCh)
 	}()
 
-	exitCode, err = harness.WaitForReadyWithProcess(ctx, fp.BaseURL, cfg.Token, startupTimeout, waitErrCh, fp.Stderr.String())
+	exitCode, err = harness.WaitForReadyWithProcess(ctx, fp.BaseURL, cfg.Token, startupTimeout, waitErrCh, func() string { return fp.Stderr.String() })
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: readiness check failed: %s\n", harness.RedactSecrets(err.Error(), cfg.Token))
 		return exitCode

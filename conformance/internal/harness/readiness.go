@@ -11,8 +11,6 @@ import (
 
 // WaitForReady polls /startupz then /readyz endpoints until the server is ready
 // or the context times out. Returns ExitOK on success, ExitInfra on failure.
-// If processExitCh is non-nil, readiness polling short-circuits when the process exits,
-// using stderrTail for contextual error messages.
 func WaitForReady(ctx context.Context, baseURL string, token string, startupTimeout time.Duration) (int, error) {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
@@ -23,12 +21,12 @@ func WaitForReady(ctx context.Context, baseURL string, token string, startupTime
 	defer cancel()
 
 	// Poll /startupz until it returns 200
-	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, nil, ""); err != nil {
+	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, nil, nil); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for startup: %w", err)
 	}
 
 	// Poll /readyz until it returns 200
-	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, nil, ""); err != nil {
+	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, nil, nil); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for readiness: %w", err)
 	}
 
@@ -38,8 +36,8 @@ func WaitForReady(ctx context.Context, baseURL string, token string, startupTime
 // WaitForReadyWithProcess polls /startupz then /readyz endpoints until the server is ready
 // or the context times out. Returns ExitOK on success, ExitInfra on failure.
 // If processExitCh is non-nil, readiness polling short-circuits when the process exits,
-// using stderrTail for contextual error messages.
-func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, startupTimeout time.Duration, processExitCh <-chan error, stderrTail string) (int, error) {
+// using getStderrTail for contextual error messages (called at failure time).
+func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, startupTimeout time.Duration, processExitCh <-chan error, getStderrTail func() string) (int, error) {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
@@ -49,12 +47,12 @@ func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, 
 	defer cancel()
 
 	// Poll /startupz until it returns 200
-	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, processExitCh, stderrTail); err != nil {
+	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, processExitCh, getStderrTail); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for startup: %w", err)
 	}
 
 	// Poll /readyz until it returns 200
-	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, processExitCh, stderrTail); err != nil {
+	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, processExitCh, getStderrTail); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for readiness: %w", err)
 	}
 
@@ -63,7 +61,7 @@ func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, 
 
 // pollEndpoint polls a given endpoint until it returns 200 or the context times out.
 // If processExitCh is non-nil, polling short-circuits when the process exits.
-func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token string, processExitCh <-chan error, stderrTail string) error {
+func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token string, processExitCh <-chan error, getStderrTail func() string) error {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -74,8 +72,11 @@ func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token
 		case _, ok := <-processExitCh:
 			if ok {
 				// Process exited
-				if stderrTail != "" {
-					return fmt.Errorf("process exited before %s: %w", path, fmt.Errorf("stderr: %s", RedactStderrTail(stderrTail, 5)))
+				if getStderrTail != nil {
+					stderrTail := getStderrTail()
+					if stderrTail != "" {
+						return fmt.Errorf("process exited before %s: %w", path, fmt.Errorf("stderr: %s", RedactStderrTail(stderrTail, 5)))
+					}
 				}
 				return fmt.Errorf("process exited before %s", path)
 			}
