@@ -24,11 +24,25 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
 
 The harness automatically selects a free port (18080-18089) for the `flwd` server unless `--bind` is set. It runs all scenarios defined by the default ULC profiles (`ulc.shell.bash,ulc.shell.pwsh`).
 
+### Startup bootstrap prerequisites
+
+Before running conformance, ensure:
+
+- The `flwd` binary exists at the path specified via `--flwd-binary`.
+- The working directory contains a valid `scripts/` directory (required by `flwd:serve` startup scan).
+  - If you're running from `conformance/`, create a symlink or copy scripts:
+    ```bash
+    ln -s ../scripts scripts
+    ```
+  - Alternatively, run conformance from the repo root to avoid path issues.
+
+The harness does **not** stage fixture trees automatically. Users must ensure bootstrap prerequisites are met before launching `flwd`.
+
 ## Command-line flags
 
 | Flag | Environment | Default | Description |
 |------|-------------|---------|-------------|
-| `--flwd-binary` | | *(required)* | Path to the `flwd` binary to test |
+| `--flwd-binary` | | *(required)* | Path to the `flwd` binary to test (canonicalized to absolute path internally) |
 | `--token` | `FLWD_TOKEN` | *(env)* | flowd API token (flag overrides env) |
 | `--bind` | | *auto* | Bind address for flwd (empty = auto-select a free port in 18080-18089; set explicitly to override) |
 | `--flwd-profile` | | *(none)* | flwd profile to use (e.g., `ulc.shell.bash`) |
@@ -174,6 +188,34 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
   --bind 127.0.0.1:19000 \
   --report-json ../conformance-report.json
 ```
+
+### Startup bootstrap failure vs readiness timeout
+
+The conformance harness distinguishes two distinct startup failure modes:
+
+| Symptom | Likely cause | Action |
+|---------|--------------|--------|
+| Immediate process exit (exit code 3), no `/startupz` response | `flwd:serve` scan of `scripts/` failed (missing directory or invalid path) | Verify `scripts/` exists under the working directory when launching `flwd`. |
+| Process started, but `/startupz` never returns success within timeout | Service started but initialization did not complete in time (e.g., slow network, misconfigured backend) | Increase `--timeout`, check NDJSON logs for initialization errors. |
+
+**Example: startup bootstrap failure**
+
+When `flwd` starts from a temp directory without `scripts/`, it exits immediately with code 3:
+
+```text
+[REDACTED] error="scripts directory not found"
+exit status 3
+```
+
+This is an **infrastructure error** (exit code 3), not a readiness timeout.
+
+### Rerunning after startup issues
+
+If you encounter exit code 3 or readiness timeouts:
+
+1. Confirm the `flwd` binary path is valid and executable.
+2. Ensure `scripts/` exists under the working directory (e.g., `cd conformance && ln -s ../scripts scripts`).
+3. Re-run with `--verbose` to capture NDJSON logs for root-cause analysis.
 
 ## License
 
