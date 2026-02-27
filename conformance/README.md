@@ -28,13 +28,15 @@ The harness automatically selects a free port (18080-18089) for the `flwd` serve
 
 Before running conformance, ensure:
 
-- The `flwd` binary exists at the path specified via `--flwd-binary`.
-- The working directory contains a valid `scripts/` directory (required by `flwd:serve` startup scan).
+- **Binary**: The `flwd` binary exists at the path specified via `--flwd-binary`, is executable, and runs on your platform.
+- **Working directory**: Contains a valid `scripts/` directory (required by `flwd:serve` startup scan).
   - If you're running from `conformance/`, create a symlink or copy scripts:
     ```bash
+    cd conformance
     ln -s ../scripts scripts
     ```
   - Alternatively, run conformance from the repo root to avoid path issues.
+- **Environment**: Provide a valid API token via `FLWD_TOKEN` environment variable or `--token` flag.
 
 The harness does **not** stage fixture trees automatically. Users must ensure bootstrap prerequisites are met before launching `flwd`.
 
@@ -58,8 +60,37 @@ The harness does **not** stage fixture trees automatically. Users must ensure bo
 |------|---------|
 | `0` | Success — all scenarios passed |
 | `1` | Scenario failure — one or more scenarios failed |
-| `2` | Usage/config error — missing required flags or invalid configuration |
-| `3` | Infrastructure error — failed to start flwd, timeout, or other infrastructure issue |
+| `2` | Usage/config error — missing required flags, invalid configuration, or missing token (see Startup bootstrap failures below) |
+| `3` | Infrastructure error — failed to start flwd, process exit during startup, timeout, or other infrastructure issue |
+
+### Startup bootstrap failures
+
+The harness fails fast when bootstrap prerequisites are not met. These errors produce **exit code 2** (usage/config) or **exit code 3** (infrastructure):
+
+| Symptom | Exit code | Cause |
+|---------|-----------|-------|
+| Missing `--flwd-binary` flag or empty value | `2` | Required configuration missing |
+| Token not provided (`FLWD_TOKEN` unset, no `--token`) | `2` | Authentication required |
+| Binary path does not exist or is not executable | `3` | Infrastructure: flwd binary unavailable |
+| Working directory missing `scripts/` at startup | `3` | Infrastructure: `flwd:serve` scan failed |
+| Process exits during startup (pre-/startupz) | `3` | Infrastructure: flwd terminated unexpectedly |
+
+**Example: missing token (exit code 2)**
+
+```bash
+FLWD_TOKEN= go run ./cmd/conformance --flwd-binary ../bin/flwd
+# Output: FLWD_TOKEN is required; set via environment or --token flag
+# Exit: 2
+```
+
+**Example: missing scripts directory (exit code 3)**
+
+```bash
+cd conformance && FLWD_TOKEN=your_token go run ./cmd/conformance \
+  --flwd-binary ../bin/flwd
+# Output: error="scripts directory not found"
+# Exit: 3
+```
 
 ## Required check name
 
@@ -189,33 +220,67 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
   --report-json ../conformance-report.json
 ```
 
-### Startup bootstrap failure vs readiness timeout
+### Startup bootstrap failures
 
-The conformance harness distinguishes two distinct startup failure modes:
+The conformance harness validates startup prerequisites before launching `flwd`. Failures to meet these requirements produce early exit codes rather than hanging or timing out.
 
-| Symptom | Likely cause | Action |
-|---------|--------------|--------|
-| Immediate process exit (exit code 3), no `/startupz` response | `flwd:serve` scan of `scripts/` failed (missing directory or invalid path) | Verify `scripts/` exists under the working directory when launching `flwd`. |
-| Process started, but `/startupz` never returns success within timeout | Service started but initialization did not complete in time (e.g., slow network, misconfigured backend) | Increase `--timeout`, check NDJSON logs for initialization errors. |
+| Symptom | Exit code | Cause |
+|---------|-----------|-------|
+| Missing `--flwd-binary` flag or empty value | `2` | Required configuration missing |
+| Token not provided (`FLWD_TOKEN` unset, no `--token`) | `2` | Authentication required |
+| Binary path does not exist or is not executable | `3` | Infrastructure: flwd binary unavailable |
+| Working directory missing `scripts/` at startup | `3` | Infrastructure: `flwd:serve` scan failed |
+| Process exits during startup (pre-/startupz) | `3` | Infrastructure: flwd terminated unexpectedly |
 
-**Example: startup bootstrap failure**
+**Example: missing token (exit code 2)**
 
-When `flwd` starts from a temp directory without `scripts/`, it exits immediately with code 3:
+```bash
+FLWD_TOKEN= go run ./cmd/conformance --flwd-binary ../bin/flwd
+# Output: FLWD_TOKEN is required; set via environment or --token flag
+# Exit: 2
+```
 
-```text
-[REDACTED] error="scripts directory not found"
-exit status 3
+**Example: missing scripts directory (exit code 3)**
+
+```bash
+cd conformance && FLWD_TOKEN=your_token go run ./cmd/conformance \
+  --flwd-binary ../bin/flwd
+# Output: error="scripts directory not found"
+# Exit: 3
 ```
 
 This is an **infrastructure error** (exit code 3), not a readiness timeout.
 
-### Rerunning after startup issues
+### Debugging startup failures
 
-If you encounter exit code 3 or readiness timeouts:
+When conformance exits with code 2 or 3, use these steps to diagnose:
 
-1. Confirm the `flwd` binary path is valid and executable.
-2. Ensure `scripts/` exists under the working directory (e.g., `cd conformance && ln -s ../scripts scripts`).
-3. Re-run with `--verbose` to capture NDJSON logs for root-cause analysis.
+1. **Check binary availability**
+   ```bash
+   ls -la /path/to/flwd && file /path/to/flwd
+   ```
+   Ensure the path is correct and the binary is executable.
+
+2. **Verify scripts directory**
+   ```bash
+   pwd && ls -d scripts/
+   ```
+   The `scripts/` folder must exist in your current working directory when you run conformance.
+
+3. **Enable verbose logging**
+   Add `--verbose` to capture NDJSON logs, which often reveal the root cause before process exit:
+   ```bash
+   FLWD_TOKEN=your_token go run ./cmd/conformance \
+     --flwd-binary ../bin/flwd \
+     --verbose
+   ```
+
+4. **Test flwd manually**
+   Run `flwd` directly to confirm it starts and responds to `/startupz`:
+   ```bash
+   cd /path/to/flowd && FLWD_TOKEN=test ./bin/flwd serve --port 18080
+   curl http://localhost:18080/startupz
+   ```
 
 ## License
 
