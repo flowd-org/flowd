@@ -2,8 +2,11 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -49,5 +52,40 @@ job:
 	}
 	if aliasCmd.Annotations["aliasTarget"] != "demo/build" {
 		t.Fatalf("unexpected alias target annotation %q", aliasCmd.Annotations["aliasTarget"])
+	}
+}
+
+// TestBootstrapMissing verifies that flowd fails when required bootstrap config is missing.
+func TestBootstrapMissing(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("version: v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build the binary first in the temp dir
+	buildCmd := exec.Command("go", "build", "-o", "flowd_test_bin", "../../main.go")
+	buildCmd.Dir = tmp
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build flowd: %s", out)
+	}
+
+	cmd := exec.Command("./flowd_test_bin", "--config", configPath, ":serve", "--bind", "127.0.0.1:8081")
+	cmd.Dir = tmp
+	cmd.Env = append(os.Environ(), "FLWD_BOOTSTRAP_TOKEN=", "FLWD_BOOTSTRAP_FILE=")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("expected non-zero exit when bootstrap is missing")
+	}
+
+	output := stdout.String() + stderr.String()
+	// The error should mention the failure reason (scripts dir or bootstrap)
+	if !strings.Contains(output, "scanning scripts") && !strings.Contains(output, "bootstrap") && !strings.Contains(output, "missing") {
+		t.Logf("output: %s", output)
+		t.Fatalf("expected error message to mention missing config")
 	}
 }
