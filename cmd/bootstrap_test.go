@@ -63,15 +63,19 @@ func TestBootstrapMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build the binary first in the temp dir
-	buildCmd := exec.Command("go", "build", "-o", "flowd_test_bin", "../../main.go")
-	buildCmd.Dir = tmp
+	// Build the binary first in the repo root
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get repo root: %v", err)
+	}
+	binaryPath := filepath.Join(repoRoot, "flowd_test_bin")
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, "../main.go")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build flowd: %s", out)
 	}
+	defer os.Remove(binaryPath)
 
-	cmd := exec.Command("./flowd_test_bin", "--config", configPath, ":serve", "--bind", "127.0.0.1:8081")
-	cmd.Dir = tmp
+	cmd := exec.Command(binaryPath, "--config", configPath, ":serve", "--bind", "127.0.0.1:8081")
 	cmd.Env = append(os.Environ(), "FLWD_BOOTSTRAP_TOKEN=", "FLWD_BOOTSTRAP_FILE=")
 
 	var stdout, stderr bytes.Buffer
