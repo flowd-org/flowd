@@ -48,12 +48,7 @@ jobs:
         id: check_internal_pr
         if: ${{ env.FLWD_TOKEN == '' && github.event_name == 'pull_request' }}
         run: |
-          is_fork="false"
-          if [[ -f "$GITHUB_EVENT_PATH" ]]; then
-            if grep -q '"fork": true' "$GITHUB_EVENT_PATH" 2>/dev/null; then
-              is_fork="true"
-            fi
-          fi
+          is_fork="${{ github.event.pull_request.head.repo.fork }}"
           if [[ "$is_fork" == "false" ]]; then
             echo "is_internal_pr_with_missing_token=true" >> $GITHUB_OUTPUT
           else
@@ -69,15 +64,7 @@ jobs:
       - name: Check if fork PR with missing token
         id: check_fork
         run: |
-          is_fork="false"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # GitHub Actions provides GITHUB_EVENT_PATH which contains the full event payload
-            if [[ -f "$GITHUB_EVENT_PATH" ]]; then
-              if grep -q '"fork": true' "$GITHUB_EVENT_PATH" 2>/dev/null; then
-                is_fork="true"
-              fi
-            fi
-          fi
+          is_fork="${{ github.event.pull_request.head.repo.fork }}"
           if [[ "$is_fork" == "true" && "${{ env.FLWD_TOKEN }}" == "" ]]; then
             echo "is_fork_pr_with_missing_token=true" >> $GITHUB_OUTPUT
           else
