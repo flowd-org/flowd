@@ -68,18 +68,38 @@ func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for %s: %w", path, ctx.Err())
+			// Context timeout - include stderr tail if available (redacted)
+			var errStr string
+			if getStderrTail != nil {
+				stderrTail := getStderrTail()
+				if stderrTail != "" {
+					errStr = fmt.Sprintf("timeout waiting for %s: %v; stderr: %s", path, ctx.Err(), RedactStderrTail(stderrTail, token))
+				} else {
+					errStr = fmt.Sprintf("timeout waiting for %s: %v", path, ctx.Err())
+				}
+			} else {
+				errStr = fmt.Sprintf("timeout waiting for %s: %v", path, ctx.Err())
+			}
+			return fmt.Errorf("%s", errStr)
 		case _, ok := <-processExitCh:
 			if ok {
 				// Process exited
 				if getStderrTail != nil {
 					stderrTail := getStderrTail()
 					if stderrTail != "" {
-						return fmt.Errorf("process exited before %s: %w", path, fmt.Errorf("stderr: %s", RedactStderrTail(stderrTail, 5)))
+						return fmt.Errorf("process exited before %s: %w", path, fmt.Errorf("stderr: %s", RedactStderrTail(stderrTail, token)))
 					}
 				}
 				return fmt.Errorf("process exited before %s", path)
 			}
+			// Channel closed (ok=false) - process already exited
+			if getStderrTail != nil {
+				stderrTail := getStderrTail()
+				if stderrTail != "" {
+					return fmt.Errorf("process exited before %s: %w", path, fmt.Errorf("stderr: %s", RedactStderrTail(stderrTail, token)))
+				}
+			}
+			return fmt.Errorf("process exited before %s", path)
 		case <-ticker.C:
 			if err := checkEndpoint(ctx, client, baseURL, path, token); err == nil {
 				return nil
@@ -116,11 +136,11 @@ func checkEndpoint(ctx context.Context, client *http.Client, baseURL, path, toke
 }
 
 // RedactStderrTail extracts and redacts a small tail of stderr for error messages.
-func RedactStderrTail(stderr string, maxLines int) string {
+func RedactStderrTail(stderr, token string) string {
 	lines := strings.Split(stderr, "\n")
-	if len(lines) <= maxLines {
-		return RedactSecrets(stderr)
+	if len(lines) <= 5 {
+		return RedactSecrets(stderr, token)
 	}
-	tail := lines[len(lines)-maxLines:]
-	return RedactSecrets(strings.Join(tail, "\n"))
+	tail := lines[len(lines)-5:]
+	return RedactSecrets(strings.Join(tail, "\n"), token)
 }
