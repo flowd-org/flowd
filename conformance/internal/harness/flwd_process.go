@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +20,11 @@ type FlwdProcess struct {
 	BaseURL string
 	Stdout  *bytes.Buffer
 	Stderr  *bytes.Buffer
+
+	processExitCh chan error
+	waitDone      chan struct{}
+	waitErr       error
+	waitErrMu     sync.RWMutex
 }
 
 // PickBindAddr tries ports in the range 127.0.0.1:18080..18089 and returns the first free one.
@@ -112,15 +118,51 @@ func StartFlwd(ctx context.Context, cfg Config, runRoot string) (*FlwdProcess, i
 		return nil, ExitInfra, fmt.Errorf("failed to start flwd: %w", err)
 	}
 
+	processExitCh := make(chan error, 1)
+	waitDone := make(chan struct{})
+
 	fp := &FlwdProcess{
 		Cmd:     cmd,
 		Addr:    bindAddr,
 		BaseURL: fmt.Sprintf("http://%s", bindAddr),
 		Stdout:  stdoutBuf,
 		Stderr:  stderrBuf,
+
+		processExitCh: processExitCh,
+		waitDone:      waitDone,
 	}
 
+	go func() {
+		err := cmd.Wait()
+
+		fp.waitErrMu.Lock()
+		fp.waitErr = err
+		fp.waitErrMu.Unlock()
+
+		processExitCh <- err
+		close(processExitCh)
+		close(waitDone)
+	}()
+
 	return fp, ExitOK, nil
+}
+
+// ProcessExitCh returns a channel that receives when the process exits.
+func (p *FlwdProcess) ProcessExitCh() <-chan error {
+	if p == nil {
+		return nil
+	}
+	return p.processExitCh
+}
+
+func (p *FlwdProcess) waitResult() error {
+	if p.waitDone == nil {
+		return nil
+	}
+	<-p.waitDone
+	p.waitErrMu.RLock()
+	defer p.waitErrMu.RUnlock()
+	return p.waitErr
 }
 
 // Stop terminates the flwd process gracefully with SIGINT, then SIGKILL if needed.
@@ -132,23 +174,18 @@ func (p *FlwdProcess) Stop(ctx context.Context) error {
 	// Try graceful shutdown first
 	_ = p.Cmd.Process.Signal(os.Interrupt)
 
-	done := make(chan error, 1)
-	go func() {
-		done <- p.Cmd.Wait()
-	}()
-
 	// Wait for graceful exit with timeout
 	select {
-	case err := <-done:
-		return err
+	case <-p.waitDone:
+		return p.waitResult()
 	case <-ctx.Done():
 		// Timeout, force kill
 		_ = p.Cmd.Process.Kill()
-		return <-done
+		return p.waitResult()
 	case <-time.After(5 * time.Second):
 		// Force kill
 		_ = p.Cmd.Process.Kill()
-		return <-done
+		return p.waitResult()
 	}
 }
 

@@ -81,14 +81,7 @@ func run(args []string) int {
 	fmt.Println("Waiting for flwd to be ready...")
 	startupTimeout := 30 * time.Second
 
-	// Set up process exit channel
-	waitErrCh := make(chan error, 1)
-	go func() {
-		waitErrCh <- fp.Cmd.Wait()
-		close(waitErrCh)
-	}()
-
-	exitCode, err = harness.WaitForReadyWithProcess(ctx, fp.BaseURL, cfg.Token, startupTimeout, waitErrCh, func() string { return fp.Stderr.String() })
+	exitCode, err = harness.WaitForReadyWithProcess(ctx, fp.BaseURL, cfg.Token, startupTimeout, fp.ProcessExitCh(), func() string { return fp.Stderr.String() })
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: readiness check failed: %s\n", harness.RedactSecrets(err.Error(), cfg.Token))
 		return exitCode
