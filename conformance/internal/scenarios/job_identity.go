@@ -271,8 +271,29 @@ func validateCollision(ctx context.Context, env Env, profile string) Result {
 	// Determine expected job ID based on profile
 	expectedJobID := getJobIDForProfile(profile)
 
+	payload := map[string]interface{}{
+		"job_id": expectedJobID,
+		"args":   map[string]interface{}{},
+		"source": map[string]interface{}{
+			"name": FixtureSourceName,
+		},
+	}
+	bodyBytes, err := harness.CanonicalJSON(payload)
+	if err != nil {
+		return Result{
+			ScenarioID: "collision-behavior",
+			Profile:    profile,
+			Passed:     false,
+			Duration:   time.Since(start),
+			Failure: &Failure{
+				Message: fmt.Sprintf("failed to marshal payload: %v", err),
+			},
+		}
+	}
+	idempotencyKey := fmt.Sprintf("conformance-collision-%s-%s", profile, harness.ComputeSHA256(bodyBytes))
+
 	// First run - should succeed
-	firstRunID, err := createRun(ctx, env, expectedJobID, profile)
+	firstRunID, err := createRunWithKey(ctx, env, expectedJobID, profile, idempotencyKey)
 	if err != nil {
 		return Result{
 			ScenarioID: "collision-behavior",
@@ -286,7 +307,7 @@ func validateCollision(ctx context.Context, env Env, profile string) Result {
 	}
 
 	// Second run with same job ID - should either succeed (dedupe) or fail (reject)
-	secondRunID, secondErr := createRun(ctx, env, expectedJobID, profile)
+	secondRunID, secondErr := createRunWithKey(ctx, env, expectedJobID, profile, idempotencyKey)
 
 	// If second run succeeded, verify it's the same run (dedupe)
 	if secondErr == nil {
@@ -326,6 +347,12 @@ func validateCollision(ctx context.Context, env Env, profile string) Result {
 
 // createRun creates a run with the given job ID and returns the run ID or an error.
 func createRun(ctx context.Context, env Env, jobID, profile string) (string, error) {
+	idempotencyKey := fmt.Sprintf("conformance-collision-%d", time.Now().UnixNano())
+	return createRunWithKey(ctx, env, jobID, profile, idempotencyKey)
+}
+
+// createRunWithKey creates a run with a caller-provided idempotency key.
+func createRunWithKey(ctx context.Context, env Env, jobID, profile, idempotencyKey string) (string, error) {
 	payload := map[string]interface{}{
 		"job_id": jobID,
 		"args":   map[string]interface{}{},
@@ -339,7 +366,6 @@ func createRun(ctx context.Context, env Env, jobID, profile string) (string, err
 		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	idempotencyKey := fmt.Sprintf("conformance-collision-%d", time.Now().UnixNano())
 	idempotencySHA256 := harness.ComputeSHA256(bodyBytes)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", env.BaseURL+"/runs", bytes.NewReader(bodyBytes))
