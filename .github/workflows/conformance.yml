@@ -63,6 +63,7 @@ jobs:
 
       - name: Check if fork PR with missing token
         id: check_fork
+        if: ${{ github.event_name == 'pull_request' }}
         run: |
           is_fork="${{ github.event.pull_request.head.repo.fork }}"
           if [[ "$is_fork" == "true" && "${{ env.FLWD_TOKEN }}" == "" ]]; then
