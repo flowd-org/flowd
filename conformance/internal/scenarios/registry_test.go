@@ -122,17 +122,17 @@ func TestGetJobIDForProfile_SourceScoped(t *testing.T) {
 		{
 			name:    "bash profile",
 			profile: "ulc.shell.bash",
-			want:    FixtureSourceName + "/conformance/ulc-smoke-bash",
+			want:    "conformance/ulc-smoke-bash",
 		},
 		{
 			name:    "pwsh profile",
 			profile: "ulc.shell.pwsh",
-			want:    FixtureSourceName + "/conformance/ulc-smoke-pwsh",
+			want:    "conformance/ulc-smoke-pwsh",
 		},
 		{
 			name:    "unknown profile falls back to bash",
 			profile: "unknown",
-			want:    FixtureSourceName + "/conformance/ulc-smoke-bash",
+			want:    "conformance/ulc-smoke-bash",
 		},
 	}
 

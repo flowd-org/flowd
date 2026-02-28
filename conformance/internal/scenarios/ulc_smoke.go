@@ -173,7 +173,7 @@ func getJobIDForProfile(profile string) string {
 		leaf = "ulc-smoke-pwsh"
 	}
 
-	return fmt.Sprintf("%s/conformance/%s", FixtureSourceName, leaf)
+	return fmt.Sprintf("conformance/%s", leaf)
 }
 
 // pollRunCompletion polls the run endpoint until completion or timeout.
