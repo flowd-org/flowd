@@ -30,7 +30,7 @@ func runTenant(ctx context.Context, env Env) Result {
 
 	// Create run with explicit tenant
 	payload := map[string]interface{}{
-		"job_id": "conformance/ulc-smoke-bash",
+		"job_id": getJobIDForProfile("ulc.shell.bash"),
 		"tenant": "acme",
 		"args":   map[string]interface{}{},
 		"source": map[string]interface{}{

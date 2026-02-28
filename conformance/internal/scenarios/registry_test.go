@@ -113,6 +113,39 @@ func TestDefaultProfiles(t *testing.T) {
 	}
 }
 
+func TestGetJobIDForProfile_SourceScoped(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile string
+		want    string
+	}{
+		{
+			name:    "bash profile",
+			profile: "ulc.shell.bash",
+			want:    FixtureSourceName + "/conformance/ulc-smoke-bash",
+		},
+		{
+			name:    "pwsh profile",
+			profile: "ulc.shell.pwsh",
+			want:    FixtureSourceName + "/conformance/ulc-smoke-pwsh",
+		},
+		{
+			name:    "unknown profile falls back to bash",
+			profile: "unknown",
+			want:    FixtureSourceName + "/conformance/ulc-smoke-bash",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getJobIDForProfile(tt.profile)
+			if got != tt.want {
+				t.Errorf("getJobIDForProfile(%q) = %q, want %q", tt.profile, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAll_ScenarioIDsUnique(t *testing.T) {
 	scenarios := All()
 	seen := make(map[string]bool)

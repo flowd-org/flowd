@@ -165,14 +165,15 @@ func runProfile(ctx context.Context, env Env, profile string) Result {
 
 // getJobIDForProfile returns the job ID for a given profile.
 func getJobIDForProfile(profile string) string {
+	leaf := "ulc-smoke-bash"
 	switch profile {
 	case "ulc.shell.bash":
-		return "conformance/ulc-smoke-bash"
+		leaf = "ulc-smoke-bash"
 	case "ulc.shell.pwsh":
-		return "conformance/ulc-smoke-pwsh"
-	default:
-		return "conformance/ulc-smoke-bash"
+		leaf = "ulc-smoke-pwsh"
 	}
+
+	return fmt.Sprintf("%s/conformance/%s", FixtureSourceName, leaf)
 }
 
 // pollRunCompletion polls the run endpoint until completion or timeout.
