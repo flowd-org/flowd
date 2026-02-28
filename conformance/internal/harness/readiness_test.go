@@ -3,10 +3,8 @@ package harness
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -114,33 +112,21 @@ func TestWaitForReadyWithProcess_RedactsStderrTail(t *testing.T) {
 }
 
 func TestWaitForReadyWithProcess_ProcessExitsBeforeEndpoint(t *testing.T) {
-	// Start a real process that exits immediately
-	cmd := exec.Command("sleep", "0.1") // Exits after 0.1 seconds
+	// Create a test server that returns 503 (not ready)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
 
-	stderrBuf := &strings.Builder{}
-	cmd.Stderr = io.MultiWriter(stderrBuf)
-
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start sleep process: %v", err)
-	}
-
-	// Create a channel that will receive when the process exits
-	processExitCh := make(chan error, 1)
-	go func() {
-		_ = cmd.Wait()
-		processExitCh <- fmt.Errorf("process exited")
-	}()
-
-	// Give process time to exit
-	time.Sleep(200 * time.Millisecond)
-
-	// Now try readiness check - should short-circuit on process exit
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	getStderrTail := func() string { return stderrBuf.String() }
+	// Preload processExitCh with exit error (shell-independent trigger)
+	processExitCh := make(chan error, 1)
+	processExitCh <- fmt.Errorf("process exited")
+	getStderrTail := func() string { return "test stderr" }
 
-	exitCode, err := WaitForReadyWithProcess(ctx, "http://127.0.0.1:9999", "dummy-token", 1*time.Second, processExitCh, getStderrTail)
+	exitCode, err := WaitForReadyWithProcess(ctx, server.URL, "dummy-token", 1*time.Second, processExitCh, getStderrTail)
 
 	if exitCode != ExitInfra {
 		t.Errorf("WaitForReadyWithProcess() exitCode = %d, want %d", exitCode, ExitInfra)
