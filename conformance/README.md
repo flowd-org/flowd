@@ -40,7 +40,7 @@ The harness creates a temporary run directory, stages the conformance fixture tr
 | `--flwd-binary` | | *(required)* | Path to the `flwd` binary to test (canonicalized to absolute path internally) |
 | `--token` | `FLWD_TOKEN` | *(env)* | flowd API token (flag overrides env) |
 | `--bind` | | *auto* | Bind address for flwd (empty = auto-select a free port in 18080-18089; set explicitly to override) |
-| `--flwd-profile` | | *(none)* | flwd profile to use (e.g., `ulc.shell.bash`) |
+| `--flwd-profile` | | *(none)* | flwd profile to use (`secure|permissive|disabled`) |
 | `--ulc-profiles` | | `ulc.shell.bash,ulc.shell.pwsh` | Comma-separated list of ULC profile identifiers (see `DefaultProfiles()` in `conformance/internal/scenarios/registry.go`) |
 | `--timeout` | | `5m` | Overall timeout for the conformance run |
 | `--scenario-timeout` | | `2m` | Timeout per scenario |
@@ -97,7 +97,7 @@ When `--report-json` is specified, the harness writes a JSON report with the fol
   "failed_count": 2,
   "results": [
     {
-      "scenario_id": "ulc_smoke",
+      "scenario_id": "ulc-smoke",
       "scenario_name": "ULC Smoke Test",
       "profile": "ulc.shell.bash",
       "passed": true,
@@ -158,7 +158,7 @@ This ensures that maintainers are notified immediately when conformance is skipp
 
 In the JSON report, each failed test appears as an item in the `results[]` array with the following fields:
 
-- `scenario_id`: The stable identifier (e.g., `ulc_smoke`)
+- `scenario_id`: The stable identifier (e.g., `ulc-smoke`)
 - `profile`: The ULC profile identifier (e.g., `ulc.shell.bash`, `ulc.shell.pwsh`)
 - `failure.actual`: The human-readable failure message explaining why the scenario failed
 
@@ -166,7 +166,7 @@ Example (YAML for readability):
 
 ```yaml
 results:
-  - scenario_id: ulc_smoke
+  - scenario_id: ulc-smoke
     profile: ulc.shell.bash
     passed: false
     failure:
