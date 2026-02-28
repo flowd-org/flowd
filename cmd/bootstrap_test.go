@@ -75,7 +75,7 @@ func TestBootstrapMissing(t *testing.T) {
 	}
 	defer os.Remove(binaryPath)
 
-	cmd := exec.Command(binaryPath, "--config", configPath, ":serve", "--bind", "127.0.0.1:8081")
+	cmd := exec.Command(binaryPath, "--config", configPath, ":serve", "--bind", "127.0.0.1:0")
 	cmd.Env = append(os.Environ(), "FLWD_BOOTSTRAP_TOKEN=", "FLWD_BOOTSTRAP_FILE=")
 
 	var stdout, stderr bytes.Buffer
