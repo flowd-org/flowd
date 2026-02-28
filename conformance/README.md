@@ -28,17 +28,10 @@ The harness automatically selects a free port (18080-18089) for the `flwd` serve
 
 Before running conformance, ensure:
 
-- **Binary**: The `flwd` binary exists at the path specified via `--flwd-binary`, is executable, and runs on your platform.
-- **Working directory**: Contains a valid `scripts/` directory (required by `flwd:serve` startup scan).
-  - If you're running from `conformance/`, create a symlink or copy scripts:
-    ```bash
-    cd conformance
-    ln -s ../scripts scripts
-    ```
-  - Alternatively, run conformance from the repo root to avoid path issues.
-- **Environment**: Provide a valid API token via `FLWD_TOKEN` environment variable or `--token` flag.
+- **Binary**: `--flwd-binary` points to the `flwd` binary to test (relative paths are OK; they are resolved to an absolute path).
+- **Token**: Provide a valid API token via `--token` or `FLWD_TOKEN`.
 
-The harness does **not** stage fixture trees automatically. Users must ensure bootstrap prerequisites are met before launching `flwd`.
+The harness creates a temporary run directory, stages the conformance fixture tree into it (`scripts/fixtures/tree-v1`), and starts `flwd` with that directory as its working directory. You do not need to create or symlink a `scripts/` directory in your current working directory.
 
 ## Command-line flags
 
@@ -72,24 +65,16 @@ The harness fails fast when bootstrap prerequisites are not met. These errors pr
 | Missing `--flwd-binary` flag or empty value | `2` | Required configuration missing |
 | Token not provided (`FLWD_TOKEN` unset, no `--token`) | `2` | Authentication required |
 | Binary path does not exist or is not executable | `3` | Infrastructure: flwd binary unavailable |
-| Working directory missing `scripts/` at startup | `3` | Infrastructure: `flwd:serve` scan failed |
+| Fixture source tree cannot be found for staging | `3` | Infrastructure: fixture source not found (run from within the repository so `conformance/fixtures/tree-v1` is available) |
 | Process exits during startup (pre-/startupz) | `3` | Infrastructure: flwd terminated unexpectedly |
+| No free port in 18080-18089 (unless `--bind` set) | `3` | Infrastructure: port range exhausted |
 
 **Example: missing token (exit code 2)**
 
 ```bash
 FLWD_TOKEN= go run ./cmd/conformance --flwd-binary ../bin/flwd
-# Output: FLWD_TOKEN is required; set via environment or --token flag
+# Output: Error: missing token (set --token or FLWD_TOKEN)
 # Exit: 2
-```
-
-**Example: missing scripts directory (exit code 3)**
-
-```bash
-cd conformance && FLWD_TOKEN=your_token go run ./cmd/conformance \
-  --flwd-binary ../bin/flwd
-# Output: error="scripts directory not found"
-# Exit: 3
 ```
 
 ## Required check name
@@ -222,34 +207,7 @@ FLWD_TOKEN=your_api_token go run ./cmd/conformance \
 
 ### Startup bootstrap failures
 
-The conformance harness validates startup prerequisites before launching `flwd`. Failures to meet these requirements produce early exit codes rather than hanging or timing out.
-
-| Symptom | Exit code | Cause |
-|---------|-----------|-------|
-| Missing `--flwd-binary` flag or empty value | `2` | Required configuration missing |
-| Token not provided (`FLWD_TOKEN` unset, no `--token`) | `2` | Authentication required |
-| Binary path does not exist or is not executable | `3` | Infrastructure: flwd binary unavailable |
-| Working directory missing `scripts/` at startup | `3` | Infrastructure: `flwd:serve` scan failed |
-| Process exits during startup (pre-/startupz) | `3` | Infrastructure: flwd terminated unexpectedly |
-
-**Example: missing token (exit code 2)**
-
-```bash
-FLWD_TOKEN= go run ./cmd/conformance --flwd-binary ../bin/flwd
-# Output: FLWD_TOKEN is required; set via environment or --token flag
-# Exit: 2
-```
-
-**Example: missing scripts directory (exit code 3)**
-
-```bash
-cd conformance && FLWD_TOKEN=your_token go run ./cmd/conformance \
-  --flwd-binary ../bin/flwd
-# Output: error="scripts directory not found"
-# Exit: 3
-```
-
-This is an **infrastructure error** (exit code 3), not a readiness timeout.
+See `### Startup bootstrap failures` above for the canonical symptom/exit-code table and examples.
 
 ### Debugging startup failures
 
@@ -261,11 +219,11 @@ When conformance exits with code 2 or 3, use these steps to diagnose:
    ```
    Ensure the path is correct and the binary is executable.
 
-2. **Verify scripts directory**
+2. **Verify fixture source is present**
    ```bash
-   pwd && ls -d scripts/
+   pwd && ls -d conformance/fixtures/tree-v1
    ```
-   The `scripts/` folder must exist in your current working directory when you run conformance.
+   The harness stages fixtures from the repository into a temp run directory. If you run conformance outside the repo, staging can fail.
 
 3. **Enable verbose logging**
    Add `--verbose` to capture NDJSON logs, which often reveal the root cause before process exit:
@@ -276,11 +234,11 @@ When conformance exits with code 2 or 3, use these steps to diagnose:
    ```
 
 4. **Test flwd manually**
-   Run `flwd` directly to confirm it starts and responds to `/startupz`:
-   ```bash
-   cd /path/to/flowd && FLWD_TOKEN=test ./bin/flwd serve --port 18080
-   curl http://localhost:18080/startupz
-   ```
+    Run `flwd` directly to confirm it starts and responds to `/startupz`:
+    ```bash
+    cd /path/to/flowd && FLWD_TOKEN=test ./bin/flwd :serve --bind 127.0.0.1:18080
+    curl -H "Authorization: Bearer $FLWD_TOKEN" http://127.0.0.1:18080/startupz
+    ```
 
 ## License
 
