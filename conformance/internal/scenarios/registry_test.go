@@ -711,3 +711,39 @@ func TestRunSuite_ULCWrapperFailureDetailsPreserved(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactBody_AuthorizationBearerFullyMasked(t *testing.T) {
+	token := "secret-token"
+	bearer := "very-secret-bearer-value"
+	body := "request failed\nAuthorization: Bearer " + bearer + "\nbody: x"
+
+	redacted := redactBody(body, token)
+
+	if strings.Contains(redacted, bearer) {
+		t.Fatalf("expected bearer value to be fully redacted, got: %q", redacted)
+	}
+	if !strings.Contains(redacted, "Authorization: Bearer [REDACTED]") {
+		t.Fatalf("expected redacted authorization header marker, got: %q", redacted)
+	}
+}
+
+func TestRedactBody_AuthorizationBearerVariants(t *testing.T) {
+	token := "secret-token"
+	bearerA := "value-lowercase"
+	bearerB := "value-spaced"
+	bearerC := "value-wide"
+	body := strings.Join([]string{
+		"authorization: bearer " + bearerA,
+		"Authorization :    Bearer    " + bearerB,
+		"AUTHORIZATION:\tBEARER\t" + bearerC,
+	}, "\n")
+
+	redacted := redactBody(body, token)
+
+	if strings.Contains(redacted, bearerA) || strings.Contains(redacted, bearerB) || strings.Contains(redacted, bearerC) {
+		t.Fatalf("expected all bearer variants to be fully redacted, got: %q", redacted)
+	}
+	if strings.Count(redacted, "Authorization: Bearer [REDACTED]") != 3 {
+		t.Fatalf("expected 3 redacted authorization headers, got: %q", redacted)
+	}
+}

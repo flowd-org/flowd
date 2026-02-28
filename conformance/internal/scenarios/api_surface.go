@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/flowd-org/flowd/conformance/internal/harness"
 )
+
+var authorizationBearerHeaderPattern = regexp.MustCompile(`(?i)authorization\s*:\s*bearer\s+[^\r\n]+`)
 
 // APISurfaceScenario creates a scenario that validates health probes and
 // API surface endpoints (/capabilities, /limits) via HTTP.
@@ -209,7 +212,6 @@ func checkLimits(statusCode int, body []byte, token string) error {
 // redactBody redacts secrets from the response body.
 func redactBody(body, token string) string {
 	result := harness.RedactSecrets(body, token)
-	// Also redact Authorization header patterns
-	result = strings.ReplaceAll(result, "Authorization: Bearer ", "Authorization: Bearer [REDACTED] ")
+	result = authorizationBearerHeaderPattern.ReplaceAllString(result, "Authorization: Bearer [REDACTED]")
 	return result
 }
