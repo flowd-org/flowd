@@ -76,10 +76,13 @@ jobs:
         run: |
           echo "Fork PR without token: conformance harness not executed"
 
-      - name: Run conformance harness
+      - name: Build conformance harness binary
         working-directory: conformance
+        run: go build -o ../bin/conformance ./cmd/conformance
+
+      - name: Run conformance harness
         if: ${{ env.FLWD_TOKEN != '' }}
-        run: go run ./cmd/conformance --flwd-binary ../bin/flwd --report-json ../conformance-report.json
+        run: ../bin/conformance --flwd-binary ../bin/flwd --report-json ../conformance-report.json
 
       - name: Upload conformance report
         uses: actions/upload-artifact@v4

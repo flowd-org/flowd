@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -95,10 +96,33 @@ func run(args []string) int {
 	return harness.ExitOK
 }
 
-// emitInfraErr prints a redaction-safe infrastructure error to stderr.
+// writeInfraFailureReport writes a minimal JSON failure report for infrastructure errors.
+func writeInfraFailureReport(path string, reason string) error {
+	report := map[string]any{
+		"status":   "failed",
+		"reason":   reason,
+		"exitCode": harness.ExitInfra,
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal report: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write JSON file: %w", err)
+	}
+	return nil
+}
+
+// emitInfraErr prints a redaction-safe infrastructure error to stderr and writes a JSON report if requested.
 func emitInfraErr(cfg harness.Config, format string, err error) {
 	msg := fmt.Sprintf(format, harness.RedactSecrets(err.Error(), cfg.Token))
 	fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+	if cfg.ReportJSON != "" {
+		redactedMsg := harness.RedactSecrets(msg, cfg.Token)
+		if writeErr := writeInfraFailureReport(cfg.ReportJSON, redactedMsg); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write JSON report: %v\n", writeErr)
+		}
+	}
 }
 
 // runConformanceTests runs the conformance test suite against the running flwd server.
