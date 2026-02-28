@@ -82,7 +82,14 @@ jobs:
 
       - name: Run conformance harness
         if: ${{ env.FLWD_TOKEN != '' }}
-        run: ./bin/conformance --flwd-binary ./bin/flwd --report-json ./conformance-report.json
+        run: |
+          set +e
+          ./bin/conformance --flwd-binary ./bin/flwd --report-json ./conformance-report.json
+          rc=$?
+          if [ "$rc" -ne 0 ] && [ -f ./conformance-report.json ]; then
+            jq -r '.results[] | select(.passed==false) | "::error::" + .scenario_id + " [" + .profile + "] " + (.failure.actual // "")' ./conformance-report.json || true
+          fi
+          exit "$rc"
 
       - name: Upload conformance report
         uses: actions/upload-artifact@v4
