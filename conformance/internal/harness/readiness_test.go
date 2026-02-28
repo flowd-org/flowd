@@ -138,3 +138,37 @@ func TestWaitForReadyWithProcess_ProcessExitsBeforeEndpoint(t *testing.T) {
 		t.Errorf("WaitForReadyWithProcess() error = %v, want to contain 'process exited'", err)
 	}
 }
+
+func TestWaitForReadyWithProcess_UsesSharedExitChannel_NoDuplicateWaitRace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	sharedExitCh := make(chan error)
+	close(sharedExitCh)
+
+	getStderrTail := func() string { return "shared exit channel" }
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	exitCode, err := WaitForReadyWithProcess(ctx, server.URL, "dummy-token", 500*time.Millisecond, sharedExitCh, getStderrTail)
+	if exitCode != ExitInfra {
+		t.Fatalf("WaitForReadyWithProcess() exitCode = %d, want %d", exitCode, ExitInfra)
+	}
+	if err == nil || !strings.Contains(err.Error(), "process exited") {
+		t.Fatalf("WaitForReadyWithProcess() err = %v, want to contain 'process exited'", err)
+	}
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+
+	exitCode2, err2 := WaitForReadyWithProcess(ctx2, server.URL, "dummy-token", 500*time.Millisecond, sharedExitCh, getStderrTail)
+	if exitCode2 != ExitInfra {
+		t.Fatalf("WaitForReadyWithProcess() second call exitCode = %d, want %d", exitCode2, ExitInfra)
+	}
+	if err2 == nil || !strings.Contains(err2.Error(), "process exited") {
+		t.Fatalf("WaitForReadyWithProcess() second call err = %v, want to contain 'process exited'", err2)
+	}
+}

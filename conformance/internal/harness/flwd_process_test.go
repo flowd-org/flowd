@@ -1,9 +1,14 @@
 package harness
 
 import (
+	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStartFlwd_BootstrapRootPreflight(t *testing.T) {
@@ -110,4 +115,68 @@ func containsAt(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestFlwdProcess_StopUsesSingleWaitOwner(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "trap 'exit 0' INT; while :; do sleep 0.05; done")
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start() failed: %v", err)
+	}
+
+	processExitCh := make(chan error, 1)
+	waitDone := make(chan struct{})
+
+	fp := &FlwdProcess{
+		Cmd:           cmd,
+		processExitCh: processExitCh,
+		waitDone:      waitDone,
+	}
+
+	go func() {
+		err := cmd.Wait()
+		fp.waitErrMu.Lock()
+		fp.waitErr = err
+		fp.waitErrMu.Unlock()
+		processExitCh <- err
+		close(processExitCh)
+		close(waitDone)
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	err := fp.Stop(ctx)
+	if err != nil {
+		if strings.Contains(err.Error(), "Wait was already called") || strings.Contains(err.Error(), "wait was already called") {
+			t.Fatalf("Stop() duplicate wait error: %v", err)
+		}
+		if !strings.Contains(err.Error(), "interrupt") {
+			t.Fatalf("Stop() error = %v, want nil or interrupt", err)
+		}
+	}
+
+	ctx2, cancel2 := context.WithTimeout(t.Context(), time.Second)
+	defer cancel2()
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- fp.Cleanup(ctx2)
+	}()
+
+	select {
+	case err2 := <-secondDone:
+		if err2 != nil {
+			if strings.Contains(err2.Error(), "Wait was already called") || strings.Contains(err2.Error(), "wait was already called") {
+				t.Fatalf("Cleanup() duplicate wait error: %v", err2)
+			}
+			if !strings.Contains(err2.Error(), "interrupt") {
+				t.Fatalf("Cleanup() error = %v, want nil or interrupt", err2)
+			}
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Cleanup() blocked unexpectedly")
+	}
 }
