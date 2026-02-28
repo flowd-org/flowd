@@ -37,8 +37,8 @@ func runAPISurface(ctx context.Context, env Env) Result {
 		check       func(statusCode int, body []byte, token string) error
 	}{
 		{"healthz", "/healthz", 200, func(s int) bool { return s == 200 || s == 204 }, checkHealthz},
-		{"startupz", "/startupz", 200, func(s int) bool { return s == 200 }, checkJSONResponse},
-		{"readyz", "/readyz", 200, func(s int) bool { return s == 200 }, checkJSONResponse},
+		{"startupz", "/startupz", 204, func(s int) bool { return s == 200 || s == 204 }, checkHealthz},
+		{"readyz", "/readyz", 204, func(s int) bool { return s == 200 || s == 204 }, checkHealthz},
 		{"capabilities", "/capabilities", 200, func(s int) bool { return s == 200 }, checkCapabilities},
 		{"limits", "/limits", 200, func(s int) bool { return s == 200 }, checkLimits},
 	}

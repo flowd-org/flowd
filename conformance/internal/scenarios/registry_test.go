@@ -324,9 +324,7 @@ func TestAPISurfaceScenario_Healthz204(t *testing.T) {
 		case "/healthz":
 			w.WriteHeader(http.StatusNoContent)
 		case "/startupz", "/readyz":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status": "ok"}`))
+			w.WriteHeader(http.StatusNoContent)
 		case "/capabilities":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -370,9 +368,7 @@ func TestAPISurfaceScenario_JSONBodyReachesValidator(t *testing.T) {
 		case "/healthz":
 			w.WriteHeader(http.StatusNoContent)
 		case "/startupz", "/readyz":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status": "ok"}`))
+			w.WriteHeader(http.StatusNoContent)
 		case "/capabilities":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)

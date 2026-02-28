@@ -20,12 +20,12 @@ func WaitForReady(ctx context.Context, baseURL string, token string, startupTime
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 
-	// Poll /startupz until it returns 200
+	// Poll /startupz until it returns 200 or 204
 	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, nil, nil); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for startup: %w", err)
 	}
 
-	// Poll /readyz until it returns 200
+	// Poll /readyz until it returns 200 or 204
 	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, nil, nil); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for readiness: %w", err)
 	}
@@ -46,12 +46,12 @@ func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, 
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 
-	// Poll /startupz until it returns 200
+	// Poll /startupz until it returns 200 or 204
 	if err := pollEndpoint(ctx, client, baseURL, "/startupz", token, processExitCh, getStderrTail); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for startup: %w", err)
 	}
 
-	// Poll /readyz until it returns 200
+	// Poll /readyz until it returns 200 or 204
 	if err := pollEndpoint(ctx, client, baseURL, "/readyz", token, processExitCh, getStderrTail); err != nil {
 		return ExitInfra, fmt.Errorf("failed to wait for readiness: %w", err)
 	}
@@ -59,7 +59,7 @@ func WaitForReadyWithProcess(ctx context.Context, baseURL string, token string, 
 	return ExitOK, nil
 }
 
-// pollEndpoint polls a given endpoint until it returns 200 or the context times out.
+// pollEndpoint polls a given endpoint until it returns 200/204 or the context times out.
 // If processExitCh is non-nil, polling short-circuits when the process exits.
 func pollEndpoint(ctx context.Context, client *http.Client, baseURL, path, token string, processExitCh <-chan error, getStderrTail func() string) error {
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -127,8 +127,8 @@ func checkEndpoint(ctx context.Context, client *http.Client, baseURL, path, toke
 	// Read body for potential error context (redacted)
 	_, _ = io.Copy(io.Discard, resp.Body)
 
-	// Accept 200 as success
-	if resp.StatusCode == http.StatusOK {
+	// Accept probe-style success responses
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
 
