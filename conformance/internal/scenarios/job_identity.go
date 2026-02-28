@@ -290,7 +290,7 @@ func validateCollision(ctx context.Context, env Env, profile string) Result {
 			},
 		}
 	}
-	idempotencyKey := fmt.Sprintf("conformance-collision-%s-%s", profile, harness.ComputeSHA256(bodyBytes))
+	idempotencyKey := fmt.Sprintf("conformance-collision-%s-%s", sanitizeIdempotencyKeySegment(profile), harness.ComputeSHA256(bodyBytes))
 
 	// First run - should succeed
 	firstRunID, err := createRunWithKey(ctx, env, expectedJobID, profile, idempotencyKey)
@@ -397,4 +397,22 @@ func createRunWithKey(ctx context.Context, env Env, jobID, profile, idempotencyK
 	}
 
 	return runResp.ID, nil
+}
+
+func sanitizeIdempotencyKeySegment(s string) string {
+	if s == "" {
+		return "profile"
+	}
+
+	b := strings.Builder{}
+	b.Grow(len(s))
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('-')
+	}
+
+	return b.String()
 }
