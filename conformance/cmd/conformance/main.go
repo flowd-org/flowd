@@ -60,6 +60,15 @@ func run(args []string) int {
 	}
 	defer os.RemoveAll(runRoot)
 
+	// Stage fixtures before starting flwd so bootstrap root exists.
+	fmt.Println("Staging fixtures...")
+	stagedRef, err := harness.StageFixtures(runRoot)
+	if err != nil {
+		emitInfraErr(cfg, "failed to stage fixtures: %v", err)
+		return harness.ExitInfra
+	}
+	fmt.Printf("Staged fixtures at %s\n", stagedRef)
+
 	// Start flwd process
 	fp, exitCode, err := harness.StartFlwd(ctx, cfg, runRoot)
 	if err != nil {
@@ -87,7 +96,7 @@ func run(args []string) int {
 	fmt.Println("flwd is ready")
 
 	// Run conformance tests
-	exitCode, err = runConformanceTests(ctx, cfg, fp.BaseURL, runRoot)
+	exitCode, err = runConformanceTests(ctx, cfg, fp.BaseURL, runRoot, stagedRef)
 	if err != nil || exitCode != harness.ExitOK {
 		return exitCode
 	}
@@ -126,7 +135,7 @@ func emitInfraErr(cfg harness.Config, format string, err error) {
 }
 
 // runConformanceTests runs the conformance test suite against the running flwd server.
-func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string, runRoot string) (int, error) {
+func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string, runRoot string, stagedRef string) (int, error) {
 	// Create HTTP client
 	client := &harness.Client{
 		BaseURL: baseURL,
@@ -134,15 +143,6 @@ func runConformanceTests(ctx context.Context, cfg harness.Config, baseURL string
 		HTTP:    &http.Client{},
 		Verbose: cfg.Verbose,
 	}
-
-	// Stage fixtures
-	fmt.Println("Staging fixtures...")
-	stagedRef, err := harness.StageFixtures(runRoot)
-	if err != nil {
-		emitInfraErr(cfg, "failed to stage fixtures: %v", err)
-		return harness.ExitInfra, fmt.Errorf("failed to stage fixtures: %w", err)
-	}
-	fmt.Printf("Staged fixtures at %s\n", stagedRef)
 
 	// Register local source
 	fmt.Println("Registering local source...")
