@@ -65,12 +65,22 @@ func TestStartFlwd_BootstrapRootNotReadable(t *testing.T) {
 
 	// Create a bootstrap root that exists but is unreadable
 	bootstrapRoot := filepath.Join(tmpDir, "scripts", "fixtures", "tree-v1")
-	if err := os.MkdirAll(bootstrapRoot, 0o000); err != nil {
-		t.Skipf("Cannot create unreadable directory on this system: %v", err)
+	if err := os.MkdirAll(bootstrapRoot, 0o755); err != nil {
+		t.Fatalf("Failed to create bootstrap directory: %v", err)
+	}
+	// Make the directory unreadable
+	if err := os.Chmod(bootstrapRoot, 0o000); err != nil {
+		t.Fatalf("Cannot make directory unreadable on this system: %v", err)
+	}
+
+	// Create an executable stub for flwdBinary so StartFlwd passes binary checks
+	flwdStub := filepath.Join(tmpDir, "flwd-stub")
+	if err := os.WriteFile(flwdStub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("Failed to create flwd stub: %v", err)
 	}
 
 	cfg := Config{
-		FlwdBinary: "/nonexistent/flwd",
+		FlwdBinary: flwdStub,
 	}
 
 	_, exitCode, err := StartFlwd(t.Context(), cfg, tmpDir)
