@@ -57,6 +57,11 @@ func ParseConfig(args []string, env map[string]string) (Config, int, error) {
 		return Config{}, ExitUsage, fmt.Errorf("failed to parse arguments: %w", err)
 	}
 
+	// Validate scenario-timeout is positive
+	if scenarioTimeout <= 0 {
+		return Config{}, ExitUsage, fmt.Errorf("--scenario-timeout must be > 0")
+	}
+
 	// Validate required flags
 	if flwdBinary == "" {
 		return Config{}, ExitUsage, fmt.Errorf("--flwd-binary is required")

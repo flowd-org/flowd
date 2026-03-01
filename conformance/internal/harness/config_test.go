@@ -3,7 +3,9 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseConfig_TokenPrecedence(t *testing.T) {
@@ -262,5 +264,61 @@ func TestParseConfig_FlwdBinaryRelativePathWithDotSegments(t *testing.T) {
 	expected := filepath.Clean(filepath.Join(cwd, "..", "bin", "flwd"))
 	if cfg.FlwdBinary != expected {
 		t.Errorf("ParseConfig() FlwdBinary = %q, want %q", cfg.FlwdBinary, expected)
+	}
+}
+
+func TestParseConfig_ScenarioTimeout(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantExitCode int
+		wantErr      bool
+	}{
+		{
+			name:         "zero scenario-timeout fails",
+			args:         []string{"--flwd-binary", "./bin/flwd", "--token", "dummy", "--scenario-timeout", "0s"},
+			wantExitCode: ExitUsage,
+			wantErr:      true,
+		},
+		{
+			name:         "negative scenario-timeout fails",
+			args:         []string{"--flwd-binary", "./bin/flwd", "--token", "dummy", "--scenario-timeout", "-1s"},
+			wantExitCode: ExitUsage,
+			wantErr:      true,
+		},
+		{
+			name:         "positive scenario-timeout passes",
+			args:         []string{"--flwd-binary", "./bin/flwd", "--token", "dummy", "--scenario-timeout", "1s"},
+			wantExitCode: ExitOK,
+			wantErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, exitCode, err := ParseConfig(tt.args, map[string]string{})
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if exitCode != tt.wantExitCode {
+				t.Errorf("ParseConfig() exitCode = %d, want %d", exitCode, tt.wantExitCode)
+			}
+
+			if tt.wantErr && err != nil {
+				if !strings.Contains(err.Error(), "--scenario-timeout must be > 0") {
+					t.Errorf("ParseConfig() error message = %v, want to contain '--scenario-timeout must be > 0'", err)
+				}
+			}
+
+			if exitCode == ExitOK {
+				// Verify positive scenario timeout is parsed correctly
+				if cfg.ScenarioTimeout != time.Second {
+					t.Errorf("ParseConfig() ScenarioTimeout = %v, want 1s", cfg.ScenarioTimeout)
+				}
+			}
+		})
 	}
 }
