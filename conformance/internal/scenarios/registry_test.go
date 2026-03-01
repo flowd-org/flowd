@@ -2,6 +2,7 @@ package scenarios
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -122,17 +123,17 @@ func TestGetJobIDForProfile_SourceScoped(t *testing.T) {
 		{
 			name:    "bash profile",
 			profile: "ulc.shell.bash",
-			want:    "conformance/ulc-smoke-bash",
+			want:    fmt.Sprintf("%s/conformance/ulc-smoke-bash", FixtureSourceName),
 		},
 		{
 			name:    "pwsh profile",
 			profile: "ulc.shell.pwsh",
-			want:    "conformance/ulc-smoke-pwsh",
+			want:    fmt.Sprintf("%s/conformance/ulc-smoke-pwsh", FixtureSourceName),
 		},
 		{
 			name:    "unknown profile falls back to bash",
 			profile: "unknown",
-			want:    "conformance/ulc-smoke-bash",
+			want:    fmt.Sprintf("%s/conformance/ulc-smoke-bash", FixtureSourceName),
 		},
 	}
 
