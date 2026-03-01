@@ -51,8 +51,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, []byte, error) {
 	// Read body (bounded)
 	var bodyBytes []byte
 	if resp.Body != nil {
-		defer resp.Body.Close()
-		bodyBytes, err = io.ReadAll(io.LimitReader(resp.Body, maxBodyRead+1))
+		raw := resp.Body
+		bodyBytes, err = io.ReadAll(io.LimitReader(raw, maxBodyRead+1))
+		_ = raw.Close()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read response body: %w", err)
 		}
@@ -63,6 +64,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, []byte, error) {
 	if truncated {
 		bodyBytes = bodyBytes[:maxBodyRead]
 	}
+
+	// Replace resp.Body with a fresh reader so callers can read it after Do returns
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	// In verbose mode, log the request and response (redacted)
 	if c.Verbose {
