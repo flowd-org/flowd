@@ -31,14 +31,36 @@ func TestStartFlwd_BootstrapRootPreflight(t *testing.T) {
 			wantExitCode:    ExitInfra,
 			wantErrContains: "flwd binary not found",
 		},
+		{
+			name: "non-executable flwd binary returns ExitInfra",
+			setupRunRoot: func(t *testing.T) string {
+				tmpDir, err := os.MkdirTemp("", "flwd-process-test-*")
+				if err != nil {
+					t.Fatalf("Failed to create temp dir: %v", err)
+				}
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+				return tmpDir
+			},
+			wantExitCode:    ExitInfra,
+			wantErrContains: "not executable",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runRoot := tt.setupRunRoot(t)
 
+			flwdPath := "/nonexistent/flwd"
+			if tt.wantErrContains == "not executable" {
+				// Create a non-executable file for this test
+				flwdPath = filepath.Join(runRoot, "flwd-nonexec")
+				if err := os.WriteFile(flwdPath, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+					t.Fatalf("Failed to create non-executable flwd stub: %v", err)
+				}
+			}
+
 			cfg := Config{
-				FlwdBinary: "/nonexistent/flwd",
+				FlwdBinary: flwdPath,
 			}
 
 			_, exitCode, err := StartFlwd(t.Context(), cfg, runRoot)

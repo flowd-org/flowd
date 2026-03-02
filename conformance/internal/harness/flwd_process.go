@@ -65,6 +65,11 @@ func StartFlwd(ctx context.Context, cfg Config, runRoot string) (*FlwdProcess, i
 		return nil, ExitInfra, fmt.Errorf("flwd binary is a directory: %s", cfg.FlwdBinary)
 	}
 
+	// Verify execute bits are present
+	if info.Mode().Perm()&0o111 == 0 {
+		return nil, ExitInfra, fmt.Errorf("flwd binary not executable: %s", cfg.FlwdBinary)
+	}
+
 	// Validate bootstrap root directory exists and is readable before spawning flwd
 	bootstrapRoot := filepath.Join(runRoot, "scripts", "fixtures", "tree-v1")
 	if _, err := os.Stat(bootstrapRoot); err != nil {
