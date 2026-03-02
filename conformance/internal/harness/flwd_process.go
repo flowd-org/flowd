@@ -1,0 +1,200 @@
+package harness
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+)
+
+// FlwdProcess represents a managed flwd server process.
+type FlwdProcess struct {
+	Cmd     *exec.Cmd
+	Addr    string
+	BaseURL string
+	Stdout  *bytes.Buffer
+	Stderr  *bytes.Buffer
+
+	processExitCh chan error
+	waitDone      chan struct{}
+	waitErr       error
+	waitErrMu     sync.RWMutex
+}
+
+// PickBindAddr tries ports in the range 127.0.0.1:18080..18089 and returns the first free one.
+func PickBindAddr() (string, error) {
+	for port := 18080; port <= 18089; port++ {
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			ln.Close()
+			return addr, nil
+		}
+	}
+	return "", fmt.Errorf("no free port in range 18080-18089")
+}
+
+// StartFlwd starts the flwd server process in :serve mode.
+// It validates the binary exists and is executable, picks a bind address,
+// and starts the process with stdout/stderr captured.
+func StartFlwd(ctx context.Context, cfg Config, runRoot string) (*FlwdProcess, int, error) {
+	// Defensive check: ensure FlwdBinary is an absolute path to prevent cwd-dependent resolution.
+	if !filepath.IsAbs(cfg.FlwdBinary) {
+		return nil, ExitInfra, fmt.Errorf("flwd binary path must be absolute: %s", cfg.FlwdBinary)
+	}
+
+	// Validate binary exists and is executable
+	if _, err := os.Stat(cfg.FlwdBinary); err != nil {
+		if os.IsNotExist(err) {
+			return nil, ExitInfra, fmt.Errorf("flwd binary not found: %s", cfg.FlwdBinary)
+		}
+		return nil, ExitInfra, fmt.Errorf("cannot stat flwd binary: %w", err)
+	}
+
+	info, err := os.Stat(cfg.FlwdBinary)
+	if err != nil {
+		return nil, ExitInfra, fmt.Errorf("cannot stat flwd binary: %w", err)
+	}
+	if info.IsDir() {
+		return nil, ExitInfra, fmt.Errorf("flwd binary is a directory: %s", cfg.FlwdBinary)
+	}
+
+	// Verify execute bits are present
+	if info.Mode().Perm()&0o111 == 0 {
+		return nil, ExitInfra, fmt.Errorf("flwd binary not executable: %s", cfg.FlwdBinary)
+	}
+
+	// Validate bootstrap root directory exists and is readable before spawning flwd
+	bootstrapRoot := filepath.Join(runRoot, "scripts", "fixtures", "tree-v1")
+	if _, err := os.Stat(bootstrapRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil, ExitInfra, fmt.Errorf("bootstrap root not found: %s", bootstrapRoot)
+		}
+		return nil, ExitInfra, fmt.Errorf("cannot stat bootstrap root: %w", err)
+	}
+	// Verify directory is readable
+	if f, err := os.Open(bootstrapRoot); err == nil {
+		f.Close()
+	} else {
+		return nil, ExitInfra, fmt.Errorf("bootstrap root not readable: %s", bootstrapRoot)
+	}
+
+	// Select bind address: explicit from config or auto via PickBindAddr
+	bindAddr := cfg.Bind
+	if bindAddr == "" {
+		addr, err := PickBindAddr()
+		if err != nil {
+			return nil, ExitInfra, err
+		}
+		bindAddr = addr
+	}
+
+	// Build command arguments
+	args := []string{":serve", "--bind", bindAddr}
+	if cfg.FlwdProfile != "" {
+		args = append(args, "--profile", cfg.FlwdProfile)
+	}
+
+	cmd := exec.CommandContext(ctx, cfg.FlwdBinary, args...)
+	cmd.Dir = runRoot
+
+	// Avoid leaking token via environment
+	env := make([]string, 0, len(os.Environ()))
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "FLWD_TOKEN=") {
+			env = append(env, e)
+		}
+	}
+	cmd.Env = env
+
+	// Capture stdout/stderr
+	stdoutBuf := &bytes.Buffer{}
+	stderrBuf := &bytes.Buffer{}
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return nil, ExitInfra, fmt.Errorf("failed to start flwd: %w", err)
+	}
+
+	processExitCh := make(chan error, 1)
+	waitDone := make(chan struct{})
+
+	fp := &FlwdProcess{
+		Cmd:     cmd,
+		Addr:    bindAddr,
+		BaseURL: fmt.Sprintf("http://%s", bindAddr),
+		Stdout:  stdoutBuf,
+		Stderr:  stderrBuf,
+
+		processExitCh: processExitCh,
+		waitDone:      waitDone,
+	}
+
+	go func() {
+		err := cmd.Wait()
+
+		fp.waitErrMu.Lock()
+		fp.waitErr = err
+		fp.waitErrMu.Unlock()
+
+		processExitCh <- err
+		close(processExitCh)
+		close(waitDone)
+	}()
+
+	return fp, ExitOK, nil
+}
+
+// ProcessExitCh returns a channel that receives when the process exits.
+func (p *FlwdProcess) ProcessExitCh() <-chan error {
+	if p == nil {
+		return nil
+	}
+	return p.processExitCh
+}
+
+func (p *FlwdProcess) waitResult() error {
+	if p.waitDone == nil {
+		return nil
+	}
+	<-p.waitDone
+	p.waitErrMu.RLock()
+	defer p.waitErrMu.RUnlock()
+	return p.waitErr
+}
+
+// Stop terminates the flwd process gracefully with SIGINT, then SIGKILL if needed.
+func (p *FlwdProcess) Stop(ctx context.Context) error {
+	if p.Cmd == nil || p.Cmd.Process == nil {
+		return nil
+	}
+
+	// Try graceful shutdown first
+	_ = p.Cmd.Process.Signal(os.Interrupt)
+
+	// Wait for graceful exit with timeout
+	select {
+	case <-p.waitDone:
+		return p.waitResult()
+	case <-ctx.Done():
+		// Timeout, force kill
+		_ = p.Cmd.Process.Kill()
+		return p.waitResult()
+	case <-time.After(5 * time.Second):
+		// Force kill
+		_ = p.Cmd.Process.Kill()
+		return p.waitResult()
+	}
+}
+
+// Cleanup is an alias for Stop for convenience.
+func (p *FlwdProcess) Cleanup(ctx context.Context) error {
+	return p.Stop(ctx)
+}

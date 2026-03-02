@@ -9,6 +9,10 @@ dist/
 *.dylib
 *.test
 *.out
+
+# Conformance harness compiled binaries (ELF executables)
+conformance/conformance
+conformance/conformance_test
 coverage.out
 
 # Go Modules

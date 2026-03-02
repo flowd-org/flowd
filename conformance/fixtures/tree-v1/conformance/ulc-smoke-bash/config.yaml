@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+interpreter: /usr/bin/env bash
+
+env:
+  FIXTURE_MARKER: "ulc-smoke-bash"
+
+error_handling:
+  policy: abort
+  retries: 0
+  retry_backoff: 1
