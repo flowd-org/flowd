@@ -733,18 +733,40 @@ func TestRedactBody_AuthorizationBearerVariants(t *testing.T) {
 	bearerA := "value-lowercase"
 	bearerB := "value-spaced"
 	bearerC := "value-wide"
+	bearerD := "value-mixedcase"
+	bearerE := "value-tabbed"
 	body := strings.Join([]string{
 		"authorization: bearer " + bearerA,
 		"Authorization :    Bearer    " + bearerB,
 		"AUTHORIZATION:\tBEARER\t" + bearerC,
+		"auTHoRiZaTiOn:bearer " + bearerD,
+		" Authorization  \t:  \tBearer   \t" + bearerE,
 	}, "\n")
 
 	redacted := redactBody(body, token)
 
-	if strings.Contains(redacted, bearerA) || strings.Contains(redacted, bearerB) || strings.Contains(redacted, bearerC) {
+	if strings.Contains(redacted, bearerA) || strings.Contains(redacted, bearerB) || strings.Contains(redacted, bearerC) ||
+		strings.Contains(redacted, bearerD) || strings.Contains(redacted, bearerE) {
 		t.Fatalf("expected all bearer variants to be fully redacted, got: %q", redacted)
 	}
-	if strings.Count(redacted, "Authorization: Bearer [REDACTED]") != 3 {
-		t.Fatalf("expected 3 redacted authorization headers, got: %q", redacted)
+	if strings.Count(redacted, "Authorization: Bearer [REDACTED]") != 5 {
+		t.Fatalf("expected 5 redacted authorization headers, got: %q", redacted)
+	}
+
+	// Safety assertion: include token outside Authorization header to confirm only intended patterns are normalized
+	// Note: RedactSecrets redacts ALL occurrences of the token, so we test that the Authorization pattern
+	// is applied correctly even when other tokens exist in the body
+	bodyWithTokenOutsideHeader := strings.Join([]string{
+		"authorization: bearer " + bearerA,
+		"token=" + token,
+		"secret: " + token,
+	}, "\n")
+	redacted2 := redactBody(bodyWithTokenOutsideHeader, token)
+	if !strings.Contains(redacted2, "Authorization: Bearer [REDACTED]") {
+		t.Fatalf("expected Authorization header to be redacted when token appears elsewhere, got: %q", redacted2)
+	}
+	// All occurrences of the token should be replaced with [REDACTED] by RedactSecrets
+	if !strings.Contains(redacted2, "token=[REDACTED]") || !strings.Contains(redacted2, "secret: [REDACTED]") {
+		t.Fatalf("expected all non-Authorization occurrences of token to be redacted, got: %q", redacted2)
 	}
 }
