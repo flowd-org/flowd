@@ -97,8 +97,8 @@ When `--report-json` is specified, the harness writes a JSON report with the fol
   "failed_count": 2,
   "results": [
     {
-      "scenario_id": "ulc-smoke",
-      "scenario_name": "ULC Smoke Test",
+      "scenario_id": "canonical-job-ids",
+      "scenario_name": "Canonical Job IDs",
       "profile": "ulc.shell.bash",
       "passed": true,
       "duration_ms": 150,
@@ -158,7 +158,7 @@ This ensures that maintainers are notified immediately when conformance is skipp
 
 In the JSON report, each failed test appears as an item in the `results[]` array with the following fields:
 
-- `scenario_id`: The stable identifier (e.g., `ulc-smoke`)
+- `scenario_id`: The stable identifier (e.g., `canonical-job-ids`)
 - `profile`: The ULC profile identifier (e.g., `ulc.shell.bash`, `ulc.shell.pwsh`)
 - `failure.actual`: The human-readable failure message explaining why the scenario failed
 
@@ -166,7 +166,7 @@ Example (YAML for readability):
 
 ```yaml
 results:
-  - scenario_id: ulc-smoke
+  - scenario_id: canonical-job-ids
     profile: ulc.shell.bash
     passed: false
     failure:
