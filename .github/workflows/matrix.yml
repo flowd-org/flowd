@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ['1.21', '1.22', 'stable']
+        go-version: ['1.25.3', 'stable']
     
     steps:
       - name: Checkout repository
