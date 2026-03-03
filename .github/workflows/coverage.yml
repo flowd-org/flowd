@@ -1,0 +1,44 @@
+name: coverage
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with coverage
+        run: |
+          go test -coverprofile=coverage.txt ./...
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: coverage-report
+          path: coverage.txt
+          retention-days: 7
+
+      - name: Check coverage threshold
+        run: |
+          coverage=$(go tool cover -func=coverage.txt | grep total | grep -oP '\d+\.\d+')
+          echo "Coverage: ${coverage}%"
+          if (( $(echo "$coverage < 80" | bc -l) )); then
+            echo "Coverage ${coverage}% is below threshold of 80%"
+            exit 1
+          fi
+          echo "Coverage ${coverage}% meets threshold of 80%"
