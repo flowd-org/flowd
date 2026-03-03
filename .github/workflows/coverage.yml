@@ -35,10 +35,110 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          coverage=$(go tool cover -func=coverage.txt | grep total | grep -oP '\d+\.\d+')
-          echo "Coverage: ${coverage}%"
-          if (( $(echo "$coverage < 85" | bc -l) )); then
-            echo "Coverage ${coverage}% is below threshold of 85%"
-            exit 1
-          fi
-          echo "Coverage ${coverage}% meets threshold of 85%"
+          # Get overall coverage
+          total_coverage=$(go tool cover -func=coverage.txt | grep -E '^\s*total:' | grep -oP '\d+\.\d+')
+          echo "Overall Coverage: ${total_coverage}%"
+          
+          # Process per-package coverage with awk
+          go tool cover -func=coverage.txt | \
+            awk '
+              BEGIN {
+                overall_stmts = 0
+                overall_covered = 0
+                failures = ""
+              }
+              
+              # Skip total line and empty lines
+              /^total:/ { next }
+              /^[[:space:]]*$/ { next }
+              
+              # Match lines with coverage data: file.go:line:function statements total coverage%
+              /:[0-9]+:[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+\.[0-9]+%$/ {
+                # Extract file path (everything before first colon)
+                match($0, /^[^:]+/)
+                filepath = substr($0, 1, RLENGTH)
+                
+                # Skip generated files
+                if (filepath ~ /mock_|_generated|\.pb\.go|\.gen\.go/) next
+                
+                # Get the last 4 fields: statements, total, coverage%
+                n = split($0, fields, /[[:space:]]+/)
+                if (n >= 4) {
+                  stmts = fields[n-3] + 0
+                  total_stmts = fields[n-2] + 0
+                  coverage = fields[n-1] + 0
+                  
+                  # Skip packages with 0 statements
+                  if (stmts == 0 || total_stmts == 0) next
+                  
+                  # Extract package name from path
+                  pkg = extract_pkg(filepath)
+                  if (pkg != "") {
+                    pkg_stmts[pkg] += stmts
+                    pkg_covered[pkg] += stmts * coverage / 100
+                  }
+                }
+              }
+              
+              function extract_pkg(path) {
+                # Split by /
+                n = split(path, parts, "/")
+                
+                # Look for known package directories
+                for (i=1; i<=n; i++) {
+                  if (parts[i] == "internal" || parts[i] == "pkg") {
+                    if (i+1 <= n && parts[i+1] != "") return parts[i+1]
+                  }
+                }
+                
+                # Use first meaningful directory
+                for (i=1; i<=n; i++) {
+                  if (parts[i] != "" && parts[i] != "." && parts[i] != "..") {
+                    return parts[i]
+                  }
+                }
+                
+                return ""
+              }
+              
+              END {
+                n = asorti(pkg_stmts, sorted_pkgs)
+                
+                for (i=1; i<=n; i++) {
+                  pkg = sorted_pkgs[i]
+                  stmts = pkg_stmts[pkg]
+                  covered = pkg_covered[pkg]
+                  cov_pct = (stmts > 0) ? (covered / stmts * 100) : 0
+                  
+                  overall_stmts += stmts
+                  overall_covered += covered
+                  
+                  if (cov_pct < 85) {
+                    failures = failures pkg ": " sprintf("%.1f", cov_pct) "%\n"
+                  }
+                }
+                
+                # Calculate overall coverage
+                overall_cov = (overall_stmts > 0) ? (overall_covered / overall_stmts * 100) : 0
+                
+                # Check thresholds and output results
+                exit_code = 0
+                
+                if (overall_cov < 85) {
+                  print "::error::Overall coverage " sprintf("%.1f", overall_cov) "% is below threshold of 85%"
+                  exit_code = 1
+                }
+                
+                if (failures != "") {
+                  print "::error::Packages below 85% coverage threshold:"
+                  printf "%s", failures
+                  exit_code = 1
+                }
+                
+                if (exit_code == 0) {
+                  print "Overall Coverage: " sprintf("%.1f", overall_cov) "% meets threshold of 85%"
+                }
+                
+                exit exit_code
+              }
+            '
