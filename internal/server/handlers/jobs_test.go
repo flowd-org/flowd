@@ -17,6 +17,7 @@ import (
 	"github.com/flowd-org/flowd/internal/server/headers"
 	"github.com/flowd-org/flowd/internal/server/response"
 	"github.com/flowd-org/flowd/internal/server/sourcestore"
+	"github.com/flowd-org/flowd/internal/types"
 )
 
 func TestJobsHandlerIncludesOCIJobs(t *testing.T) {
@@ -461,5 +462,96 @@ job:
 	}
 	if first["job_dir"] != "demo" || second["job_dir"] != "demo!" {
 		t.Fatalf("expected deterministic job_dir order demo then demo!, got %+v and %+v", first["job_dir"], second["job_dir"])
+	}
+}
+
+func TestWithStepContext(t *testing.T) {
+	result := withStepContext(3, "test message")
+	expected := "step 3: test message"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestWithStepFindings(t *testing.T) {
+	findings := []types.Finding{
+		{Message: "finding 1"},
+		{Message: "finding 2"},
+	}
+	result := withStepFindings(3, findings)
+
+	if len(result) != 2 {
+		t.Errorf("expected 2 findings, got %d", len(result))
+	}
+
+	if result[0].Message != "step 3: finding 1" {
+		t.Errorf("expected 'step 3: finding 1', got %q", result[0].Message)
+	}
+	if result[1].Message != "step 3: finding 2" {
+		t.Errorf("expected 'step 3: finding 2', got %q", result[1].Message)
+	}
+}
+
+func TestWithStepFindings_Empty(t *testing.T) {
+	result := withStepFindings(3, nil)
+	if result != nil {
+		t.Errorf("expected nil for empty input, got %v", result)
+	}
+}
+
+func TestContainerConfigHasSettings(t *testing.T) {
+	config := &types.ContainerConfig{
+		Image: "test-image",
+	}
+	result := containerConfigHasSettings(config)
+	if !result {
+		t.Error("expected true for config with image")
+	}
+
+	config = nil
+	result = containerConfigHasSettings(config)
+	if result {
+		t.Error("expected false for nil config")
+	}
+}
+
+func TestErrInvalidPage(t *testing.T) {
+	err := errInvalidPage("invalid")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	expectedMsg := "page must be a positive integer (got invalid)"
+	if err.Error() != expectedMsg {
+		t.Errorf("expected message %q, got %q", expectedMsg, err.Error())
+	}
+}
+
+func TestErrInvalidPerPage(t *testing.T) {
+	err := errInvalidPerPage("abc", 100)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	expectedMsg := "per_page must be between 1 and 100 (got abc)"
+	if err.Error() != expectedMsg {
+		t.Errorf("expected message %q, got %q", expectedMsg, err.Error())
+	}
+
+	err = errInvalidPerPage("50", 25)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	expectedMsg = "per_page must be between 1 and 25 (got 50)"
+	if err.Error() != expectedMsg {
+		t.Errorf("expected message %q, got %q", expectedMsg, err.Error())
+	}
+}
+
+func TestPaginationError(t *testing.T) {
+	err := &paginationError{Msg: "test error", Value: ""}
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "test error (got )" {
+		t.Errorf("expected 'test error (got )', got %q", err.Error())
 	}
 }
