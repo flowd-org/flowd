@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func TestRuleYStorePutGetDelete(t *testing.T) {
@@ -742,5 +744,68 @@ func TestRuleYJanitorDrainCapacitySatisfiesSLA(t *testing.T) {
 	// Verify deletion happened within ≤60s of expiry
 	if elapsed := now.Sub(base.Add(time.Second)); elapsed > 60*time.Second {
 		t.Fatalf("expected deletion within <=60s of expiry, elapsed=%s", elapsed)
+	}
+}
+
+func TestIsSQLiteConstraint(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"non-constraint error", errors.New("some other error"), false},
+		{"SQLite CONSTRAINT error", &sqliteError{code: int(sqlite3.SQLITE_CONSTRAINT)}, true},
+		{"SQLite PRIMARYKEY error", &sqliteError{code: int(sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)}, true},
+		{"SQLite UNIQUE error", &sqliteError{code: int(sqlite3.SQLITE_CONSTRAINT_UNIQUE)}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSQLiteConstraint(tt.err)
+			if result != tt.expected {
+				t.Errorf("isSQLiteConstraint() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+type sqliteError struct {
+	code int
+}
+
+func (e *sqliteError) Error() string { return "sqlite constraint" }
+func (e *sqliteError) Code() int     { return e.code }
+
+// TestIsQuotaExceeded tests the IsQuotaExceeded helper function.
+func TestIsQuotaExceeded(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"quota exceeded error", ErrJournalQuotaExceeded, true},
+		{"sqlite full error", &sqliteError{code: int(sqlite3.SQLITE_FULL)}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsQuotaExceeded(tt.err)
+			if result != tt.expected {
+				t.Errorf("IsQuotaExceeded(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDB_Options(t *testing.T) {
+	db := openTestDB(t)
+	opts := db.Options()
+	if opts.DataDir == "" {
+		t.Errorf("expected DataDir to be set, got empty string")
+	}
+	if opts.MaxBytes <= 0 {
+		t.Errorf("expected MaxBytes > 0, got %d", opts.MaxBytes)
 	}
 }
