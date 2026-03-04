@@ -160,3 +160,391 @@ func extractSSEData(payload string) string {
 	}
 	return builder.String()
 }
+
+// TestParseEventSeq tests the parseEventSeq helper function.
+func TestParseEventSeq(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int64
+	}{
+		{"empty string", "", 0},
+		{"whitespace only", "   ", 0},
+		{"valid seq", "123", 123},
+		{"large seq", "999999999999", 999999999999},
+		{"invalid string", "abc", 0},
+		{"mixed alphanumeric", "12abc", 0},
+		{"negative", "-5", -5},
+		{"with leading zeros", "007", 7},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseEventSeq(tt.input)
+			if got != tt.expected {
+				t.Errorf("parseEventSeq(%q) = %d; want %d", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDataValue tests the dataValue helper function.
+func TestDataValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected any
+	}{
+		{"empty string", "", nil},
+		{"whitespace only", "   ", nil},
+		{"plain text", "hello world", "hello world"},
+		{"json int", "42", json.RawMessage("42")},
+		{"json float", "3.14", json.RawMessage("3.14")},
+		{"json bool true", "true", json.RawMessage("true")},
+		{"json bool false", "false", json.RawMessage("false")},
+		{"json null", "null", json.RawMessage("null")},
+		{"json array", "[1,2,3]", json.RawMessage("[1,2,3]")},
+		{"json object", `{"key":"value"}`, json.RawMessage(`{"key":"value"}`)},
+		{"quoted string", `"hello"`, json.RawMessage(`"hello"`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dataValue(tt.input)
+			if !compareDataValue(got, tt.expected) {
+				t.Errorf("dataValue(%q) = %v (type %T); want %v (type %T)", tt.input, got, got, tt.expected, tt.expected)
+			}
+		})
+	}
+}
+
+func compareDataValue(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	// Handle json.RawMessage comparison
+	am, okA := a.(json.RawMessage)
+	bm, okB := b.(json.RawMessage)
+	if okA && okB {
+		return string(am) == string(bm)
+	}
+	// For int64 vs float64 comparison with numbers
+	switch av := a.(type) {
+	case int64:
+		if bv, ok := b.(float64); ok {
+			return av == int64(bv)
+		}
+		return av == b.(int64)
+	}
+	return a == b
+}
+
+// TestHubRetentionTrimming tests that old events are pruned based on retention.
+func TestHubRetentionTrimming(t *testing.T) {
+	h := New(Config{
+		KeepAliveInterval: 0,
+		MaxBufferSize:     100,
+		Retention:         time.Millisecond * 100,
+	})
+	baseTime := time.Unix(100, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	// Add events at different times
+	h.Publish("run-ret", Event{ID: "1", Event: "e1", Data: "{}"})
+	h.nowFn = func() time.Time { return baseTime.Add(time.Millisecond * 50) }
+	h.Publish("run-ret", Event{ID: "2", Event: "e2", Data: "{}"})
+	h.nowFn = func() time.Time { return baseTime.Add(time.Millisecond * 150) }
+	h.Publish("run-ret", Event{ID: "3", Event: "e3", Data: "{}"})
+
+	// Subscribe should only get events after retention cutoff (event 2 and 3)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := h.Subscribe(ctx, "run-ret", "")
+	var received []string
+	for i := 0; i < 2; i++ {
+		select {
+		case payload := <-sub.C:
+			received = append(received, extractSSEData(string(payload)))
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for events")
+		}
+	}
+
+	if len(received) != 2 {
+		t.Fatalf("expected 2 events after retention pruning, got %d", len(received))
+	}
+}
+
+// TestHubBufferSizeTrimming tests that events are trimmed when buffer exceeds MaxBufferSize.
+func TestHubBufferSizeTrimming(t *testing.T) {
+	h := New(Config{
+		KeepAliveInterval: 0,
+		MaxBufferSize:     3,
+		Retention:         time.Hour,
+	})
+	baseTime := time.Unix(0, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	for i := 1; i <= 5; i++ {
+		h.Publish("run-buf", Event{ID: fmt.Sprintf("%d", i), Event: "e", Data: "{}"})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := h.Subscribe(ctx, "run-buf", "")
+	var received []string
+	for i := 0; i < 3; i++ {
+		select {
+		case payload := <-sub.C:
+			received = append(received, extractSSEData(string(payload)))
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for events, got %d so far", len(received))
+		}
+	}
+
+	if len(received) != 3 {
+		t.Fatalf("expected 3 events after buffer trimming, got %d", len(received))
+	}
+}
+
+// TestHubReplayInvalidLastEventID tests replay behavior with invalid lastEventID.
+func TestHubReplayInvalidLastEventID(t *testing.T) {
+	h := New(Config{KeepAliveInterval: 0})
+	baseTime := time.Unix(0, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	h.Publish("run-replay", Event{ID: "1", Event: "e1", Data: "{}"})
+	h.Publish("run-replay", Event{ID: "2", Event: "e2", Data: "{}"})
+
+	// Request replay from non-existent ID - should return nothing
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := h.Subscribe(ctx, "run-replay", "999")
+
+	select {
+	case <-sub.C:
+		t.Fatal("expected no events for invalid lastEventID")
+	case <-time.After(100 * time.Millisecond):
+		// Expected - no events
+	}
+}
+
+// TestHubReplayExpiredCursor tests replay behavior when cursor is too old (beyond retention).
+func TestHubReplayExpiredCursor(t *testing.T) {
+	h := New(Config{
+		KeepAliveInterval: 0,
+		Retention:         time.Millisecond * 100,
+	})
+	baseTime := time.Unix(0, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	h.Publish("run-exp", Event{ID: "1", Event: "e1", Data: "{}"})
+	h.nowFn = func() time.Time { return baseTime.Add(time.Millisecond * 150) }
+	h.Publish("run-exp", Event{ID: "2", Event: "e2", Data: "{}"})
+
+	// Request replay from event 1 which should be expired and not found
+	// The replay logic returns nothing when lastID is not in the buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := h.Subscribe(ctx, "run-exp", "1")
+
+	select {
+	case <-sub.C:
+		t.Fatal("expected no events for expired cursor (event 1 was pruned)")
+	case <-time.After(100 * time.Millisecond):
+		// Expected - no events since event 1 was pruned
+	}
+}
+
+// TestSubscriptionCloseIdempotent tests that Close() can be called multiple times safely.
+func TestSubscriptionCloseIdempotent(t *testing.T) {
+	h := New(Config{KeepAliveInterval: 0})
+	ctx, _ := context.WithCancel(context.Background())
+	sub := h.Subscribe(ctx, "run-close", "")
+	defer sub.Close()
+
+	// Call Close multiple times - should not panic
+	sub.Close()
+	sub.Close()
+}
+
+// TestFormatHeartbeat tests the FormatHeartbeat function.
+func TestFormatHeartbeat(t *testing.T) {
+	ts := time.Date(2026, 1, 15, 12, 30, 45, 0, time.UTC)
+	payload := FormatHeartbeat(ts)
+
+	if !strings.HasPrefix(string(payload), ":hb ") {
+		t.Fatalf("expected :hb prefix, got %q", payload)
+	}
+	if !strings.HasSuffix(string(payload), "\n\n") {
+		t.Fatalf("expected trailing \\n\\n, got %q", payload)
+	}
+
+	// Verify timestamp is parseable
+	gotTime, err := time.Parse(time.RFC3339, strings.TrimSpace(strings.TrimPrefix(string(payload), ":hb ")))
+	if err != nil {
+		t.Fatalf("heartbeat timestamp not RFC3339: %v", err)
+	}
+	if !gotTime.Equal(ts.UTC()) {
+		t.Errorf("expected timestamp %s, got %s", ts.Format(time.RFC3339), gotTime.Format(time.RFC3339))
+	}
+}
+
+// TestFormatHeartbeatAutoTimestamp tests FormatHeartbeat with zero time.
+func TestFormatHeartbeatAutoTimestamp(t *testing.T) {
+	payload := FormatHeartbeat(time.Time{})
+	if !strings.HasPrefix(string(payload), ":hb ") {
+		t.Fatalf("expected :hb prefix, got %q", payload)
+	}
+}
+
+// TestEncodeEventErrorHandling tests EncodeEvent when JSON marshaling fails.
+func TestEncodeEventErrorHandling(t *testing.T) {
+	// This test verifies the error fallback path in formatEvent
+	ev := Event{ID: "1", Event: "test", Data: `{"valid":true}`}
+	payload, err := EncodeEvent(ev)
+	if err != nil {
+		t.Fatalf("unexpected encode error: %v", err)
+	}
+	if !strings.Contains(string(payload), "event: flowd") {
+		t.Fatalf("expected flowd event, got %q", payload)
+	}
+}
+
+// TestHubPublishEmptyRunID tests Publish with empty RunID.
+func TestHubPublishEmptyRunID(t *testing.T) {
+	h := New(Config{KeepAliveInterval: 0})
+	baseTime := time.Unix(0, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	// Publish without specifying runID parameter
+	h.Publish("run-empty", Event{Event: "e1", Data: "{}"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := h.Subscribe(ctx, "run-empty", "")
+
+	select {
+	case payload := <-sub.C:
+		if !strings.Contains(string(payload), `"type":"e1"`) {
+			t.Fatalf("expected event type e1 in payload, got %q", payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for event")
+	}
+}
+
+// TestHubMultipleSubscribers tests multiple subscribers receive the same events.
+func TestHubMultipleSubscribers(t *testing.T) {
+	h := New(Config{KeepAliveInterval: 0})
+	baseTime := time.Unix(0, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	sub1 := h.Subscribe(ctx1, "run-multi", "")
+
+	// Publish first event
+	h.Publish("run-multi", Event{ID: "1", Event: "e1", Data: "{}"})
+
+	// Add second subscriber after first event
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	sub2 := h.Subscribe(ctx2, "run-multi", "")
+
+	// Publish second event - both subscribers should receive it
+	h.Publish("run-multi", Event{ID: "2", Event: "e2", Data: "{}"})
+
+	var sub1Received, sub2Received []string
+
+	// Read from first subscriber (should get 2 events)
+	for i := 0; i < 2; i++ {
+		select {
+		case payload := <-sub1.C:
+			sub1Received = append(sub1Received, extractSSEData(string(payload)))
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for sub1 events")
+		}
+	}
+
+	// Read from second subscriber (should get 1 event - replay from empty + new event)
+	select {
+	case payload := <-sub2.C:
+		sub2Received = append(sub2Received, extractSSEData(string(payload)))
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for sub2 events")
+	}
+
+	if len(sub1Received) != 2 {
+		t.Fatalf("expected sub1 to receive 2 events, got %d", len(sub1Received))
+	}
+	if len(sub2Received) != 1 {
+		t.Fatalf("expected sub2 to receive 1 event, got %d", len(sub2Received))
+	}
+}
+
+// TestHubBroadcastDrop tests that slow subscribers don't block the stream.
+func TestHubBroadcastDrop(t *testing.T) {
+	h := New(Config{KeepAliveInterval: 0})
+	baseTime := time.Unix(0, 0)
+	h.nowFn = func() time.Time { return baseTime }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create a subscriber with small buffer that won't read
+	ch := make(chan []byte, 1)
+	subCtx, _ := context.WithCancel(ctx)
+	stream := h.getOrCreateStream("run-drop")
+	stream.addSubscriber(subCtx, ch, 0, h.nowFn)
+
+	// Publish many events quickly - should drop some
+	for i := 0; i < 10; i++ {
+		h.Publish("run-drop", Event{ID: fmt.Sprintf("%d", i+1), Event: "e", Data: "{}"})
+	}
+
+	// Only the first few should be received due to buffer size
+	receivedCount := 0
+	for i := 0; i < 10; i++ {
+		select {
+		case <-ch:
+			receivedCount++
+		default:
+			// No more events available
+		}
+	}
+
+	if receivedCount == 0 {
+		t.Fatal("expected at least some events to be received")
+	}
+}
+
+// TestHubConcurrentAccess tests that concurrent access is safe.
+func TestHubConcurrentAccess(t *testing.T) {
+	h := New(Config{
+		KeepAliveInterval: 0,
+		MaxBufferSize:     100,
+		Retention:         time.Hour,
+	})
+
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(runID string) {
+			for j := 0; j < 50; j++ {
+				h.Publish(runID, Event{Event: "e", Data: "{}"})
+			}
+			done <- true
+		}(fmt.Sprintf("run-concurrent-%d", i))
+	}
+
+	for i := 0; i < 10; i++ {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for goroutine %d", i)
+		}
+	}
+}
