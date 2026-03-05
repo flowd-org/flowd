@@ -3,6 +3,7 @@ package executor
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/flowd-org/flowd/internal/types"
@@ -45,4 +46,86 @@ exit 0
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("profile script failed: %v output=%s", err, string(out))
 	}
+}
+
+func TestGenerateRunnerProfile_VerbosityLevels(t *testing.T) {
+	spec := types.ArgSpec{Args: []types.Arg{
+		{Name: "name", Type: "string"},
+	}}
+	bind := map[string]interface{}{"name": "alice"}
+
+	tests := []struct {
+		name   string
+		level  int
+		expect string
+	}{
+		{"level 0", 0, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profilePath, cleanup, err := GenerateRunnerProfile("scripts/demo", "/bin/bash", tt.level, &spec, bind)
+			if err != nil {
+				t.Fatalf("GenerateRunnerProfile error: %v", err)
+			}
+			defer cleanup()
+
+			content, err := os.ReadFile(profilePath)
+			if err != nil {
+				t.Fatalf("read profile: %v", err)
+			}
+
+			if tt.expect != "" && !contains(string(content), tt.expect) {
+				t.Errorf("expected %q in profile content", tt.expect)
+			}
+		})
+	}
+}
+
+func TestGenerateRunnerProfile_InvalidInterpreter(t *testing.T) {
+	spec := types.ArgSpec{Args: []types.Arg{
+		{Name: "name", Type: "string"},
+	}}
+	bind := map[string]interface{}{"name": "alice"}
+
+	_, _, err := GenerateRunnerProfile("scripts/demo", "/nonexistent/interpreter", 0, &spec, bind)
+	if err == nil {
+		t.Fatal("expected error for invalid interpreter")
+	}
+}
+
+func TestGenerateRunnerProfile_CleanupRemovesTempFiles(t *testing.T) {
+	spec := types.ArgSpec{Args: []types.Arg{
+		{Name: "name", Type: "string"},
+	}}
+	bind := map[string]interface{}{"name": "alice"}
+
+	tmpDir := t.TempDir()
+	profilePath, cleanup, err := GenerateRunnerProfile(filepath.Join(tmpDir, "demo"), "/bin/bash", 0, &spec, bind)
+	if err != nil {
+		t.Fatalf("GenerateRunnerProfile error: %v", err)
+	}
+
+	if _, err := os.Stat(profilePath); err != nil {
+		t.Fatalf("profile should exist before cleanup: %v", err)
+	}
+
+	cleanup()
+
+	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
+		t.Errorf("expected profile to be removed after cleanup")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
