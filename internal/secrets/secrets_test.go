@@ -107,3 +107,61 @@ func TestErrorsDoNotLeakPaths(t *testing.T) {
 		t.Fatalf("unexpected error message: %q", err.Error())
 	}
 }
+
+func TestBuffer_Len(t *testing.T) {
+	buf := NewBufferFromString("secret")
+	if buf.Len() != 6 {
+		t.Errorf("expected len 6, got %d", buf.Len())
+	}
+
+	nilBuf := (*Buffer)(nil)
+	if nilBuf.Len() != 0 {
+		t.Errorf("expected nil buffer len 0, got %d", nilBuf.Len())
+	}
+}
+
+func TestBuffer_Close(t *testing.T) {
+	buf := NewBufferFromString("secret")
+	buf.Close()
+	if buf.Bytes() != nil || buf.Len() != 0 {
+		t.Error("expected buffer to be zeroed after Close")
+	}
+
+	nilBuf := (*Buffer)(nil)
+	nilBuf.Close() // should not panic
+}
+
+func TestOpenHandle_NilHandle(t *testing.T) {
+	h := (*Handle)(nil)
+	if err := h.Close(); err != nil {
+		t.Errorf("expected nil handle Close to return nil, got %v", err)
+	}
+}
+
+func TestBuffer_CloseNil(t *testing.T) {
+	var buf *Buffer
+	buf.Close() // should not panic
+}
+
+func TestWrapErr_NilError(t *testing.T) {
+	err := wrapErr("test", nil)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+}
+
+func TestOpError(t *testing.T) {
+	err := opError("open secret")
+	if !contains(err.Error(), "open secret") {
+		t.Errorf("expected 'open secret' in error: %v", err)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
