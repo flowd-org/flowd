@@ -22,6 +22,7 @@ import (
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
 	"github.com/flowd-org/flowd/internal/server/metrics"
+	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/types"
 )
 
@@ -425,4 +426,281 @@ func TestRun_StopsOnJanitorFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), sentinelErr) {
 		t.Fatalf("expected error to contain %q, got %v", sentinelErr, err)
 	}
+}
+
+// TestSourcetoProvenance tests the sourcetoProvenance helper function.
+func TestSourcetoProvenance(t *testing.T) {
+	tests := []struct {
+		name string
+		src  sourcestore.Source
+		want map[string]any
+	}{
+		{
+			name: "minimal source",
+			src:  sourcestore.Source{Name: "test", Type: "git"},
+			want: map[string]any{"name": "test", "type": "git"},
+		},
+		{
+			name: "source with ref and url",
+			src:  sourcestore.Source{Name: "test", Type: "git", Ref: "main", URL: "https://example.com/repo.git"},
+			want: map[string]any{"name": "test", "type": "git", "ref": "main", "url": "https://example.com/repo.git"},
+		},
+		{
+			name: "source with resolved_ref from ResolvedRef",
+			src:  sourcestore.Source{Name: "test", Type: "git", ResolvedRef: "abc123"},
+			want: map[string]any{"name": "test", "type": "git", "resolved_ref": "abc123"},
+		},
+		{
+			name: "source with resolved_ref from Digest when ResolvedRef empty",
+			src:  sourcestore.Source{Name: "test", Type: "git", Digest: "sha256:def456"},
+			want: map[string]any{"name": "test", "type": "git", "digest": "sha256:def456", "resolved_ref": "sha256:def456"},
+		},
+		{
+			name: "source with Provenance merge",
+			src: sourcestore.Source{
+				Name:        "test",
+				Type:        "git",
+				ResolvedRef: "abc123",
+				Provenance:  map[string]any{"key1": "val1", "key2": "val2"},
+			},
+			want: map[string]any{"name": "test", "type": "git", "resolved_ref": "abc123", "key1": "val1", "key2": "val2"},
+		},
+		{
+			name: "source with Provenance does not override existing keys",
+			src: sourcestore.Source{
+				Name:        "test",
+				Type:        "git",
+				ResolvedRef: "abc123",
+				Provenance:  map[string]any{"name": "override", "key1": "val1"},
+			},
+			want: map[string]any{"name": "test", "type": "git", "resolved_ref": "abc123", "key1": "val1"},
+		},
+		{
+			name: "source with aliases",
+			src: sourcestore.Source{
+				Name:    "test",
+				Type:    "git",
+				Aliases: []types.CommandAlias{{From: "v1", To: "main", Description: "alias v1 to main"}},
+			},
+			want: map[string]any{"name": "test", "type": "git", "aliases": []map[string]string{{"from": "v1", "to": "main", "description": "alias v1 to main"}}},
+		},
+		{
+			name: "source with trust",
+			src: sourcestore.Source{
+				Name:  "test",
+				Type:  "git",
+				Trust: map[string]any{"key": "value"},
+			},
+			want: map[string]any{"name": "test", "type": "git", "trust": map[string]any{"key": "value"}},
+		},
+		{
+			name: "source with metadata",
+			src: sourcestore.Source{
+				Name:     "test",
+				Type:     "git",
+				Metadata: map[string]any{"version": "1.0"},
+			},
+			want: map[string]any{"name": "test", "type": "git", "metadata": map[string]any{"version": "1.0"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sourcetoProvenance(tt.src)
+			if !deepEqualMap(got, tt.want) {
+				t.Errorf("sourcetoProvenance() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// deepEqualMap compares two maps for equality.
+func deepEqualMap(a, b map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if !reflectDeepEqual(v, b[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+// reflectDeepEqual performs deep comparison for any type.
+func reflectDeepEqual(x, y any) bool {
+	if x == nil || y == nil {
+		return x == y
+	}
+	switch xv := x.(type) {
+	case map[string]any:
+		yv, ok := y.(map[string]any)
+		if !ok {
+			return false
+		}
+		return deepEqualMap(xv, yv)
+	case []any:
+		yv, ok := y.([]any)
+		if !ok {
+			return false
+		}
+		if len(xv) != len(yv) {
+			return false
+		}
+		for i := range xv {
+			if !reflectDeepEqual(xv[i], yv[i]) {
+				return false
+			}
+		}
+		return true
+	case []map[string]string:
+		yv, ok := y.([]map[string]string)
+		if !ok {
+			return false
+		}
+		if len(xv) != len(yv) {
+			return false
+		}
+		for i := range xv {
+			if !deepEqualStringMap(xv[i], yv[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return x == y
+	}
+}
+
+// deepEqualStringMap compares two string maps for equality.
+func deepEqualStringMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if v != b[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestLoadPolicyContextWithInvalidFile tests loadPolicyContext behavior with invalid/unreadable policy files.
+func TestLoadPolicyContextWithInvalidFile(t *testing.T) {
+	// Use a non-existent file path.
+	t.Setenv("FLWD_POLICY_FILE", "/nonexistent/policy/file.yaml")
+
+	ctx := context.Background()
+	policyCtx, err := loadPolicyContext(ctx, "secure", nil)
+
+	if err == nil {
+		t.Fatal("expected error when policy file does not exist")
+	}
+	if !strings.Contains(err.Error(), "load policy bundle") {
+		t.Fatalf("expected 'load policy bundle' error, got %v", err)
+	}
+	if policyCtx != nil {
+		t.Fatal("expected nil policy context on error")
+	}
+}
+
+// TestLoadPolicyContextWithInvalidContent tests loadPolicyContext behavior with invalid YAML content.
+func TestLoadPolicyContextWithInvalidContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "invalid.yaml")
+	if err := os.WriteFile(path, []byte("{{invalid yaml {{"), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	t.Setenv("FLWD_POLICY_FILE", path)
+
+	ctx := context.Background()
+	policyCtx, err := loadPolicyContext(ctx, "secure", &bundleVerifierStub{})
+
+	if err == nil {
+		t.Fatal("expected error when policy file contains invalid YAML")
+	}
+	if !strings.Contains(err.Error(), "load policy bundle") {
+		t.Fatalf("expected 'load policy bundle' error, got %v", err)
+	}
+	if policyCtx != nil {
+		t.Fatal("expected nil policy context on error")
+	}
+}
+
+// TestLoadPolicyContextNonSecureNoVerifier tests that non-secure profile does not call verifier.
+func TestLoadPolicyContextNonSecureNoVerifier(t *testing.T) {
+	policyPath := writePolicyFile(t, `allowed_registries: ["registry.corp.example"]`)
+	t.Setenv("FLWD_POLICY_FILE", policyPath)
+
+	stub := &bundleVerifierStub{err: errors.New("should not be called")}
+	ctx := context.Background()
+	policyCtx, err := loadPolicyContext(ctx, "permissive", stub)
+
+	if err != nil {
+		t.Fatalf("loadPolicyContext: %v", err)
+	}
+	if policyCtx == nil {
+		t.Fatal("expected non-nil policy context for permissive profile")
+	}
+	if stub.called {
+		t.Fatal("expected bundle verifier not to be called for permissive profile")
+	}
+}
+
+// TestLoadPolicyContextSecureWithInvalidBundle tests that secure profile returns error when bundle verification fails.
+func TestLoadPolicyContextSecureWithInvalidBundle(t *testing.T) {
+	policyPath := writePolicyFile(t, `allowed_registries: ["registry.corp.example"]`)
+	t.Setenv("FLWD_POLICY_FILE", policyPath)
+
+	stub := &bundleVerifierStub{err: errors.New("invalid signature")}
+	ctx := context.Background()
+	_, err := loadPolicyContext(ctx, "secure", stub)
+
+	if err == nil {
+		t.Fatal("expected error when bundle verification fails")
+	}
+	if !strings.Contains(err.Error(), "invalid signature") {
+		t.Fatalf("expected underlying verifier error, got %v", err)
+	}
+}
+
+// TestLoadPolicyContextReturnsNonNilWhenNoPolicyFile tests that loadPolicyContext returns non-nil context when no policy file is set.
+func TestLoadPolicyContextReturnsNonNilWhenNoPolicyFile(t *testing.T) {
+	// Ensure FLWD_POLICY_FILE is not set.
+	os.Unsetenv("FLWD_POLICY_FILE")
+
+	ctx := context.Background()
+	policyCtx, err := loadPolicyContext(ctx, "secure", nil)
+
+	if err != nil {
+		t.Fatalf("loadPolicyContext: %v", err)
+	}
+	if policyCtx == nil {
+		t.Fatal("expected non-nil policy context when no policy file is set")
+	}
+}
+
+// TestLoadPolicyContextWithStubs verifies that the bundle verifier stub works correctly.
+func TestLoadPolicyContextWithStubs(t *testing.T) {
+	policyPath := writePolicyFile(t, `allowed_registries: ["registry.corp.example"]`)
+	t.Setenv("FLWD_POLICY_FILE", policyPath)
+
+	stub := &bundleVerifierStub{}
+	ctx := context.Background()
+	policyCtx, err := loadPolicyContext(ctx, "secure", stub)
+	if err != nil {
+		t.Fatalf("loadPolicyContext: %v", err)
+	}
+	if policyCtx == nil {
+		t.Fatal("expected non-nil policy context")
+	}
+	if !stub.called {
+		t.Fatal("expected bundle verifier to be invoked")
+	}
+	if stub.path != policyPath {
+		t.Fatalf("expected verifier path %q, got %q", policyPath, stub.path)
+	}
+
+	// Verify stub satisfies BundleVerifier interface.
+	var _ verify.BundleVerifier = stub
 }
