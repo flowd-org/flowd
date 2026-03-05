@@ -72,3 +72,24 @@ func TestSupervisorOptionsCustom(t *testing.T) {
 		t.Errorf("RestartWait = %v, want 2s", s.opts.RestartWait)
 	}
 }
+
+// TestSupervisorIsBenignError_SQLiteError verifies SQLite errors are treated as benign.
+func TestSupervisorIsBenignError_SQLiteError(t *testing.T) {
+	t.Parallel()
+
+	err := &sqliteError{msg: "database is locked"}
+	if !isBenignError(err) {
+		t.Errorf("expected sqliteError to be benign")
+	}
+}
+
+// TestSupervisorOptionsZeroValues verifies zero values are defaulted.
+func TestSupervisorOptionsZeroValues(t *testing.T) {
+	s := NewSupervisor(SupervisorOptions{})
+	if s.opts.MaxRestarts != defaultSupervisionMaxRestarts {
+		t.Errorf("MaxRestarts = %d, want %d", s.opts.MaxRestarts, defaultSupervisionMaxRestarts)
+	}
+	if s.opts.RestartWait != defaultSupervisionRestartWait {
+		t.Errorf("RestartWait = %v, want %v", s.opts.RestartWait, defaultSupervisionRestartWait)
+	}
+}
