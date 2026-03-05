@@ -12,16 +12,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flowd-org/flowd/internal/artifacts"
 	"github.com/flowd-org/flowd/internal/coredb"
-	"github.com/flowd-org/flowd/internal/paths"
 	"github.com/flowd-org/flowd/internal/policy"
 	"github.com/flowd-org/flowd/internal/policy/verify"
 	"github.com/flowd-org/flowd/internal/server/metrics"
+	"github.com/flowd-org/flowd/internal/server/sourcestore"
 	"github.com/flowd-org/flowd/internal/types"
 )
 
@@ -424,5 +425,266 @@ func TestRun_StopsOnJanitorFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), sentinelErr) {
 		t.Fatalf("expected error to contain %q, got %v", sentinelErr, err)
+	}
+}
+
+// Test_sourcetoProvenance tests the sourcetoProvenance helper function.
+func Test_sourcetoProvenance(t *testing.T) {
+	tests := []struct {
+		name   string
+		source sourcestore.Source
+		want   map[string]any
+	}{
+		{
+			name: "minimal source",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "git",
+			},
+			want: map[string]any{
+				"name": "test-source",
+				"type": "git",
+			},
+		},
+		{
+			name: "source with ref and url",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "oci",
+				Ref:  "v1.0.0",
+				URL:  "https://example.com/repo",
+			},
+			want: map[string]any{
+				"name": "test-source",
+				"type": "oci",
+				"ref":  "v1.0.0",
+				"url":  "https://example.com/repo",
+			},
+		},
+		{
+			name: "source with resolved ref and commit",
+			source: sourcestore.Source{
+				Name:           "test-source",
+				Type:           "git",
+				ResolvedRef:    "refs/heads/main",
+				ResolvedCommit: "abc123def456",
+			},
+			want: map[string]any{
+				"name":            "test-source",
+				"type":            "git",
+				"resolved_ref":    "refs/heads/main",
+				"resolved_commit": "abc123def456",
+			},
+		},
+		{
+			name: "source with digest",
+			source: sourcestore.Source{
+				Name:   "test-source",
+				Type:   "oci",
+				Digest: "sha256:abcdef123456",
+			},
+			want: map[string]any{
+				"name":   "test-source",
+				"type":   "oci",
+				"digest": "sha256:abcdef123456",
+			},
+		},
+		{
+			name: "source with resolved_ref set to digest when empty",
+			source: sourcestore.Source{
+				Name:        "test-source",
+				Type:        "oci",
+				Digest:      "sha256:abcdef123456",
+				ResolvedRef: "",
+			},
+			want: map[string]any{
+				"name":   "test-source",
+				"type":   "oci",
+				"digest": "sha256:abcdef123456",
+			},
+		},
+		{
+			name: "source with pull policy and verify signatures",
+			source: sourcestore.Source{
+				Name:             "test-source",
+				Type:             "oci",
+				PullPolicy:       "always",
+				VerifySignatures: true,
+			},
+			want: map[string]any{
+				"name":              "test-source",
+				"type":              "oci",
+				"pull_policy":       "always",
+				"verify_signatures": true,
+			},
+		},
+		{
+			name: "source with provenance",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "git",
+				Provenance: map[string]any{
+					"build_id":   "12345",
+					"builder":    "github-actions",
+					"source_ref": "main",
+				},
+			},
+			want: map[string]any{
+				"name":       "test-source",
+				"type":       "git",
+				"build_id":   "12345",
+				"builder":    "github-actions",
+				"source_ref": "main",
+			},
+		},
+		{
+			name: "source with provenance merging (no conflict)",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "git",
+				Provenance: map[string]any{
+					"custom_key": "custom_value",
+				},
+			},
+			want: map[string]any{
+				"name":       "test-source",
+				"type":       "git",
+				"custom_key": "custom_value",
+			},
+		},
+		{
+			name: "source with provenance merging (conflict - source wins)",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "oci",
+				Provenance: map[string]any{
+					"name":  "should_not_override",
+					"extra": "additional",
+				},
+			},
+			want: map[string]any{
+				"name":  "test-source", // source field wins
+				"type":  "oci",
+				"extra": "additional", // provenance field added
+			},
+		},
+		{
+			name: "source with aliases",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "git",
+				Aliases: []types.CommandAlias{
+					{From: "build", To: "make build", Description: "Build the project"},
+					{From: "test", To: "make test", Description: "Run tests"},
+				},
+			},
+			want: map[string]any{
+				"name": "test-source",
+				"type": "git",
+				"aliases": []map[string]string{
+					{"from": "build", "to": "make build", "description": "Build the project"},
+					{"from": "test", "to": "make test", "description": "Run tests"},
+				},
+			},
+		},
+		{
+			name: "source with trust",
+			source: sourcestore.Source{
+				Name: "test-source",
+				Type: "oci",
+				Trust: map[string]any{
+					"oidc_issuer": "https://accounts.google.com",
+					"repository":  "my-repo",
+				},
+			},
+			want: map[string]any{
+				"name": "test-source",
+				"type": "oci",
+				"trust": map[string]any{
+					"oidc_issuer": "https://accounts.google.com",
+					"repository":  "my-repo",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sourcetoProvenance(tt.source)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("sourcetoProvenance() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Test_loadPolicyContext tests the loadPolicyContext helper function.
+func Test_loadPolicyContext(t *testing.T) {
+	tests := []struct {
+		name           string
+		policyFile     string
+		profile        string
+		bundleVerifier policyverify.BundleVerifier
+		expectError    bool
+	}{
+		{
+			name:           "no policy file - returns non-nil context",
+			policyFile:     "",
+			profile:        "permissive",
+			bundleVerifier: nil,
+			expectError:    false,
+		},
+		{
+			name:           "invalid policy file path - returns error",
+			policyFile:     "/nonexistent/policy.yaml",
+			profile:        "permissive",
+			bundleVerifier: nil,
+			expectError:    true,
+		},
+		{
+			name:           "secure profile with bundle verifier stub",
+			policyFile:     "",
+			profile:        "secure",
+			bundleVerifier: &bundleVerifierStub{},
+			expectError:    false,
+		},
+		{
+			name:           "non-secure profile - does not call verifier",
+			policyFile:     "",
+			profile:        "permissive",
+			bundleVerifier: &bundleVerifierStub{},
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			if tt.policyFile != "" {
+				t.Setenv("FLWD_POLICY_FILE", tt.policyFile)
+			} else {
+				os.Unsetenv("FLWD_POLICY_FILE")
+			}
+
+			policyCtx, err := loadPolicyContext(ctx, tt.profile, tt.bundleVerifier)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				if !strings.Contains(err.Error(), "load policy bundle") &&
+					!strings.Contains(err.Error(), "verify policy bundle") {
+					t.Fatalf("expected load/verify error, got: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if policyCtx == nil {
+					t.Fatal("expected non-nil policy context")
+				}
+			}
+		})
 	}
 }
