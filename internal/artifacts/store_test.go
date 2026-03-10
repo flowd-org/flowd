@@ -140,3 +140,86 @@ func openTestDB(t *testing.T) *coredb.DB {
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
+
+func TestStoreDeleteMissingArtifact(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(Options{RootDir: t.TempDir(), MaxArtifactBytes: 256 << 20})
+
+	// Deleting a non-existent artifact should return nil (already clean)
+	err := store.Delete("018f0d40-0b3e-7c1a-8f0e-5f0b6bd8f404")
+	if err != nil {
+		t.Fatalf("expected nil error for missing artifact, got %v", err)
+	}
+}
+
+func TestStoreDeleteExistingArtifact(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := NewStore(Options{RootDir: t.TempDir(), MaxArtifactBytes: 256 << 20})
+
+	// Write an artifact first
+	written, err := store.Write(ctx, testArtifactID, strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	if written != 5 {
+		t.Fatalf("expected 5 bytes written, got %d", written)
+	}
+
+	// Verify file exists before delete
+	targetPath := store.pathForID(testArtifactID)
+	if _, statErr := os.Stat(targetPath); statErr != nil {
+		t.Fatalf("expected artifact file to exist: %v", statErr)
+	}
+
+	// Delete the artifact
+	err = store.Delete(testArtifactID)
+	if err != nil {
+		t.Fatalf("delete artifact: %v", err)
+	}
+
+	// Verify file no longer exists
+	if _, statErr := os.Stat(targetPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected artifact file to be removed")
+	}
+}
+
+func TestStoreOpenMissingArtifact(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(Options{RootDir: t.TempDir(), MaxArtifactBytes: 256 << 20})
+
+	// Opening a non-existent artifact should return an error
+	f, err := store.Open("018f0d40-0b3e-7c1a-8f0e-5f0b6bd8f404")
+	if err == nil {
+		t.Fatalf("expected error for missing artifact, got nil")
+	}
+	_ = f // ignore unused variable if err != nil
+}
+
+func TestStoreCopyWithContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store := NewStore(Options{RootDir: t.TempDir(), MaxArtifactBytes: 256 << 20})
+
+	// Use a reader that blocks to simulate a slow source
+	src := &blockingReader{}
+
+	// Cancel immediately to trigger context cancellation during copy
+	cancel()
+
+	_, err := store.Write(ctx, testArtifactID, src)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error, got %v", err)
+	}
+}
+
+type blockingReader struct{}
+
+func (r *blockingReader) Read(p []byte) (int, error) {
+	// Block indefinitely to simulate a slow reader
+	select {}
+}
