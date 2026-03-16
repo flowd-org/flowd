@@ -1,17 +1,22 @@
-name: lint
+name: golangci-lint
 
 on:
   pull_request:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: golangci-lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   golangci-lint:
-    name: Go linting
+    name: golangci-lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

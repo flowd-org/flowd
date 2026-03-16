@@ -2,13 +2,18 @@ name: dependency-review
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: dependency-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dependency-review:
-    name: Dependency review
+    name: dependency-review
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
