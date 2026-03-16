@@ -653,6 +653,35 @@ func openTestDB(t *testing.T) *DB {
 	return db
 }
 
+func seedExpiredRuleYRows(t *testing.T, ctx context.Context, db *DB, namespace string, totalRows int, updatedAt, expiresAt time.Time) {
+	t.Helper()
+
+	tx, err := db.SQL().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		t.Fatalf("prepare seed stmt: %v", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	updatedMillis := updatedAt.UnixMilli()
+	expiresMillis := expiresAt.UnixMilli()
+	for i := 0; i < totalRows; i++ {
+		if _, err := stmt.ExecContext(ctx, namespace, fmt.Sprintf("exp:%d", i), []byte("v"), "application/octet-stream", 1, updatedMillis, expiresMillis); err != nil {
+			t.Fatalf("seed exp:%d: %v", i, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit seed tx: %v", err)
+	}
+}
+
 func TestRuleYJanitorSweepUntilDrainedBounded(t *testing.T) {
 	t.Parallel()
 
@@ -701,21 +730,15 @@ func TestRuleYJanitorDrainCapacitySatisfiesSLA(t *testing.T) {
 
 	ctx := context.Background()
 	db := openTestDB(t)
-	store := NewRuleYStore(db)
 	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := base
-	store.now = func() time.Time { return now }
 
 	// Seed worst-case backlog: 10,000 expired rows (default max_rows for a namespace)
 	const totalRows = 10_000
-	for i := 0; i < totalRows; i++ {
-		if _, err := store.Put(ctx, "core_triggers", fmt.Sprintf("exp:%d", i), []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
-			t.Fatalf("put exp:%d: %v", i, err)
-		}
-	}
+	seedExpiredRuleYRows(t, ctx, db, "core_triggers", totalRows, base, base.Add(time.Second))
 
 	// Advance time so all rows are expired
-	now = now.Add(2 * time.Second)
+	now = base.Add(2 * time.Second)
 
 	// Janitor with derived defaults from server config (batch=256, maxIterations=40 => 10240 capacity)
 	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
