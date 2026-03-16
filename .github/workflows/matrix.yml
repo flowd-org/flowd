@@ -16,18 +16,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ['1.25.3', 'stable']
+        include:
+          - lane: minimum
+            go-version-file: go.mod
+          - lane: stable
+            go-version: stable
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - name: Setup Go
+      - name: Setup Go (minimum from go.mod)
+        if: ${{ matrix.go-version-file != '' }}
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: ${{ matrix.go-version-file }}
+
+      - name: Setup Go (stable)
+        if: ${{ matrix.go-version != '' }}
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version: ${{ matrix.go-version }}
 
       - name: Run tests with race detection
         run: |
-          echo "Testing with Go ${{ matrix.go-version }}"
-          go test -race ./...
+          echo "Testing matrix lane: ${{ matrix.lane }}"
+          go test -race -timeout 20m ./...

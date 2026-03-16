@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -2504,13 +2505,13 @@ container:
 	// Start a live SSE stream and ensure it is ready.
 	liveCtx, liveCancel := context.WithCancel(context.Background())
 	liveReq := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(liveCtx)
-	liveRec := httptest.NewRecorder()
+	liveRec := newLockedRecorder()
 	liveDone := make(chan struct{})
 	go func() {
 		globalEvents.ServeHTTP(liveRec, liveReq)
 		close(liveDone)
 	}()
-	waitFor(func() bool { return strings.Contains(liveRec.Body.String(), "retry: 3000") }, 200*time.Millisecond, t)
+	waitFor(func() bool { return bytes.Contains(liveRec.snapshot(), []byte("retry: 3000")) }, 200*time.Millisecond, t)
 
 	// Trigger a policy denial.
 	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"job_id":"override"}`))
@@ -2531,20 +2532,20 @@ container:
 	}
 
 	// Live stream should include policy.denied event.
-	waitFor(func() bool { return strings.Contains(liveRec.Body.String(), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
+	waitFor(func() bool { return strings.Contains(string(liveRec.snapshot()), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
 	liveCancel()
 	<-liveDone
 
 	// Persisted replay should include policy.denied event as well.
 	replayCtx, replayCancel := context.WithCancel(context.Background())
 	replayReq := httptest.NewRequest(http.MethodGet, "/events/stream", nil).WithContext(replayCtx)
-	replayRec := httptest.NewRecorder()
+	replayRec := newLockedRecorder()
 	replayDone := make(chan struct{})
 	go func() {
 		globalEvents.ServeHTTP(replayRec, replayReq)
 		close(replayDone)
 	}()
-	waitFor(func() bool { return strings.Contains(replayRec.Body.String(), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
+	waitFor(func() bool { return strings.Contains(string(replayRec.snapshot()), "\"type\":\"policy.denied\"") }, 500*time.Millisecond, t)
 	replayCancel()
 	<-replayDone
 }
@@ -2789,6 +2790,39 @@ func (r *recordingSink) countBy(event string) int {
 		}
 	}
 	return n
+}
+
+type lockedRecorder struct {
+	mu sync.Mutex
+	rr *httptest.ResponseRecorder
+}
+
+func newLockedRecorder() *lockedRecorder {
+	return &lockedRecorder{rr: httptest.NewRecorder()}
+}
+
+func (r *lockedRecorder) Header() http.Header {
+	return r.rr.Header()
+}
+
+func (r *lockedRecorder) WriteHeader(statusCode int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rr.WriteHeader(statusCode)
+}
+
+func (r *lockedRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rr.Write(p)
+}
+
+func (r *lockedRecorder) Flush() {}
+
+func (r *lockedRecorder) snapshot() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]byte(nil), r.rr.Body.Bytes()...)
 }
 
 func waitFor(cond func() bool, timeout time.Duration, t *testing.T) {
