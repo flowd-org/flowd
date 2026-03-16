@@ -15,6 +15,7 @@ conformance/conformance
 conformance/conformance_test
 coverage.out
 coverage.txt
+.tmp-bin/
 
 # Go Modules
 vendor/
