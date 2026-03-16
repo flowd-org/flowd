@@ -129,3 +129,26 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestGenerateRunnerProfile_JoinShellListAndMap_Coverage(t *testing.T) {
+	// cover joinShellList with empty and single-element arrays (shellQuote wraps values in single quotes)
+	empty := []string{}
+	if joinShellList(empty) != "" {
+		t.Errorf("empty array: expected empty string")
+	}
+	single := []string{"one"}
+	if joinShellList(single) != "'one'" {
+		t.Errorf("single element: expected 'one', got %q", joinShellList(single))
+	}
+
+	// cover joinShellMap with empty and populated maps
+	emptyMap := map[string]string{}
+	if joinShellMap(emptyMap) != "" {
+		t.Errorf("empty map: expected empty string")
+	}
+	populated := map[string]string{"a": "1", "b": "2"}
+	result := joinShellMap(populated)
+	if result == "" {
+		t.Errorf("populated map returned empty string")
+	}
+}
