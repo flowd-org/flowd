@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-package policy
+package policy_test
 
 import (
+	policy "github.com/flowd-org/flowd/internal/policy"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestLoadFile_EmptyPath(t *testing.T) {
-	_, err := LoadFile("")
+	_, err := policy.LoadFile("")
 	if err == nil {
 		t.Fatal("expected error for empty path")
 	}
@@ -20,7 +21,7 @@ func TestLoadFile_EmptyPath(t *testing.T) {
 }
 
 func TestLoadFile_UnreadablePath(t *testing.T) {
-	_, err := LoadFile("/nonexistent/path/policy.yaml")
+	_, err := policy.LoadFile("/nonexistent/path/policy.yaml")
 	if err == nil {
 		t.Fatal("expected error for unreadable path")
 	}
@@ -33,7 +34,7 @@ func TestLoadFile_InvalidYAML(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "invalid.yaml")
 	os.WriteFile(tmpFile, []byte("invalid: yaml: ["), 0o600)
 
-	_, err := LoadFile(tmpFile)
+	_, err := policy.LoadFile(tmpFile)
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}
@@ -44,14 +45,14 @@ func TestLoadFile_InvalidYAML(t *testing.T) {
 
 func TestLoadFile_InvalidVerifySignatures(t *testing.T) {
 	tmpDir := t.TempDir()
-	bundle := &Bundle{
+	bundle := &policy.Bundle{
 		VerifySignatures: stringPtr("invalid_value"),
 	}
 	data, _ := yaml.Marshal(bundle)
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
 	os.WriteFile(tmpFile, data, 0o600)
 
-	_, err := LoadFile(tmpFile)
+	_, err := policy.LoadFile(tmpFile)
 	if err == nil {
 		t.Fatal("expected error for invalid verify_signatures")
 	}
@@ -62,7 +63,7 @@ func TestLoadFile_InvalidVerifySignatures(t *testing.T) {
 
 func TestLoadFromEnvOrDefault_WithEnvSet(t *testing.T) {
 	tmpDir := t.TempDir()
-	bundle := &Bundle{}
+	bundle := &policy.Bundle{}
 	data, _ := yaml.Marshal(bundle)
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
 	os.WriteFile(tmpFile, data, 0o600)
@@ -71,7 +72,7 @@ func TestLoadFromEnvOrDefault_WithEnvSet(t *testing.T) {
 	defer os.Setenv("FLWD_POLICY_FILE", oldVal)
 	os.Setenv("FLWD_POLICY_FILE", tmpFile)
 
-	b, path, err := LoadFromEnvOrDefault()
+	b, path, err := policy.LoadFromEnvOrDefault()
 	if err != nil {
 		t.Fatalf("LoadFromEnvOrDefault error: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestLoadFromEnvOrDefault_WithEnvUnset_NoDefault(t *testing.T) {
 	defer os.Setenv("FLWD_POLICY_FILE", oldVal)
 	os.Unsetenv("FLWD_POLICY_FILE")
 
-	b, path, err := LoadFromEnvOrDefault()
+	b, path, err := policy.LoadFromEnvOrDefault()
 	if err != nil {
 		t.Fatalf("LoadFromEnvOrDefault error: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestLoadFromEnvOrDefault_WithEnvUnset_NoDefault(t *testing.T) {
 
 func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	bundle := &Bundle{}
+	bundle := &policy.Bundle{}
 	data, _ := yaml.Marshal(bundle)
 
 	oldCwd, _ := os.Getwd()
@@ -109,7 +110,7 @@ func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 	defaultFile := filepath.Join(tmpDir, "flwd.policy.yaml")
 	os.WriteFile(defaultFile, data, 0o600)
 
-	b, path, err := LoadFromEnvOrDefault()
+	b, path, err := policy.LoadFromEnvOrDefault()
 	if err != nil {
 		t.Fatalf("LoadFromEnvOrDefault error: %v", err)
 	}
@@ -123,14 +124,14 @@ func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 
 func TestNormalizeAllowedRegistries(t *testing.T) {
 	tmpDir := t.TempDir()
-	bundle := &Bundle{
+	bundle := &policy.Bundle{
 		AllowedRegistries: []string{"EXAMPLE.COM", "GITHUB.COM"},
 	}
 	data, _ := yaml.Marshal(bundle)
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
 	os.WriteFile(tmpFile, data, 0o600)
 
-	b, err := LoadFile(tmpFile)
+	b, err := policy.LoadFile(tmpFile)
 	if err != nil {
 		t.Fatalf("LoadFile error: %v", err)
 	}
