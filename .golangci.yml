@@ -1,4 +1,6 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later 
+# SPDX-License-Identifier: AGPL-3.0-or-later
+version: "2"
+
 run:
   timeout: 5m
   tests: true
@@ -7,13 +9,12 @@ run:
 
 output:
   formats:
-    - format: github-actions
+    text:
+      path: stdout
 
 linters:
   enable:
     - govet
-    - gofmt
-    - goimports
     - errcheck
     - staticcheck
     - ineffassign
@@ -35,52 +36,59 @@ linters:
     - whitespace
     - nolintlint
     - testpackage
-  disable:
-    - wsl
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  cyclop:
-    max-complexity: 15
-    package-average: 0.0
-  misspell:
-    locale: US
-  revive:
+  settings:
+    gocyclo:
+      min-complexity: 15
+    cyclop:
+      max-complexity: 15
+      package-average: 0.0
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: var-naming
+        - name: receiver-naming
+        - name: early-return
+        - name: errorf
+        - name: error-naming
+        - name: package-comments
+        - name: indent-error-flow
+    forbidigo:
+      forbid:
+        - pattern: 'fmt\.Print(f|ln)?\('
+      exclude-godoc-examples: true
+    gosec:
+      severity: medium
+      confidence: medium
+  exclusions:
     rules:
-      - name: var-naming
-      - name: receiver-naming
-      - name: early-return
-      - name: errorf
-      - name: error-naming
-      - name: package-comments
-      - name: indent-error-flow
-  forbidigo:
-    forbid:
-      - 'fmt\.Print(f|ln)?\('
-    exclude-godoc-examples: true
-  gosec:
-    severity: medium
-    confidence: medium
+      - path: _test\.go$
+        linters:
+          - gocyclo
+          - cyclop
+          - dupl
+      - path: ^third_party/|^vendor/|^docs/|^\.github/
+        linters:
+          - gosec
+    paths:
+      - vendor
+      - third_party
+      - docs
+      - .git
+      - .github
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - vendor
+      - third_party
+      - docs
+      - .git
+      - .github
 
 issues:
-  exclude-use-default: false
-  exclude-rules:
-    - path: _test\.go$
-      linters:
-        - gocyclo
-        - cyclop
-        - dupl
-    - path: ^third_party/|^vendor/|^docs/|^\.github/
-      linters:
-        - gosec
   max-issues-per-linter: 0
   max-same-issues: 0
-
-paths:
-  skip-dirs:
-    - vendor
-    - third_party
-    - docs
-    - .git
-    - .github
