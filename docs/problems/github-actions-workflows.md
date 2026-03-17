@@ -1,3 +1,13 @@
+---
+title: "GitHub Actions workflow troubleshooting"
+description: "Common GitHub Actions workflow failures in this repository and how to diagnose them."
+weight: 10
+---
+
+{{% callout type="info" %}}
+The documentation may not be fully up to date. Please refer to the [disclaimer]({{< ref "_index.md" >}}) for important information about the project's active development status, documentation accuracy, and ongoing efforts to stabilize the codebase.
+{{% /callout %}}
+
 # GitHub Actions: common failures and how to diagnose them
 
 This page explains frequent causes of GitHub Actions failures we see in this repository and practical steps to diagnose and fix them. It is intended for maintainers and contributors who encounter failing workflows on PRs or pushes.
@@ -22,7 +32,7 @@ This page explains frequent causes of GitHub Actions failures we see in this rep
 - Symptom: 403 Forbidden or "insufficient scope" messages in logs.
 - Cause: Missing repository or organization permissions for the token used by the workflow (GITHUB_TOKEN vs PAT), or a workflow `permissions:` stanza that restricts access.
 - Diagnose: Inspect the top-level job logs for the step that makes API calls. Check repository settings → Actions → General → Workflow permissions.
-- See also: docs/problems/auth/invalid-token.md and docs/problems/auth/insufficient-scope.md
+- See also: [invalid token](/problems/auth/invalid-token/) and [insufficient scope](/problems/auth/insufficient-scope/)
 
 ### 2) Dependabot and pinned actions
 
@@ -52,8 +62,8 @@ This page explains frequent causes of GitHub Actions failures we see in this rep
 
 ## Cross-links and references
 
-- Problems: auth — docs/problems/auth/invalid-token.md, docs/problems/auth/insufficient-scope.md
-- Problems: rbac — docs/problems/rbac/explicit-deny.md, docs/problems/rbac/no-match.md
+- Problems: auth — [invalid token](/problems/auth/invalid-token/), [insufficient scope](/problems/auth/insufficient-scope/)
+- Problems: rbac — [explicit deny](/problems/rbac/explicit-deny/), [no match](/problems/rbac/no-match/)
 - API errors and Problem Details: docs/api-reference.md
 
 ## Example log snippets
