@@ -32,7 +32,9 @@ func TestLoadFile_UnreadablePath(t *testing.T) {
 
 func TestLoadFile_InvalidYAML(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "invalid.yaml")
-	os.WriteFile(tmpFile, []byte("invalid: yaml: ["), 0o600)
+	if err := os.WriteFile(tmpFile, []byte("invalid: yaml: ["), 0o600); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
 
 	_, err := policy.LoadFile(tmpFile)
 	if err == nil {
