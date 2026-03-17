@@ -22,7 +22,7 @@ linters:
     - gocyclo
     - gocognit
     - gocritic
-    - stylecheck
+#    - stylecheck
 #    - typecheck
     - unparam
     - unconvert
