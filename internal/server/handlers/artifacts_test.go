@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -189,19 +190,13 @@ func TestArtifactsHandler_NoPathLeakOnError(t *testing.T) {
 		t.Fatalf("create artifact metadata: %v", err)
 	}
 
-	// Open the byte file and set permissions to 0 so subsequent opens fail with path in error
-	f, err := byteStore.Open(artifactID)
-	if err != nil {
-		t.Fatalf("open artifact bytes: %v", err)
+	// Point the handler to a misconfigured byte-store root that is a file, not a directory.
+	// This deterministically forces byteStore.Open to return a non-NotExist *os.PathError.
+	badRoot := filepath.Join(t.TempDir(), "artifacts-root-file")
+	if err := os.WriteFile(badRoot, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed bad root file: %v", err)
 	}
-	path := f.Name()
-	f.Close()
-
-	// Set permissions to 0 to force permission denied error that includes the path
-	if err := os.Chmod(path, 0); err != nil {
-		t.Fatalf("chmod 0: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	byteStore = artifacts.NewStore(artifacts.Options{RootDir: badRoot})
 
 	capturer := &artifactCaptureHandler{}
 	logger := slog.New(capturer)
@@ -218,8 +213,8 @@ func TestArtifactsHandler_NoPathLeakOnError(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if strings.Contains(body, path) {
-		t.Errorf("response body leaks internal path: %q contains %q", body, path)
+	if strings.Contains(body, badRoot) {
+		t.Errorf("response body leaks internal path: %q contains %q", body, badRoot)
 	}
 	if strings.Contains(body, "/") && !strings.Contains(body, "artifact not found") && !strings.Contains(body, "tenant mismatch") {
 		// The response should be a generic error without any path-like content
