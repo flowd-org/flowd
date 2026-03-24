@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package coredb
+package coredb //nolint:testpackage // intentionally in-package to exercise unexported RunStore.upsert and the local DB helper contract.
 
 import (
 	"context"
