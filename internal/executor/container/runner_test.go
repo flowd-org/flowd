@@ -280,6 +280,12 @@ func TestIsContainerNotFound(t *testing.T) {
 func TestStopContainer_Timeout(t *testing.T) {
 	ctx := context.Background()
 
+	originalRuntimeCommand := runtimeCommand
+	runtimeCommand = func(ctx context.Context, runtime Runtime, args ...string) ([]byte, error) {
+		return []byte(""), nil
+	}
+	defer func() { runtimeCommand = originalRuntimeCommand }()
+
 	// Zero timeout should default to 10 seconds
 	err := StopContainer(ctx, RuntimeDocker, "test", 0)
 	if err != nil {
