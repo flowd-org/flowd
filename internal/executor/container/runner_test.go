@@ -205,7 +205,7 @@ func TestStopContainer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // immediate cancellation
 	if err := StopContainer(ctx, RuntimeDocker, "test", 0); err != nil {
-		t.Fatalf("expected nil on cancelled context for missing container, got %v", err)
+		t.Fatalf("expected nil on canceled context for missing container, got %v", err)
 	}
 }
 
@@ -228,7 +228,7 @@ func TestKillContainer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := KillContainer(ctx, RuntimeDocker, "test"); err != nil {
-		t.Fatalf("expected nil on cancelled context for missing container, got %v", err)
+		t.Fatalf("expected nil on canceled context for missing container, got %v", err)
 	}
 }
 
@@ -251,7 +251,7 @@ func TestRemoveContainer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := RemoveContainer(ctx, RuntimePodman, "test"); err != nil {
-		t.Fatalf("expected nil on cancelled context for missing container, got %v", err)
+		t.Fatalf("expected nil on canceled context for missing container, got %v", err)
 	}
 }
 
