@@ -32,7 +32,7 @@ argspec:
 
 func TestAttachFlags_FromArgSpec(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tmp, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmp, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "config.d", "config.yaml"), []byte(cfg), 0o644); err != nil {
@@ -94,7 +94,7 @@ func TestAttachFlags_ConfigMissing(t *testing.T) {
 func TestAttachFlags_ArgSpecEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "config.d")
-	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"`
@@ -112,7 +112,7 @@ func TestAttachFlags_ArgSpecEmpty(t *testing.T) {
 func TestAttachFlags_InvalidArgName(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "config.d")
-	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"
@@ -135,7 +135,7 @@ argspec:
 func TestAttachFlags_IntegerDefault(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "config.d")
-	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"
@@ -167,7 +167,7 @@ argspec:
 func TestAttachFlags_ArrayAndObject(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "config.d")
-	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"
@@ -201,7 +201,7 @@ argspec:
 func TestAttachFlags_UnsupportedType(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "config.d")
-	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"
@@ -224,7 +224,7 @@ argspec:
 func TestAttachFlags_EnumCompletion(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "config.d")
-	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"
