@@ -190,7 +190,10 @@ func TestStepWriter_Flush(t *testing.T) {
 	fake := &fakeSink{}
 	w := NewStepWriter(fake, "run1", "step1", "stdout", &buf, nil)
 
-	w.Write([]byte("line1\n"))
+	n, err := w.Write([]byte("line1\n"))
+	if err != nil || n != len("line1\n") {
+		t.Fatalf("Write failed: %d %v", n, err)
+	}
 	w.Flush()
 
 	if fake.calls["EmitStepLog"] != 1 {
