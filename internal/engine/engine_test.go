@@ -284,7 +284,6 @@ func TestMarshalCanonicalJSON_Nested(t *testing.T) {
 }
 
 func TestMarshalCanonicalJSON_InvalidValue(t *testing.T) {
-	type invalid struct{}
 	input := map[string]interface{}{
 		"key": make(chan int), // unmarshalable type
 	}
