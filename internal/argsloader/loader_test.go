@@ -35,7 +35,7 @@ func TestAttachFlags_FromArgSpec(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "config.d", "config.yaml"), []byte(cfg), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "config.d", "config.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +98,7 @@ func TestAttachFlags_ArgSpecEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	yaml := `interpreter: "/usr/bin/env bash"`
-	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,7 +121,7 @@ argspec:
     - name: "-invalid"
       type: string
 `
-	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +145,7 @@ argspec:
       type: integer
       default: 42
 `
-	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,7 +178,7 @@ argspec:
     - name: meta
       type: object
 `
-	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +210,7 @@ argspec:
     - name: custom
       type: custom
 `
-	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -234,7 +234,7 @@ argspec:
       type: string
       enum: [quick, full]
 `
-	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
