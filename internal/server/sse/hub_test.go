@@ -232,12 +232,13 @@ func compareDataValue(a, b any) bool {
 		return string(am) == string(bm)
 	}
 	// For int64 vs float64 comparison with numbers
-	switch av := a.(type) {
-	case int64:
+	if av, ok := a.(int64); ok {
 		if bv, ok := b.(float64); ok {
 			return av == int64(bv)
 		}
-		return av == b.(int64)
+		if bv, ok := b.(int64); ok {
+			return av == bv
+		}
 	}
 	return a == b
 }
