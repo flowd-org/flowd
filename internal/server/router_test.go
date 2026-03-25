@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -507,82 +508,11 @@ func TestSourcetoProvenance(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sourcetoProvenance(tt.src)
-			if !deepEqualMap(got, tt.want) {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("sourcetoProvenance() = %v, want %v", got, tt.want)
 			}
 		})
 	}
-}
-
-// deepEqualMap compares two maps for equality.
-func deepEqualMap(a, b map[string]any) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if !reflectDeepEqual(v, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
-// reflectDeepEqual performs deep comparison for any type.
-func reflectDeepEqual(x, y any) bool {
-	if x == nil || y == nil {
-		return x == y
-	}
-	switch xv := x.(type) {
-	case map[string]any:
-		yv, ok := y.(map[string]any)
-		if !ok {
-			return false
-		}
-		return deepEqualMap(xv, yv)
-	case []any:
-		yv, ok := y.([]any)
-		if !ok {
-			return false
-		}
-		if len(xv) != len(yv) {
-			return false
-		}
-		for i := range xv {
-			if !reflectDeepEqual(xv[i], yv[i]) {
-				return false
-			}
-		}
-		return true
-	case []map[string]string:
-		yv, ok := y.([]map[string]string)
-		if !ok {
-			return false
-		}
-		if len(xv) != len(yv) {
-			return false
-		}
-		for i := range xv {
-			if !deepEqualStringMap(xv[i], yv[i]) {
-				return false
-			}
-		}
-		return true
-	default:
-		return x == y
-	}
-}
-
-// deepEqualStringMap compares two string maps for equality.
-func deepEqualStringMap(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if v != b[k] {
-			return false
-		}
-	}
-	return true
 }
 
 // TestLoadPolicyContextWithInvalidFile tests loadPolicyContext behavior with invalid/unreadable policy files.
