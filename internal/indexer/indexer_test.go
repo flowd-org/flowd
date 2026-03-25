@@ -4,18 +4,19 @@ package indexer
 
 import (
 	"errors"
-	"github.com/flowd-org/flowd/internal/configloader"
-	"github.com/flowd-org/flowd/internal/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/flowd-org/flowd/internal/configloader"
+	"github.com/flowd-org/flowd/internal/types"
 )
 
 func TestDiscoverJobMetadata(t *testing.T) {
 	root := t.TempDir()
 	jobDir := filepath.Join(root, "demo", "hello")
-	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: 0.8
@@ -60,7 +61,7 @@ func TestDiscoverIncludesAliases(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
 	jobDir := filepath.Join(scriptsDir, "demo", "build")
-	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
@@ -141,7 +142,7 @@ func TestDiscoverInvalidAliasTarget(t *testing.T) {
 func TestDiscoverInvalidYaml(t *testing.T) {
 	root := t.TempDir()
 	jobDir := filepath.Join(root, "demo")
-	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	bad := "job: ["
@@ -238,7 +239,7 @@ job:
 func TestDiscoverDualConfigSentinelError(t *testing.T) {
 	root := t.TempDir()
 	jobDir := filepath.Join(root, "demo")
-	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
@@ -356,7 +357,7 @@ func TestBuildAliasIndexDuplicatesAndConflicts(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
 	jobDir := filepath.Join(scriptsDir, "demo", "test")
-	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(jobDir, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
