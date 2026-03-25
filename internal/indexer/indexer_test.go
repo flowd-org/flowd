@@ -25,7 +25,7 @@ job:
   name: Demo Hello
   summary: Say hello
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,7 +69,7 @@ job:
   id: demo/build
   name: Demo Build
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	flwd := `aliases:
@@ -77,7 +77,7 @@ job:
     to: "build-demo"
     description: "shortcut"
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwd), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwd), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,7 +113,7 @@ func TestDiscoverInvalidAliasTarget(t *testing.T) {
   - from: "unknown/job"
     to: "shortcut"
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwd), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwd), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,7 +146,7 @@ func TestDiscoverInvalidYaml(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := "job: ["
-	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(bad), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(bad), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,7 +172,7 @@ func TestDiscoverInvalidJobIDSegment(t *testing.T) {
 job:
   name: Bad Job
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,7 +199,7 @@ func TestDiscoverPrimaryAndLegacySentinels(t *testing.T) {
 job:
   name: Alpha One
 `
-	if err := os.WriteFile(filepath.Join(primaryDir, "config.yaml"), []byte(primaryConfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(primaryDir, "config.yaml"), []byte(primaryConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -211,7 +211,7 @@ job:
 job:
   name: Beta Two
 `
-	if err := os.WriteFile(filepath.Join(legacyDir, "config.yaml"), []byte(legacyConfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.yaml"), []byte(legacyConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,10 +246,10 @@ func TestDiscoverDualConfigSentinelError(t *testing.T) {
 job:
   name: Demo
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,7 +272,7 @@ func TestDiscoverRootJobMapping(t *testing.T) {
 job:
   name: Root Job
 `
-	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte(rootConfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte(rootConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -284,7 +284,7 @@ job:
 job:
   name: Tools Job
 `
-	if err := os.WriteFile(filepath.Join(toolDir, "config.yaml"), []byte(toolConfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(toolDir, "config.yaml"), []byte(toolConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -334,7 +334,7 @@ func TestDiscoverWithMountPathPrefix(t *testing.T) {
 job:
   name: Demo
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -365,7 +365,7 @@ job:
   id: demo/test
   name: Demo Test
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.d", "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -377,7 +377,7 @@ job:
     to: "test-demo"
     description: "duplicate alias"
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwd), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwd), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -410,10 +410,10 @@ job:
   id: demo/test2
   name: Demo Test2
 `
-	if err := os.WriteFile(filepath.Join(jobDir2, "config.d", "config.yaml"), []byte(config2), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir2, "config.d", "config.yaml"), []byte(config2), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwdCollision), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwdCollision), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,7 +435,7 @@ job:
   - from: "demo/test"
     to: "demotest"
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwdConflict), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "flwd.yaml"), []byte(flwdConflict), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -462,7 +462,7 @@ func TestParseConfigEmptyJobsBlock(t *testing.T) {
 	config := `version: v1
 jobs:
 `
-	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, "config.yaml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
