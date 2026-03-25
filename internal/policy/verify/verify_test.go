@@ -1,17 +1,19 @@
-package verify
+package verify_test
 
 import (
 	"context"
 	"os/exec"
 	"strings"
 	"testing"
+
+	verify "github.com/flowd-org/flowd/internal/policy/verify"
 )
 
 func TestCosignVerifier_EmptyImage(t *testing.T) {
-	v := NewCosignVerifier()
+	v := verify.NewCosignVerifier()
 	_, err := v.Verify(context.Background(), "")
 	if err == nil {
-		t.Fatal("expected error for empty image")
+		t.Fatal("expected error for empty image reference")
 	}
 	if !strings.Contains(err.Error(), "image reference is required") {
 		t.Errorf("expected error to contain 'image reference is required', got %v", err)
@@ -19,7 +21,7 @@ func TestCosignVerifier_EmptyImage(t *testing.T) {
 }
 
 func TestCosignVerifier_NonZeroExit(t *testing.T) {
-	v := &CosignVerifier{
+	v := &verify.CosignVerifier{
 		Command: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			cmd := exec.CommandContext(ctx, "sh", "-c", "exit 1")
 			return cmd
@@ -38,7 +40,7 @@ func TestCosignVerifier_NonZeroExit(t *testing.T) {
 }
 
 func TestCosignVerifier_Success(t *testing.T) {
-	v := &CosignVerifier{
+	v := &verify.CosignVerifier{
 		Command: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			cmd := exec.CommandContext(ctx, "sh", "-c", "echo verification passed")
 			return cmd
@@ -54,7 +56,7 @@ func TestCosignVerifier_Success(t *testing.T) {
 }
 
 func TestCosignVerifier_ExecFailure(t *testing.T) {
-	v := &CosignVerifier{
+	v := &verify.CosignVerifier{
 		Command: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, "/does/not/exist")
 		},
@@ -69,7 +71,7 @@ func TestCosignVerifier_ExecFailure(t *testing.T) {
 }
 
 func TestCosignBundleVerifier_EmptyRef(t *testing.T) {
-	v := NewCosignBundleVerifier()
+	v := verify.NewCosignBundleVerifier()
 	err := v.Verify(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty ref")
@@ -80,7 +82,7 @@ func TestCosignBundleVerifier_EmptyRef(t *testing.T) {
 }
 
 func TestCosignBundleVerifier_NonZeroExit(t *testing.T) {
-	v := &CosignBundleVerifier{
+	v := &verify.CosignBundleVerifier{
 		Command: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			cmd := exec.CommandContext(ctx, "sh", "-c", "exit 1")
 			return cmd
@@ -96,7 +98,7 @@ func TestCosignBundleVerifier_NonZeroExit(t *testing.T) {
 }
 
 func TestCosignBundleVerifier_Success(t *testing.T) {
-	v := &CosignBundleVerifier{
+	v := &verify.CosignBundleVerifier{
 		Command: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			cmd := exec.CommandContext(ctx, "sh", "-c", "echo verification passed")
 			return cmd
