@@ -363,7 +363,8 @@ func TestHubReplayExpiredCursor(t *testing.T) {
 // TestSubscriptionCloseIdempotent tests that Close() can be called multiple times safely.
 func TestSubscriptionCloseIdempotent(t *testing.T) {
 	h := New(Config{KeepAliveInterval: 0})
-	ctx, _ := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	sub := h.Subscribe(ctx, "run-close", "")
 	defer sub.Close()
 
