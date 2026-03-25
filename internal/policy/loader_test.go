@@ -72,15 +72,24 @@ func TestLoadFile_InvalidVerifySignatures(t *testing.T) {
 func TestLoadFromEnvOrDefault_WithEnvSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	bundle := &policy.Bundle{}
-	data, _ := yaml.Marshal(bundle)
+	data, err := yaml.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("failed to marshal bundle: %v", err)
+	}
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
 	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	oldVal := os.Getenv("FLWD_POLICY_FILE")
+	oldVal, hadVal := os.LookupEnv("FLWD_POLICY_FILE")
 	t.Cleanup(func() {
-		if err := os.Setenv("FLWD_POLICY_FILE", oldVal); err != nil {
+		var err error
+		if hadVal {
+			err = os.Setenv("FLWD_POLICY_FILE", oldVal)
+		} else {
+			err = os.Unsetenv("FLWD_POLICY_FILE")
+		}
+		if err != nil {
 			t.Fatalf("restore FLWD_POLICY_FILE: %v", err)
 		}
 	})
@@ -101,9 +110,21 @@ func TestLoadFromEnvOrDefault_WithEnvSet(t *testing.T) {
 }
 
 func TestLoadFromEnvOrDefault_WithEnvUnset_NoDefault(t *testing.T) {
-	oldVal := os.Getenv("FLWD_POLICY_FILE")
-	defer os.Setenv("FLWD_POLICY_FILE", oldVal)
-	os.Unsetenv("FLWD_POLICY_FILE")
+	oldVal, hadVal := os.LookupEnv("FLWD_POLICY_FILE")
+	t.Cleanup(func() {
+		var err error
+		if hadVal {
+			err = os.Setenv("FLWD_POLICY_FILE", oldVal)
+		} else {
+			err = os.Unsetenv("FLWD_POLICY_FILE")
+		}
+		if err != nil {
+			t.Fatalf("restore FLWD_POLICY_FILE: %v", err)
+		}
+	})
+	if err := os.Unsetenv("FLWD_POLICY_FILE"); err != nil {
+		t.Fatalf("unset FLWD_POLICY_FILE: %v", err)
+	}
 
 	b, path, err := policy.LoadFromEnvOrDefault()
 	if err != nil {
