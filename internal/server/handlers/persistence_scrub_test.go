@@ -1,4 +1,4 @@
-package handlers
+package handlers //nolint:testpackage
 
 import (
 	"testing"
