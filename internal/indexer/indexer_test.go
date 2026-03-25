@@ -608,8 +608,7 @@ func TestJobIDErrorFormatting(t *testing.T) {
 		t.Errorf("InvalidJobIDError with JobDir missing job dir info: %q", err4.Error())
 	}
 
-	var unwrapped error = InvalidJobIDError{Path: "p", Segment: "s", Reason: "r"}
-	if _, ok := unwrapped.(interface{ Unwrap() error }); !ok {
+	if _, ok := any(InvalidJobIDError{Path: "p", Segment: "s", Reason: "r"}).(interface{ Unwrap() error }); !ok {
 		t.Errorf("InvalidJobIDError should implement Unwrap")
 	}
 }
@@ -617,8 +616,9 @@ func TestJobIDErrorFormatting(t *testing.T) {
 func TestInvalidJobIDErrorUnwrap(t *testing.T) {
 	t.Parallel()
 	err := InvalidJobIDError{Path: "path", Segment: "seg", Reason: "reason"}
-	var unwrapped error = err.Unwrap()
-	if _, ok := unwrapped.(JobIDError); !ok {
+	_ = err.Unwrap()
+	var jobErr JobIDError
+	if !errors.As(err, &jobErr) {
 		t.Errorf("InvalidJobIDError.Unwrap() did not return JobIDError")
 	}
 }
