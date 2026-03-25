@@ -499,7 +499,8 @@ func TestHubBroadcastDrop(t *testing.T) {
 
 	// Create a subscriber with small buffer that won't read
 	ch := make(chan []byte, 1)
-	subCtx, _ := context.WithCancel(ctx)
+	subCtx, subCancel := context.WithCancel(ctx)
+	defer subCancel()
 	stream := h.getOrCreateStream("run-drop")
 	stream.addSubscriber(subCtx, ch, 0, h.nowFn)
 
