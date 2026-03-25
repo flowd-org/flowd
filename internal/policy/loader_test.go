@@ -2,10 +2,11 @@
 package policy_test
 
 import (
-	policy "github.com/flowd-org/flowd/internal/policy"
 	"os"
 	"path/filepath"
 	"testing"
+
+	policy "github.com/flowd-org/flowd/internal/policy"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -73,7 +74,9 @@ func TestLoadFromEnvOrDefault_WithEnvSet(t *testing.T) {
 	bundle := &policy.Bundle{}
 	data, _ := yaml.Marshal(bundle)
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
-	os.WriteFile(tmpFile, data, 0o600)
+	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
 
 	oldVal := os.Getenv("FLWD_POLICY_FILE")
 	defer os.Setenv("FLWD_POLICY_FILE", oldVal)
