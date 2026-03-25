@@ -79,8 +79,14 @@ func TestLoadFromEnvOrDefault_WithEnvSet(t *testing.T) {
 	}
 
 	oldVal := os.Getenv("FLWD_POLICY_FILE")
-	defer os.Setenv("FLWD_POLICY_FILE", oldVal)
-	os.Setenv("FLWD_POLICY_FILE", tmpFile)
+	t.Cleanup(func() {
+		if err := os.Setenv("FLWD_POLICY_FILE", oldVal); err != nil {
+			t.Fatalf("restore FLWD_POLICY_FILE: %v", err)
+		}
+	})
+	if err := os.Setenv("FLWD_POLICY_FILE", tmpFile); err != nil {
+		t.Fatalf("set FLWD_POLICY_FILE: %v", err)
+	}
 
 	b, path, err := policy.LoadFromEnvOrDefault()
 	if err != nil {
