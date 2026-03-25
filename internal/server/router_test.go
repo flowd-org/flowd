@@ -608,7 +608,7 @@ func TestLoadPolicyContextWithInvalidFile(t *testing.T) {
 func TestLoadPolicyContextWithInvalidContent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid.yaml")
-	if err := os.WriteFile(path, []byte("{{invalid yaml {{"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("{{invalid yaml {{"), 0o600); err != nil {
 		t.Fatalf("write policy: %v", err)
 	}
 	t.Setenv("FLWD_POLICY_FILE", path)
@@ -667,7 +667,7 @@ func TestLoadPolicyContextSecureWithInvalidBundle(t *testing.T) {
 // TestLoadPolicyContextReturnsNonNilWhenNoPolicyFile tests that loadPolicyContext returns non-nil context when no policy file is set.
 func TestLoadPolicyContextReturnsNonNilWhenNoPolicyFile(t *testing.T) {
 	// Ensure FLWD_POLICY_FILE is not set.
-	os.Unsetenv("FLWD_POLICY_FILE")
+	t.Setenv("FLWD_POLICY_FILE", "")
 
 	ctx := context.Background()
 	policyCtx, err := loadPolicyContext(ctx, "secure", nil)
