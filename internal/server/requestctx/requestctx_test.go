@@ -43,7 +43,8 @@ func TestEffectiveProfileEmpty(t *testing.T) {
 }
 
 func TestEffectiveProfileNilContext(t *testing.T) {
-	got, ok := EffectiveProfile(nil)
+	var ctx context.Context
+	got, ok := EffectiveProfile(ctx)
 	if ok || got != "" {
 		t.Fatalf("expected nil context to return (\"\")/false")
 	}
