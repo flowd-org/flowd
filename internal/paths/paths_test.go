@@ -1,11 +1,12 @@
 package paths_test
 
 import (
-	paths "github.com/flowd-org/flowd/internal/paths"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	paths "github.com/flowd-org/flowd/internal/paths"
 )
 
 func TestSetDataDirOverride(t *testing.T) {
