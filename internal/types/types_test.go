@@ -1,28 +1,30 @@
-package types
+package types_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/flowd-org/flowd/internal/types"
 )
 
 // TestConfigEnvSlice covers EnvSlice behavior for nil/empty and populated maps.
 func TestConfigEnvSlice(t *testing.T) {
 	// Nil Config
-	var c *Config
+	var c *types.Config
 	s := c.EnvSlice()
 	if s != nil {
 		t.Errorf("(*Config)(nil).EnvSlice() = %v; want nil", s)
 	}
 
 	// Empty Env map
-	c = &Config{Env: map[string]string{}}
+	c = &types.Config{Env: map[string]string{}}
 	s = c.EnvSlice()
 	if len(s) != 0 {
 		t.Errorf("Config{{Env: map[]}}.EnvSlice() = %v; want empty", s)
 	}
 
 	// Populated Env
-	c = &Config{Env: map[string]string{"A": "1", "B": "2"}}
+	c = &types.Config{Env: map[string]string{"A": "1", "B": "2"}}
 	s = c.EnvSlice()
 	if len(s) != 2 {
 		t.Errorf("Config{{Env: map[A:1 B:2]}}.EnvSlice() length = %d; want 2", len(s))
@@ -42,7 +44,7 @@ func TestValidateArgName(t *testing.T) {
 	// Acceptance cases
 	accept := []string{"foo", "foo-bar", "FOO", "_valid", "a1b2c3"}
 	for _, name := range accept {
-		if err := ValidateArgName(name); err != nil {
+		if err := types.ValidateArgName(name); err != nil {
 			t.Errorf("ValidateArgName(%q) = %v; want nil", name, err)
 		}
 	}
@@ -66,7 +68,7 @@ func TestValidateArgName(t *testing.T) {
 	}
 
 	for _, r := range reject {
-		if err := ValidateArgName(r.name); err == nil {
+		if err := types.ValidateArgName(r.name); err == nil {
 			t.Errorf("ValidateArgName(%q) = nil; want error containing %q", r.name, r.want)
 		} else if !strings.Contains(err.Error(), r.want) {
 			t.Errorf("ValidateArgName(%q) = %v; want error containing %q", r.name, err, r.want)
