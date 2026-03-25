@@ -218,7 +218,7 @@ func TestKillContainer(t *testing.T) {
 		t.Fatalf("expected nil for empty name, got %v", err)
 	}
 
-	// cancelled context with mocked runtimeCommand that returns "not found"
+	// canceled context with mocked runtimeCommand that returns "not found"
 	originalRuntimeCommand := runtimeCommand
 	runtimeCommand = func(ctx context.Context, runtime Runtime, args ...string) ([]byte, error) {
 		return []byte("container test not found"), nil
