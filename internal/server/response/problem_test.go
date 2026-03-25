@@ -1,14 +1,16 @@
-package response
+package response_test
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/flowd-org/flowd/internal/server/response"
 )
 
 func TestNew_AppliesOptions(t *testing.T) {
-	p := New(400, "bad", WithType("t"), WithDetail("d"), WithInstance("i"), WithExtension("code", "x"))
+	p := response.New(400, "bad", response.WithType("t"), response.WithDetail("d"), response.WithInstance("i"), response.WithExtension("code", "x"))
 
 	if p.Status != 400 {
 		t.Errorf("expected Status=400, got %d", p.Status)
@@ -31,9 +33,9 @@ func TestNew_AppliesOptions(t *testing.T) {
 }
 
 func TestWrite_JSONShape_OmitsEmptyOptionalFields(t *testing.T) {
-	p := Problem{Title: "oops", Status: 418}
+	p := response.Problem{Title: "oops", Status: 418}
 	rec := httptest.NewRecorder()
-	Write(rec, p)
+	response.Write(rec, p)
 
 	var body map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -58,9 +60,9 @@ func TestWrite_JSONShape_OmitsEmptyOptionalFields(t *testing.T) {
 }
 
 func TestWrite_IncludesTypeDetailInstanceAndExtensions(t *testing.T) {
-	p := New(400, "bad", WithType("t"), WithDetail("d"), WithInstance("i"), WithExtension("code", "x"))
+	p := response.New(400, "bad", response.WithType("t"), response.WithDetail("d"), response.WithInstance("i"), response.WithExtension("code", "x"))
 	rec := httptest.NewRecorder()
-	Write(rec, p)
+	response.Write(rec, p)
 
 	var body map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -88,7 +90,7 @@ func TestWrite_IncludesTypeDetailInstanceAndExtensions(t *testing.T) {
 }
 
 func TestWrite_ExtensionCollisionPanics(t *testing.T) {
-	p := New(400, "bad", WithExtension("title", "x"))
+	p := response.New(400, "bad", response.WithExtension("title", "x"))
 	rec := httptest.NewRecorder()
 
 	defer func() {
@@ -96,13 +98,13 @@ func TestWrite_ExtensionCollisionPanics(t *testing.T) {
 			t.Fatal("expected panic on extension collision")
 		}
 	}()
-	Write(rec, p)
+	response.Write(rec, p)
 }
 
 func TestWrite_DefaultStatus500WhenZero(t *testing.T) {
-	p := Problem{Title: "x"}
+	p := response.Problem{Title: "x"}
 	rec := httptest.NewRecorder()
-	Write(rec, p)
+	response.Write(rec, p)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500 when zero, got %d", rec.Code)
