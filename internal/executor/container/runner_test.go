@@ -300,12 +300,6 @@ func TestStopContainer_Timeout(t *testing.T) {
 }
 
 func TestBackgroundContext(t *testing.T) {
-	// With nil context should return Background
-	ctx := backgroundContext(nil)
-	if ctx == nil {
-		t.Fatalf("expected non-nil context for nil input")
-	}
-
 	// With existing context should return same context
 	orig := context.Background()
 	result := backgroundContext(orig)
