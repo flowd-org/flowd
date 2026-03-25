@@ -50,11 +50,16 @@ func TestLoadFile_InvalidVerifySignatures(t *testing.T) {
 	bundle := &policy.Bundle{
 		VerifySignatures: stringPtr("invalid_value"),
 	}
-	data, _ := yaml.Marshal(bundle)
+	data, err := yaml.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("failed to marshal bundle: %v", err)
+	}
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
-	os.WriteFile(tmpFile, data, 0o600)
+	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
 
-	_, err := policy.LoadFile(tmpFile)
+	_, err = policy.LoadFile(tmpFile)
 	if err == nil {
 		t.Fatal("expected error for invalid verify_signatures")
 	}
