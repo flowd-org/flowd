@@ -1,4 +1,4 @@
-package handlers
+package handlers //nolint:testpackage // intentionally in-package to exercise resolveTenant and tenant mismatch behavior.
 
 import (
 	"context"
