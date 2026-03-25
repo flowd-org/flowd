@@ -548,9 +548,6 @@ func TestErrInvalidPerPage(t *testing.T) {
 
 func TestPaginationError(t *testing.T) {
 	err := &paginationError{Msg: "test error", Value: ""}
-	if err == nil {
-		t.Fatal("expected error")
-	}
 	if err.Error() != "test error (got )" {
 		t.Errorf("expected 'test error (got )', got %q", err.Error())
 	}
