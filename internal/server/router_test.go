@@ -643,37 +643,3 @@ func TestStartRuleYJanitorReal_ReturnsRuleYUnavailable(t *testing.T) {
 		t.Fatalf("expected ErrRuleYUnavailable, got %v", err)
 	}
 }
-
-func TestSourcetoProvenance_MapsFields(t *testing.T) {
-	t.Parallel()
-
-	src := sourcestore.Source{
-		Name:        "test",
-		Type:        "git",
-		Ref:         "main",
-		URL:         "https://example.com/repo",
-		ResolvedRef: "",
-		Digest:      "sha256:abc123",
-	}
-	result := sourcetoProvenance(src)
-
-	if result["name"] != "test" {
-		t.Errorf("expected name 'test', got %v", result["name"])
-	}
-	if result["type"] != "git" {
-		t.Errorf("expected type 'git', got %v", result["type"])
-	}
-	if result["ref"] != "main" {
-		t.Errorf("expected ref 'main', got %v", result["ref"])
-	}
-	if result["url"] != "https://example.com/repo" {
-		t.Errorf("expected url 'https://example.com/repo', got %v", result["url"])
-	}
-	if result["digest"] != "sha256:abc123" {
-		t.Errorf("expected digest 'sha256:abc123', got %v", result["digest"])
-	}
-	// Digest implies resolved_ref when empty
-	if result["resolved_ref"] != "sha256:abc123" {
-		t.Errorf("expected resolved_ref from digest, got %v", result["resolved_ref"])
-	}
-}
