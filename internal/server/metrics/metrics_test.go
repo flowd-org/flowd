@@ -209,8 +209,8 @@ func TestEscapeHelp(t *testing.T) {
 
 func TestSortedKeysUint(t *testing.T) {
 	m := map[string]uint64{
-		"zebra": 3,
-		"apple": 1,
+		"zebra":  3,
+		"apple":  1,
 		"banana": 2,
 	}
 	keys := sortedKeysUint(m)
@@ -289,13 +289,13 @@ func TestRecordHTTP(t *testing.T) {
 	reg.RecordHTTP("/api/test", http.MethodPost, 404, 10*time.Millisecond)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, `method="GET",route="/api/test",code="200"`) {
- 	t.Fatalf("expected HTTP metrics for GET /api/test 200, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, `method="GET",route="/api/test",code="200"`) {
+		t.Fatalf("expected HTTP metrics for GET /api/test 200, got body:\n%s", body)
+	}
 }
 
 func TestRecordSecurityProfileGauge(t *testing.T) {
@@ -303,13 +303,13 @@ func TestRecordSecurityProfileGauge(t *testing.T) {
 	reg.RecordSecurityProfileGauge("strict")
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, `flwd_security_profile{profile="strict"} 1`) {
- 	t.Errorf("expected security profile gauge, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, `flwd_security_profile{profile="strict"} 1`) {
+		t.Errorf("expected security profile gauge, got body:\n%s", body)
+	}
 }
 
 func TestRecordPolicyDenial(t *testing.T) {
@@ -318,13 +318,13 @@ func TestRecordPolicyDenial(t *testing.T) {
 	reg.RecordPolicyDenial("forbidden")
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, `flwd_policy_denials_total{reason="unauthorized"} 1`) {
- 	t.Errorf("expected policy denial counter, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, `flwd_policy_denials_total{reason="unauthorized"} 1`) {
+		t.Errorf("expected policy denial counter, got body:\n%s", body)
+	}
 }
 
 func TestRecordContainerRun(t *testing.T) {
@@ -332,13 +332,13 @@ func TestRecordContainerRun(t *testing.T) {
 	reg.RecordContainerRun(250 * time.Millisecond)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, "flwd_container_runs_total 1") {
- 	t.Errorf("expected container run counter, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, "flwd_container_runs_total 1") {
+		t.Errorf("expected container run counter, got body:\n%s", body)
+	}
 }
 
 func TestRecordContainerPull(t *testing.T) {
@@ -346,13 +346,13 @@ func TestRecordContainerPull(t *testing.T) {
 	reg.RecordContainerPull(30 * time.Second)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, "flwd_container_pulls_total 1") {
- 	t.Errorf("expected container pull counter, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, "flwd_container_pulls_total 1") {
+		t.Errorf("expected container pull counter, got body:\n%s", body)
+	}
 }
 
 func TestRecordSourceAdded(t *testing.T) {
@@ -361,13 +361,13 @@ func TestRecordSourceAdded(t *testing.T) {
 	reg.RecordSourceAdded("GITHUB")
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, `flwd_sources_added_total{type="github"} 2`) {
- 	t.Errorf("expected sources added counter, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, `flwd_sources_added_total{type="github"} 2`) {
+		t.Errorf("expected sources added counter, got body:\n%s", body)
+	}
 }
 
 func TestRecordAddonManifestInvalid(t *testing.T) {
@@ -375,13 +375,13 @@ func TestRecordAddonManifestInvalid(t *testing.T) {
 	reg.RecordAddonManifestInvalid()
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- body := rr.Body.String()
- if !strings.Contains(body, "flwd_addon_manifest_invalid_total 1") {
- 	t.Errorf("expected addon manifest invalid counter, got body:\n%s", body)
- }
+	body := rr.Body.String()
+	if !strings.Contains(body, "flwd_addon_manifest_invalid_total 1") {
+		t.Errorf("expected addon manifest invalid counter, got body:\n%s", body)
+	}
 }
 
 func TestSourceAddedTotals(t *testing.T) {
@@ -418,13 +418,13 @@ func TestContainerPullsTotal(t *testing.T) {
 func TestHandlerReturnsMetricsText(t *testing.T) {
 	reg := NewRegistry()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
- rr := httptest.NewRecorder()
- reg.Handler().ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
 
- if rr.Code != http.StatusOK {
- 	t.Errorf("expected status 200, got %d", rr.Code)
- }
- if !strings.Contains(rr.Header().Get("Content-Type"), "text/plain") {
- 	t.Errorf("expected text/plain content type, got %s", rr.Header().Get("Content-Type"))
- }
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("expected text/plain content type, got %s", rr.Header().Get("Content-Type"))
+	}
 }
