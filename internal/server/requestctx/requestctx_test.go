@@ -329,7 +329,7 @@ func TestMetadataHelpersCreateOnWrite(t *testing.T) {
 }
 
 func TestMetadataNilContext(t *testing.T) {
-	got := MetadataFromContext(nil)
+	got := MetadataFromContext(context.TODO())
 	if got != nil {
 		t.Fatalf("expected nil context to return nil metadata")
 	}
