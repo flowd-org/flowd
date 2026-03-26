@@ -222,6 +222,7 @@ func TestDATA_DIR_Precedence_NoHome(t *testing.T) {
 		t.Setenv("USERPROFILE", "")
 	}
 
+	t.Setenv("PWD", "")
 	got := paths.DataDir()
 
 	// Should fall back to CWD/flowd
