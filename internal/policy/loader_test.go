@@ -141,8 +141,14 @@ func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 	data, _ := yaml.Marshal(bundle)
 
 	oldCwd, _ := os.Getwd()
-	defer os.Chdir(oldCwd)
-	os.Chdir(tmpDir)
+	defer func() {
+		if err := os.Chdir(oldCwd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
 
 	defaultFile := filepath.Join(tmpDir, "flwd.policy.yaml")
 	os.WriteFile(defaultFile, data, 0o600)
