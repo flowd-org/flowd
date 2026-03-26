@@ -174,7 +174,9 @@ func TestNormalizeAllowedRegistries(t *testing.T) {
 	}
 	data, _ := yaml.Marshal(bundle)
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
-	os.WriteFile(tmpFile, data, 0o600)
+	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
+		t.Fatalf("failed to write policy file: %v", err)
+	}
 
 	b, err := policy.LoadFile(tmpFile)
 	if err != nil {
