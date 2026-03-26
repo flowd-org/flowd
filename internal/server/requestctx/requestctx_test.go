@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -331,5 +332,36 @@ func TestMetadataNilContext(t *testing.T) {
 	got := MetadataFromContext(nil)
 	if got != nil {
 		t.Fatalf("expected nil context to return nil metadata")
+	}
+}
+
+func TestWithScrubbedLoggerScrubsWrappedLogger(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	ctx := WithLogger(context.Background(), logger)
+	ctx = WithScrubbedLogger(ctx, func(s string) string {
+		return strings.ReplaceAll(s, "secret", "redacted")
+	})
+
+	wrapped := Logger(ctx)
+	if wrapped == nil {
+		t.Fatalf("expected scrubbed logger to be present")
+	}
+
+	wrapped.Info("secret message", slog.String("token", "secret value"))
+
+	out := buf.String()
+	if strings.Contains(out, "secret message") {
+		t.Fatalf("expected message to be scrubbed, got %q", out)
+	}
+	if !strings.Contains(out, "redacted message") {
+		t.Fatalf("expected scrubbed message in output, got %q", out)
+	}
+	if strings.Contains(out, "secret value") {
+		t.Fatalf("expected attr value to be scrubbed, got %q", out)
+	}
+	if !strings.Contains(out, "redacted value") {
+		t.Fatalf("expected scrubbed attr value in output, got %q", out)
 	}
 }
