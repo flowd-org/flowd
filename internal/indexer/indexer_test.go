@@ -106,7 +106,7 @@ job:
 func TestDiscoverInvalidAliasTarget(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
-	if err := os.MkdirAll(filepath.Join(scriptsDir, "flwd"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(scriptsDir, "flwd"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	flwd := `aliases:
@@ -165,7 +165,7 @@ func TestDiscoverInvalidYaml(t *testing.T) {
 func TestDiscoverInvalidJobIDSegment(t *testing.T) {
 	root := t.TempDir()
 	jobDir := filepath.Join(root, "!!!")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+	if err := os.MkdirAll(jobDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
@@ -192,7 +192,7 @@ job:
 func TestDiscoverPrimaryAndLegacySentinels(t *testing.T) {
 	root := t.TempDir()
 	primaryDir := filepath.Join(root, "alpha", "one")
-	if err := os.MkdirAll(primaryDir, 0o755); err != nil {
+	if err := os.MkdirAll(primaryDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	primaryConfig := `version: v1
@@ -204,7 +204,7 @@ job:
 	}
 
 	legacyDir := filepath.Join(root, "beta", "two", "config.d")
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+	if err := os.MkdirAll(legacyDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	legacyConfig := `version: v1
@@ -277,7 +277,7 @@ job:
 	}
 
 	toolDir := filepath.Join(root, "Tools")
-	if err := os.MkdirAll(toolDir, 0o755); err != nil {
+	if err := os.MkdirAll(toolDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	toolConfig := `version: v1
@@ -327,7 +327,7 @@ job:
 func TestDiscoverWithMountPathPrefix(t *testing.T) {
 	root := t.TempDir()
 	jobDir := filepath.Join(root, "Demo")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+	if err := os.MkdirAll(jobDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
@@ -402,7 +402,7 @@ job:
     description: "second alias (collision)"
 `
 	jobDir2 := filepath.Join(scriptsDir, "demo", "test2")
-	if err := os.MkdirAll(filepath.Join(jobDir2, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(jobDir2, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config2 := `version: v1
@@ -456,7 +456,7 @@ job:
 func TestParseConfigEmptyJobsBlock(t *testing.T) {
 	root := t.TempDir()
 	jobDir := filepath.Join(root, "empty")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+	if err := os.MkdirAll(jobDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	config := `version: v1
