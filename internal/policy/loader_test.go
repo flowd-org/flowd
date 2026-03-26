@@ -151,7 +151,9 @@ func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 	}
 
 	defaultFile := filepath.Join(tmpDir, "flwd.policy.yaml")
-	os.WriteFile(defaultFile, data, 0o600)
+	if err := os.WriteFile(defaultFile, data, 0o600); err != nil {
+		t.Fatalf("failed to write default policy file: %v", err)
+	}
 
 	b, path, err := policy.LoadFromEnvOrDefault()
 	if err != nil {
