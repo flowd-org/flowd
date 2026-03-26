@@ -19,7 +19,9 @@ jobs:
         include:
           - lane: minimum
             go-version-file: go.mod
+            go-version: ''
           - lane: stable
+            go-version-file: ''
             go-version: stable
     
     steps:
