@@ -30,13 +30,13 @@ jobs:
 
       - name: Setup Go (minimum from go.mod)
         if: ${{ matrix.go-version-file != '' }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: ${{ matrix.go-version-file }}
 
       - name: Setup Go (stable)
         if: ${{ matrix.go-version != '' }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
 
