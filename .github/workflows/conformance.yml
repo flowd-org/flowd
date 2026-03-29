@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -96,7 +96,7 @@ jobs:
           exit "$rc"
 
       - name: Upload conformance report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: conformance-report
