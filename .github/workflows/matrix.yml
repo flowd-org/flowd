@@ -19,9 +19,9 @@ jobs:
         include:
           - lane: minimum
             go-version-file: go.mod
-            go-version: ''
+            go-version: null
           - lane: stable
-            go-version-file: ''
+            go-version-file: null
             go-version: stable
     
     steps:
@@ -29,13 +29,13 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Go (minimum from go.mod)
-        if: ${{ matrix.go-version-file != '' }}
+        if: ${{ matrix.go-version-file != null }}
         uses: actions/setup-go@v6
         with:
           go-version-file: ${{ matrix.go-version-file }}
 
       - name: Setup Go (stable)
-        if: ${{ matrix.go-version != '' }}
+        if: ${{ matrix.go-version != null }}
         uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
