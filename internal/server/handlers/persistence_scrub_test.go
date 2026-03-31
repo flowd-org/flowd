@@ -62,7 +62,10 @@ func TestNewProblemScrubber_ArgSpecSecretsAreIncluded(t *testing.T) {
 
 	s := newProblemScrubber(spec, args, nil, nil)
 
-	if s.secretNames == nil || s.secretNames["token"] != struct{}{} {
+	if s.secretNames == nil {
+		t.Error("expected secretNames map to be initialized")
+	} else if _, ok := s.secretNames["token"]; !ok {
+		// Presence matters here; the map zero value is not enough.
 		t.Error("expected secretNames['token'] to be set")
 	}
 
