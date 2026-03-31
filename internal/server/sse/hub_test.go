@@ -403,9 +403,9 @@ func TestFormatHeartbeatAutoTimestamp(t *testing.T) {
 	}
 }
 
-// TestEncodeEventErrorHandling tests EncodeEvent when JSON marshaling fails.
-func TestEncodeEventErrorHandling(t *testing.T) {
-	// This test verifies the error fallback path in formatEvent
+// TestEncodeEventEnvelopeMinimalPayload tests EncodeEvent with a minimal valid payload.
+func TestEncodeEventEnvelopeMinimalPayload(t *testing.T) {
+	// This test verifies the normal encode path in formatEvent.
 	ev := Event{ID: "1", Event: "test", Data: `{"valid":true}`}
 	payload, err := EncodeEvent(ev)
 	if err != nil {
