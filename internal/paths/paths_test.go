@@ -222,14 +222,12 @@ func TestDATA_DIR_Precedence_NoHome(t *testing.T) {
 		t.Setenv("USERPROFILE", "")
 	}
 
-	t.Setenv("PWD", "")
-	got := paths.DataDir()
-
-	// Should fall back to CWD/flowd
+	// Should fall back to CWD/flowd.
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd(): %v", err)
 	}
+	got := paths.DataDir()
 	expectedCwd := filepath.Join(cwd, "flowd")
 	if got != expectedCwd {
 		t.Errorf("paths.DataDir() fallback to CWD = %q, want %q", got, expectedCwd)
