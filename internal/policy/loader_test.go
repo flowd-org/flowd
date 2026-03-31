@@ -138,7 +138,10 @@ func TestLoadFromEnvOrDefault_WithEnvUnset_NoDefault(t *testing.T) {
 func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	bundle := &policy.Bundle{}
-	data, _ := yaml.Marshal(bundle)
+	data, err := yaml.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("failed to marshal bundle: %v", err)
+	}
 
 	oldCwd, _ := os.Getwd()
 	defer func() {
@@ -172,7 +175,10 @@ func TestNormalizeAllowedRegistries(t *testing.T) {
 	bundle := &policy.Bundle{
 		AllowedRegistries: []string{"EXAMPLE.COM", "GITHUB.COM"},
 	}
-	data, _ := yaml.Marshal(bundle)
+	data, err := yaml.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("failed to marshal bundle: %v", err)
+	}
 	tmpFile := filepath.Join(tmpDir, "policy.yaml")
 	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
 		t.Fatalf("failed to write policy file: %v", err)
