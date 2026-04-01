@@ -143,7 +143,10 @@ func TestLoadFromEnvOrDefault_WithDefaultFile(t *testing.T) {
 		t.Fatalf("failed to marshal bundle: %v", err)
 	}
 
-	oldCwd, _ := os.Getwd()
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
 	defer func() {
 		if err := os.Chdir(oldCwd); err != nil {
 			t.Fatalf("restore working directory: %v", err)
