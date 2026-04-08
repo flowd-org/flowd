@@ -8,12 +8,8 @@ import (
 	"testing"
 )
 
-func nilContext() context.Context {
-	return nil
-}
-
 func TestTenantAbsentWithoutContext(t *testing.T) {
-	if _, ok := Tenant(nilContext()); ok {
+	if _, ok := Tenant(context.TODO()); ok {
 		t.Fatalf("expected tenant to be absent when context is empty")
 	}
 	if _, ok := Tenant(context.Background()); ok {
