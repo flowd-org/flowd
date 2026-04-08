@@ -211,7 +211,7 @@ func TestPrincipalEmpty(t *testing.T) {
 }
 
 func TestPrincipalNilContext(t *testing.T) {
-	got, ok := Principal(nil)
+	got, ok := Principal(context.TODO())
 	if ok || got != "" {
 		t.Fatalf("expected empty context to return (\"\")/false")
 	}
