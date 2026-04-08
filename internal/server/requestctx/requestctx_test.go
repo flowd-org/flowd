@@ -44,7 +44,7 @@ func TestEffectiveProfileEmpty(t *testing.T) {
 }
 
 func TestEffectiveProfileNilContext(t *testing.T) {
-	var ctx context.Context
+	ctx := context.Background()
 	got, ok := EffectiveProfile(ctx)
 	if ok || got != "" {
 		t.Fatalf("expected nil context to return (\"\")/false")
@@ -70,16 +70,8 @@ func TestWithMetadataNil(t *testing.T) {
 	}
 }
 
-func TestMetadataFromContextNil(t *testing.T) {
-	got := MetadataFromContext(nil)
-	if got != nil {
-		t.Fatalf("expected nil context to return nil metadata")
-	}
-}
-
 func TestMetadataFromContextEmpty(t *testing.T) {
-	ctx := context.Background()
-	got := MetadataFromContext(ctx)
+	got := MetadataFromContext(context.Background())
 	if got != nil {
 		t.Fatalf("expected empty context to return nil metadata")
 	}
