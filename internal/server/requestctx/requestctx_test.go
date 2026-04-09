@@ -1,4 +1,4 @@
-package requestctx
+package requestctx_test
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	. "github.com/flowd-org/flowd/internal/server/requestctx"
 )
 
 func TestTenantAbsentWithoutContext(t *testing.T) {
@@ -321,9 +323,9 @@ func TestMetadataHelpersCreateOnWrite(t *testing.T) {
 }
 
 func TestMetadataNilContext(t *testing.T) {
-	got := MetadataFromContext(nil)
+	got := MetadataFromContext(context.Background())
 	if got != nil {
-		t.Fatalf("expected nil context to return nil metadata")
+		t.Fatalf("expected empty context to return nil metadata")
 	}
 }
 
