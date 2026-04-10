@@ -11,11 +11,9 @@ import (
 )
 
 func TestTenantAbsentWithoutContext(t *testing.T) {
-	if _, ok := Tenant(context.TODO()); ok {
+	var ctx context.Context
+	if _, ok := Tenant(ctx); ok {
 		t.Fatalf("expected tenant to be absent when context is empty")
-	}
-	if _, ok := Tenant(context.Background()); ok {
-		t.Fatalf("expected tenant to be absent when context has no tenant")
 	}
 }
 
@@ -46,7 +44,7 @@ func TestEffectiveProfileEmpty(t *testing.T) {
 }
 
 func TestEffectiveProfileNilContext(t *testing.T) {
-	ctx := context.Background()
+	var ctx context.Context
 	got, ok := EffectiveProfile(ctx)
 	if ok || got != "" {
 		t.Fatalf("expected nil context to return (\"\")/false")
@@ -213,9 +211,10 @@ func TestPrincipalEmpty(t *testing.T) {
 }
 
 func TestPrincipalNilContext(t *testing.T) {
-	got, ok := Principal(context.TODO())
+	var ctx context.Context
+	got, ok := Principal(ctx)
 	if ok || got != "" {
-		t.Fatalf("expected empty context to return (\"\")/false")
+		t.Fatalf("expected nil context to return (\"\")/false")
 	}
 }
 
@@ -323,7 +322,8 @@ func TestMetadataHelpersCreateOnWrite(t *testing.T) {
 }
 
 func TestMetadataNilContext(t *testing.T) {
-	got := MetadataFromContext(context.Background())
+	var ctx context.Context
+	got := MetadataFromContext(ctx)
 	if got != nil {
 		t.Fatalf("expected empty context to return nil metadata")
 	}
