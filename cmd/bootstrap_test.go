@@ -3,6 +3,8 @@ package cmd
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,5 +100,42 @@ func TestBootstrapMissing(t *testing.T) {
 func TestNormalizeBaseURLRejectsHTTPS(t *testing.T) {
 	if _, err := normalizeBaseURL("https://example.com"); err == nil {
 		t.Fatal("expected https base URL to be rejected")
+	}
+}
+
+func TestSourcesClientDoesNotFollowRedirects(t *testing.T) {
+	var finalHits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sources":
+			w.Header().Set("Location", "/final")
+			w.WriteHeader(http.StatusFound)
+		default:
+			finalHits++
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	root := &cobra.Command{Use: "root"}
+	root.PersistentFlags().String("server", server.URL, "")
+	root.PersistentFlags().String("token", "", "")
+	cmd := &cobra.Command{Use: "child"}
+	root.AddCommand(cmd)
+
+	client, err := resolveSourcesClient(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.do(t.Context(), http.MethodGet, "/sources", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected redirect response, got %d", resp.StatusCode)
+	}
+	if finalHits != 0 {
+		t.Fatalf("redirect was followed; final handler hit %d times", finalHits)
 	}
 }

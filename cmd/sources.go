@@ -56,9 +56,14 @@ func resolveSourcesClient(cmd *cobra.Command) (*sourcesClient, error) {
 		return nil, err
 	}
 	return &sourcesClient{
-		base:       base,
-		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		base:  base,
+		token: strings.TrimSpace(token),
+		httpClient: &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 
