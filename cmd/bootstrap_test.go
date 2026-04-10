@@ -94,3 +94,9 @@ func TestBootstrapMissing(t *testing.T) {
 		t.Fatalf("expected error message to mention missing config")
 	}
 }
+
+func TestNormalizeBaseURLRejectsHTTPS(t *testing.T) {
+	if _, err := normalizeBaseURL("https://example.com"); err == nil {
+		t.Fatal("expected https base URL to be rejected")
+	}
+}
