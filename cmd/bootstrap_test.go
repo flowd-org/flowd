@@ -75,7 +75,9 @@ func TestBootstrapMissing(t *testing.T) {
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build flowd: %s", out)
 	}
-	defer os.Remove(binaryPath)
+	defer func() {
+		_ = os.Remove(binaryPath)
+	}()
 
 	cmd := exec.Command(binaryPath, "--config", configPath, ":serve", "--bind", "127.0.0.1:0")
 	cmd.Dir = tmp
