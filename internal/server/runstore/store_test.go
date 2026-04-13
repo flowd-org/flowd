@@ -77,13 +77,12 @@ func TestStoreListSnapshot(t *testing.T) {
 		t.Fatalf("expected 2 runs, got %d", len(list))
 	}
 
-	// Mutate the returned slice
-	mutatedRun := list[0]
-	mutatedRunID := mutatedRun.ID
-	originalJobID := mutatedRun.JobID
-	mutatedRun.JobID = "modified"
+	// Mutate the returned slice element directly.
+	mutatedRunID := list[0].ID
+	originalJobID := list[0].JobID
+	list[0].JobID = "modified"
 
-	// Verify original store is unchanged for the mutated run
+	// Verify the store keeps its original value.
 	run, ok := store.Get(mutatedRunID)
 	if !ok || run.ID != mutatedRunID || run.JobID != originalJobID {
 		t.Fatalf("expected %s to remain unchanged, got %+v, ok=%v", mutatedRunID, run, ok)
