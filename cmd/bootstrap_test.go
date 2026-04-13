@@ -133,7 +133,9 @@ func TestSourcesClientDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("expected redirect response, got %d", resp.StatusCode)
 	}
