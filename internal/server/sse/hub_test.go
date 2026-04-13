@@ -417,7 +417,7 @@ func TestEncodeEventEnvelopeMinimalPayload(t *testing.T) {
 }
 
 // TestHubPublishEmptyRunID tests Publish with empty RunID.
-func TestHubPublishEmptyRunID(t *testing.T) {
+func TestHubPublishBackfillsEventRunID(t *testing.T) {
 	h := New(Config{KeepAliveInterval: 0})
 	baseTime := time.Unix(0, 0)
 	h.nowFn = func() time.Time { return baseTime }
