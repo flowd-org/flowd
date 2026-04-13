@@ -503,31 +503,45 @@ func TestHubMultipleSubscribers(t *testing.T) {
 	// Publish second event - both subscribers should receive it
 	h.Publish("run-multi", Event{ID: "2", Event: "e2", Data: "{}"})
 
-	var sub1Received, sub2Received []string
-
-	// Read from first subscriber (should get 2 events)
-	for i := 0; i < 2; i++ {
-		select {
-		case payload := <-sub1.C:
-			sub1Received = append(sub1Received, extractSSEData(string(payload)))
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for sub1 events")
+	readTypes := func(ch <-chan []byte, n int, who string) []string {
+		got := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			select {
+			case payload := <-ch:
+				var env struct {
+					Type string `json:"type"`
+				}
+				data := extractSSEData(string(payload))
+				if err := json.Unmarshal([]byte(data), &env); err != nil {
+					t.Fatalf("failed to parse %s replay event %d: %v (payload=%q)", who, i, err, payload)
+				}
+				got = append(got, env.Type)
+			case <-time.After(time.Second):
+				t.Fatalf("timeout waiting for %s event %d/%d", who, i+1, n)
+			}
 		}
+		return got
 	}
 
-	// Read from second subscriber (should get 1 event - replay from empty + new event)
+	sub1Types := readTypes(sub1.C, 2, "sub1")
+	sub2Types := readTypes(sub2.C, 2, "sub2")
+
+	if fmt.Sprintf("%v", sub1Types) != "[e1 e2]" {
+		t.Fatalf("expected sub1 to receive [e1 e2], got %v", sub1Types)
+	}
+	if fmt.Sprintf("%v", sub2Types) != "[e1 e2]" {
+		t.Fatalf("expected sub2 to receive [e1 e2], got %v", sub2Types)
+	}
+
+	select {
+	case payload := <-sub1.C:
+		t.Fatalf("expected no extra replay for sub1, got %q", payload)
+	case <-time.After(100 * time.Millisecond):
+	}
 	select {
 	case payload := <-sub2.C:
-		sub2Received = append(sub2Received, extractSSEData(string(payload)))
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for sub2 events")
-	}
-
-	if len(sub1Received) != 2 {
-		t.Fatalf("expected sub1 to receive 2 events, got %d", len(sub1Received))
-	}
-	if len(sub2Received) != 1 {
-		t.Fatalf("expected sub2 to receive 1 event, got %d", len(sub2Received))
+		t.Fatalf("expected no extra replay for sub2, got %q", payload)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
