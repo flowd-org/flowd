@@ -100,10 +100,10 @@ func TestEnsureDataPath(t *testing.T) {
 	subdir := filepath.Join(tmpDir, "runs", "test-run")
 	got, err := paths.EnsureDataPath("runs", "test-run")
 	if err != nil {
-		t.Fatalf("Ensurepaths.DataPath() returned error: %v", err)
+		t.Fatalf("EnsureDataPath() returned error: %v", err)
 	}
 	if got != subdir {
-		t.Errorf("Ensurepaths.DataPath() = %q, want %q", got, subdir)
+		t.Errorf("EnsureDataPath() = %q, want %q", got, subdir)
 	}
 
 	// Verify the directory was created
@@ -202,6 +202,13 @@ func TestDATA_DIR_Precedence_POSIX(t *testing.T) {
 	}
 
 	got := paths.DataDir()
+	if runtime.GOOS == "windows" {
+		if got == "" {
+			t.Error("paths.DataDir() returned empty string on Windows")
+		}
+		return
+	}
+
 	expectedPosix := filepath.Join(home, ".local", "share", "flowd")
 	if got != expectedPosix {
 		t.Errorf("paths.DataDir() POSIX fallback = %q, want %q", got, expectedPosix)
