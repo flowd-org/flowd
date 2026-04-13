@@ -26,17 +26,17 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Setup Go (minimum from go.mod)
-        if: ${{ matrix.go-version-file != null }}
-        uses: actions/setup-go@v6
+        if: ${{ matrix.go-version-file != '' }}
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-version-file: ${{ matrix.go-version-file }}
 
       - name: Setup Go (stable)
-        if: ${{ matrix.go-version != null }}
-        uses: actions/setup-go@v6
+        if: ${{ matrix.go-version != '' }}
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-version: ${{ matrix.go-version }}
 
