@@ -277,6 +277,26 @@ func TestHubRetentionTrimming(t *testing.T) {
 	if len(received) != 2 {
 		t.Fatalf("expected 2 events after retention pruning, got %d", len(received))
 	}
+
+	for i, wantType := range []string{"e2", "e3"} {
+		var env struct {
+			Type string `json:"type"`
+			Seq  int64  `json:"seq"`
+		}
+		if err := json.Unmarshal([]byte(received[i]), &env); err != nil {
+			t.Fatalf("failed to parse replayed retention event %d: %v (payload=%q)", i, err, received[i])
+		}
+		if env.Type != wantType {
+			t.Fatalf("expected retention replay[%d] type %q, got %q", i, wantType, env.Type)
+		}
+	}
+
+	select {
+	case payload := <-sub.C:
+		t.Fatalf("expected no extra replay after retained events, got %q", payload)
+	case <-time.After(100 * time.Millisecond):
+		// expected: no third replayed event
+	}
 }
 
 // TestHubBufferSizeTrimming tests that events are trimmed when buffer exceeds MaxBufferSize.
@@ -308,6 +328,29 @@ func TestHubBufferSizeTrimming(t *testing.T) {
 
 	if len(received) != 3 {
 		t.Fatalf("expected 3 events after buffer trimming, got %d", len(received))
+	}
+
+	for i, wantSeq := range []int64{3, 4, 5} {
+		var env struct {
+			Type string `json:"type"`
+			Seq  int64  `json:"seq"`
+		}
+		if err := json.Unmarshal([]byte(received[i]), &env); err != nil {
+			t.Fatalf("failed to parse replayed buffer event %d: %v (payload=%q)", i, err, received[i])
+		}
+		if env.Type != "e" {
+			t.Fatalf("expected buffer replay[%d] type %q, got %q", i, "e", env.Type)
+		}
+		if env.Seq != wantSeq {
+			t.Fatalf("expected buffer replay[%d] seq %d, got %d", i, wantSeq, env.Seq)
+		}
+	}
+
+	select {
+	case payload := <-sub.C:
+		t.Fatalf("expected no extra replay after trimmed tail, got %q", payload)
+	case <-time.After(100 * time.Millisecond):
+		// expected: no fourth replayed event
 	}
 }
 
