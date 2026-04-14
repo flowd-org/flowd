@@ -1,5 +1,6 @@
 ---
 title: "invalid-schedule"
+description: "Trigger schedule format is invalid or unsupported"
 problem_type: "triggers.invalid_schedule"
 examples:
   - description: "Example of an invalid schedule format"
