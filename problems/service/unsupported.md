@@ -1,6 +1,7 @@
 ---
 title: "unsupported"
 description: "When the service is not supported on this platform or configuration"
+problem_type: "service.unsupported"
 ---
 
 ### Symptom
