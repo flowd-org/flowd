@@ -1,6 +1,7 @@
 ---
 title: "timeout"
 description: "Operation or request exceeded allowed deadline"
+problem_type: "service.timeout"
 ---
 
 ### Symptom
