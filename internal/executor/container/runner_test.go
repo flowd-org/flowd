@@ -86,6 +86,7 @@ func TestBuildArgsSecureDefaults(t *testing.T) {
 	}
 }
 
+// Keep validation focused on the original container runner contract.
 func TestBuildArgsValidation(t *testing.T) {
 	_, err := BuildArgs(RunOptions{Runtime: RuntimeDocker, Image: "", Command: []string{"sh"}})
 	if err == nil {
