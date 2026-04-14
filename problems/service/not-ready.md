@@ -1,5 +1,6 @@
 ---
 title: "not-ready"
+description: "Service has started but is not yet ready to serve requests"
 problem_type: "services.not_ready"
 ---
 
