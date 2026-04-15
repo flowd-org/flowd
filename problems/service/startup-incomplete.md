@@ -19,6 +19,10 @@ The service is still initializing and has not completed its startup sequence. Th
 
 This leaf is the canonical `service.startup_incomplete` problem for cases where startup is still in progress. If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead.
 
+### See also
+
+- `problems/service/not-ready.md` for post-startup readiness failures
+
 ### Remediation
 
 - Wait for the service to complete startup
