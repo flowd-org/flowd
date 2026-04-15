@@ -40,6 +40,8 @@ This leaf is the canonical `service.startup_incomplete` problem while startup is
 
 Spec scope conformance: T-073 revalidation confirms this page stays limited to the startup-in-progress `service.startup_incomplete` case and does not describe post-startup readiness failures.
 
+Spec scope conformance: this page remains the canonical `service.startup_incomplete` leaf and keeps post-startup readiness failures in `problems/service/not-ready.md`.
+
 ## See also
 
 - `problems/service/not-ready.md` for post-startup readiness failures
