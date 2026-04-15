@@ -1,31 +1,43 @@
 ---
-title: "startup-incomplete"
-description: "Service has not finished initializing and is not yet ready to serve requests"
-problem_type: "service.startup_incomplete"
+title: "Startup Incomplete"
+type: "https://flowd.org/problems/startup-incomplete"
+status: 503
 ---
 
-### Symptom
+**Type URI:** `https://flowd.org/problems/startup-incomplete`
+**HTTP Status:** `503 Service Unavailable`
 
-Service reports `503 Service Unavailable` with RFC7807 type `https://flowd.org/problems/startup-incomplete`.
+## Summary
 
-### Cause
+The service is still starting up and is not yet ready to serve traffic.
 
-The service is still initializing and has not completed its startup sequence. This includes:
-- Core DB connection not established
-- Storage backends not ready
-- Required services not yet available
+## When this occurs
 
-### Scope
+- Core DB connection has not been established
+- Storage backends are not ready
+- Required services are not yet available
 
-This leaf is the canonical `service.startup_incomplete` problem for cases where startup is still in progress. If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead.
+## Example `application/problem+json`
 
-### See also
+```json
+{
+  "type": "https://flowd.org/problems/startup-incomplete",
+  "title": "Startup Incomplete",
+  "status": 503,
+  "detail": "service initialization still in progress"
+}
+```
 
-- `problems/service/not-ready.md` for post-startup readiness failures
+## How to resolve
 
-### Remediation
-
-- Wait for the service to complete startup
+- Wait for startup to complete
 - Check startup logs for errors or delays
 - Verify all required dependencies are available before starting the service
-- If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead
+
+## Scope
+
+This leaf is the canonical `service.startup_incomplete` problem while startup is still in progress. If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead.
+
+## See also
+
+- `problems/service/not-ready.md` for post-startup readiness failures
