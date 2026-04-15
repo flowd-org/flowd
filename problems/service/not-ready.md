@@ -8,6 +8,8 @@ problem_type: "service.not_ready"
 
 This leaf is the canonical `service.not_ready` problem for post-startup readiness failures where the service has started, but readiness checks still fail. It is intentionally narrow: use it only after startup has completed and the service is not yet safe to serve traffic. If startup has not completed yet, use `problems/service/startup-incomplete.md` instead.
 
+The readiness condition here is distinct from overload or transient backpressure; if the service is already serving but temporarily strained, use `problems/service/busy.md` instead.
+
 ### Symptom
 
 Service reports `503 Service Unavailable` with RFC7807 type `https://flowd.org/problems/not-ready`.
