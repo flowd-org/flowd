@@ -6,7 +6,7 @@ problem_type: "service.not_ready"
 
 ### Scope
 
-This leaf is the canonical `service.not_ready` problem for cases where startup has completed, but readiness checks still fail. If startup has not completed yet, use `problems/service/startup-incomplete.md` instead.
+This leaf is the canonical `service.not_ready` problem for post-startup readiness failures where the service has started, but readiness checks still fail. If startup has not completed yet, use `problems/service/startup-incomplete.md` instead.
 
 ### Symptom
 
