@@ -1,29 +1,45 @@
 ---
-title: "not-ready"
-description: "Service has started but is not yet ready to serve requests"
-problem_type: "service.not_ready"
+title: Not Ready
+type: https://flowd.org/problems/service/not-ready
+status: 503
 ---
 
-### Scope
+**Type URI:** `https://flowd.org/problems/service/not-ready`
+**HTTP Status:** `503 Service Unavailable`
 
-This leaf is the canonical `service.not_ready` problem for post-startup readiness failures where the service has started, but readiness checks still fail. It is intentionally narrow: use it only after startup has completed and the service is not yet safe to serve traffic. If startup has not completed yet, use `problems/service/startup-incomplete.md` instead.
+## Summary
 
-The readiness condition here is distinct from overload or transient backpressure; if the service is already serving but temporarily strained, use `problems/service/busy.md` instead.
+The service has started but is not yet safe to serve traffic.
 
-### Symptom
+## When this occurs
 
-Service reports `503 Service Unavailable` with RFC7807 type `https://flowd.org/problems/not-ready`.
+- Readiness checks are still failing after startup completes
+- Required dependencies are unavailable
+- The service is in temporary maintenance mode
 
-### Cause
+## Example `application/problem+json`
 
-The service has completed startup but is not ready to serve requests due to:
-- Health checks failing
-- Required services or dependencies unavailable
-- Temporary maintenance mode
+```json
+{
+  "type": "https://flowd.org/problems/service/not-ready",
+  "title": "Not Ready",
+  "status": 503,
+  "detail": "readiness probe failed: dependency db is unavailable"
+}
+```
 
-### Remediation
+## How to resolve
 
 - Check the service health endpoint for detailed status
 - Verify all required dependencies are available
 - Review logs for any errors or warnings
 - Wait for the service to become healthy and ready
+
+## Scope
+
+This leaf is the canonical `service.not_ready` problem for post-startup
+readiness failures. Use it only after startup has completed. If startup has not
+completed yet, use `problems/service/startup-incomplete.md` instead.
+
+If the service is already serving but temporarily strained, use
+`problems/service/busy.md` instead.
