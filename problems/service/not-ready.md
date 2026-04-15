@@ -4,6 +4,10 @@ description: "Service has started but is not yet ready to serve requests"
 problem_type: "service.not_ready"
 ---
 
+### Scope
+
+This leaf is the canonical `service.not_ready` problem for cases where startup has completed, but readiness checks still fail.
+
 ### Symptom
 
 Service reports `503 Service Unavailable` with RFC7807 type `https://flowd.org/problems/not-ready`.
