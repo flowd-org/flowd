@@ -1,10 +1,10 @@
 ---
 title: Not Ready
-type: https://flowd.org/problems/service/not-ready
+type: https://flowd.org/problems/not-ready
 status: 503
 ---
 
-**Type URI:** `https://flowd.org/problems/service/not-ready`
+**Type URI:** `https://flowd.org/problems/not-ready`
 **HTTP Status:** `503 Service Unavailable`
 
 ## Summary
@@ -21,7 +21,7 @@ The service has started but is not yet safe to serve traffic.
 
 ```json
 {
-  "type": "https://flowd.org/problems/service/not-ready",
+  "type": "https://flowd.org/problems/not-ready",
   "title": "Not Ready",
   "status": 503,
   "detail": "readiness probe failed: dependency db is unavailable"
