@@ -1,7 +1,7 @@
 ---
 title: "startup-incomplete"
 description: "Service has not finished initializing and is not yet ready to serve requests"
-problem_type: "services.startup_incomplete"
+problem_type: "service.startup_incomplete"
 ---
 
 ### Symptom
