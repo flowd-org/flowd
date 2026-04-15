@@ -15,6 +15,10 @@ The service is still initializing and has not completed its startup sequence. Th
 - Storage backends not ready
 - Required services not yet available
 
+### Scope
+
+This leaf is the canonical `service.startup_incomplete` problem for cases where startup is still in progress. If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead.
+
 ### Remediation
 
 - Wait for the service to complete startup
