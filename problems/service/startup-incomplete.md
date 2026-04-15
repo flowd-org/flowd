@@ -20,3 +20,4 @@ The service is still initializing and has not completed its startup sequence. Th
 - Wait for the service to complete startup
 - Check startup logs for errors or delays
 - Verify all required dependencies are available before starting the service
+- If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead
