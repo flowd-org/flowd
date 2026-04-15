@@ -43,3 +43,7 @@ completed yet, use `problems/service/startup-incomplete.md` instead.
 
 If the service is already serving but temporarily strained, use
 `problems/service/busy.md` instead.
+
+## See also
+
+- `problems/service/startup-incomplete.md` for startup still in progress
