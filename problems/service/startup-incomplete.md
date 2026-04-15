@@ -38,7 +38,7 @@ The service is still starting up and is not yet ready to serve traffic.
 
 This leaf is the canonical `service.startup_incomplete` problem while startup is still in progress. If startup has completed but the service still cannot serve requests, use `problems/service/not-ready.md` instead.
 
-Spec scope conformance: this page stays limited to the startup-in-progress `service.startup_incomplete` case and does not describe post-startup readiness failures.
+Spec scope conformance: T-073 revalidation confirms this page stays limited to the startup-in-progress `service.startup_incomplete` case and does not describe post-startup readiness failures.
 
 ## See also
 
