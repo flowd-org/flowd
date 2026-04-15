@@ -41,6 +41,9 @@ This leaf is the canonical `service.not_ready` problem for post-startup
 readiness failures. Use it only after startup has completed. If startup has not
 completed yet, use `problems/service/startup-incomplete.md` instead.
 
+Spec scope conformance: this page stays limited to the post-startup
+`service.not_ready` case and does not describe startup-in-progress behavior.
+
 If the service is already serving but temporarily strained, use
 `problems/service/busy.md` instead.
 
