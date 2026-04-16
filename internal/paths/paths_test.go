@@ -10,11 +10,21 @@ import (
 )
 
 func TestSetDataDirOverride(t *testing.T) {
-	// Clear any existing state
+	// Clear any existing state.
 	paths.SetDataDirOverride("")
 	defer paths.SetDataDirOverride("")
 
-	// Set an override and verify DataDir uses it
+	// Make the fallback deterministic by clearing path-related env vars and
+	// pinning the user home directory for this test.
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("PROGRAMDATA", "")
+	home := t.TempDir()
+	if runtime.GOOS != "windows" {
+		t.Setenv("HOME", home)
+	}
+
+	// Set an override and verify DataDir uses it.
 	expected := "/tmp/flowd-test"
 	paths.SetDataDirOverride(expected)
 	got := paths.DataDir()
@@ -22,11 +32,15 @@ func TestSetDataDirOverride(t *testing.T) {
 		t.Errorf("paths.DataDir() = %q, want %q", got, expected)
 	}
 
-	// Clear the override and verify it falls back
+	// Clear the override and verify it falls back to the deterministic base.
 	paths.SetDataDirOverride("")
 	got = paths.DataDir()
-	if got == expected {
-		t.Errorf("paths.DataDir() = %q after clear, expected fallback", got)
+	expectedFallback := filepath.Join(home, ".local", "share", "flowd")
+	if runtime.GOOS == "windows" {
+		expectedFallback = filepath.Join(home, "AppData", "Local", "Flowd", "data")
+	}
+	if got != expectedFallback {
+		t.Errorf("paths.DataDir() after clear = %q, want %q", got, expectedFallback)
 	}
 }
 
