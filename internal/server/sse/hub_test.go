@@ -459,7 +459,7 @@ func TestEncodeEventEnvelopeMinimalPayload(t *testing.T) {
 	}
 }
 
-// TestHubPublishEmptyRunID tests Publish with empty RunID.
+// TestHubPublishBackfillsEventRunID tests Publish backfills the event RunID.
 func TestHubPublishBackfillsEventRunID(t *testing.T) {
 	h := New(Config{KeepAliveInterval: 0})
 	baseTime := time.Unix(0, 0)
@@ -474,8 +474,19 @@ func TestHubPublishBackfillsEventRunID(t *testing.T) {
 
 	select {
 	case payload := <-sub.C:
-		if !strings.Contains(string(payload), `"type":"e1"`) {
+		var env struct {
+			Type  string `json:"type"`
+			RunID string `json:"run_id"`
+		}
+		data := extractSSEData(string(payload))
+		if err := json.Unmarshal([]byte(data), &env); err != nil {
+			t.Fatalf("failed to parse event payload: %v (payload=%q)", err, payload)
+		}
+		if env.Type != "e1" {
 			t.Fatalf("expected event type e1 in payload, got %q", payload)
+		}
+		if env.RunID != "run-empty" {
+			t.Fatalf("expected run_id run-empty in payload, got %q", payload)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for event")
