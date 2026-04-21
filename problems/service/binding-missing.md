@@ -1,6 +1,6 @@
 ---
 title: "binding-missing"
-problem_type: "services.binding_missing"
+problem_type: "service.binding_missing"
 examples:
   - description: "Example of a missing binding in service spec"
     snippet: |
