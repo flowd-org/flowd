@@ -61,8 +61,8 @@ func TestGenerateRunnerProfile_VerbosityLevels(t *testing.T) {
 		expectContains     string
 		cleanupRemovesFile bool
 	}{
-		{"level 0", 0, "ArgSpec bindings", true},
-		{"level 3", 3, "Auto-generated flwd profile", false},
+		{"level 0", 0, "# ArgSpec bindings (auto-generated)", true},
+		{"level 3", 3, "# Auto-generated flwd profile (", false},
 	}
 
 	for _, tt := range tests {
