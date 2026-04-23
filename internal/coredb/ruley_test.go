@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func TestRuleYStorePutGetDelete(t *testing.T) {
@@ -651,6 +653,35 @@ func openTestDB(t *testing.T) *DB {
 	return db
 }
 
+func seedExpiredRuleYRows(t *testing.T, ctx context.Context, db *DB, namespace string, totalRows int, updatedAt, expiresAt time.Time) {
+	t.Helper()
+
+	tx, err := db.SQL().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO kv (ns, k, v, content_type, version, updated_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		t.Fatalf("prepare seed stmt: %v", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	updatedMillis := updatedAt.UnixMilli()
+	expiresMillis := expiresAt.UnixMilli()
+	for i := 0; i < totalRows; i++ {
+		if _, err := stmt.ExecContext(ctx, namespace, fmt.Sprintf("exp:%d", i), []byte("v"), "application/octet-stream", 1, updatedMillis, expiresMillis); err != nil {
+			t.Fatalf("seed exp:%d: %v", i, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit seed tx: %v", err)
+	}
+}
+
 func TestRuleYJanitorSweepUntilDrainedBounded(t *testing.T) {
 	t.Parallel()
 
@@ -699,21 +730,15 @@ func TestRuleYJanitorDrainCapacitySatisfiesSLA(t *testing.T) {
 
 	ctx := context.Background()
 	db := openTestDB(t)
-	store := NewRuleYStore(db)
 	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := base
-	store.now = func() time.Time { return now }
 
 	// Seed worst-case backlog: 10,000 expired rows (default max_rows for a namespace)
 	const totalRows = 10_000
-	for i := 0; i < totalRows; i++ {
-		if _, err := store.Put(ctx, "core_triggers", fmt.Sprintf("exp:%d", i), []byte("v"), RuleYPutOptions{TTL: time.Second}); err != nil {
-			t.Fatalf("put exp:%d: %v", i, err)
-		}
-	}
+	seedExpiredRuleYRows(t, ctx, db, "core_triggers", totalRows, base, base.Add(time.Second))
 
 	// Advance time so all rows are expired
-	now = now.Add(2 * time.Second)
+	now = base.Add(2 * time.Second)
 
 	// Janitor with derived defaults from server config (batch=256, maxIterations=40 => 10240 capacity)
 	janitor := NewRuleYJanitor(db, RuleYJanitorOptions{
@@ -742,5 +767,68 @@ func TestRuleYJanitorDrainCapacitySatisfiesSLA(t *testing.T) {
 	// Verify deletion happened within ≤60s of expiry
 	if elapsed := now.Sub(base.Add(time.Second)); elapsed > 60*time.Second {
 		t.Fatalf("expected deletion within <=60s of expiry, elapsed=%s", elapsed)
+	}
+}
+
+func TestIsSQLiteConstraint(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"non-constraint error", errors.New("some other error"), false},
+		{"SQLite CONSTRAINT error", &sqliteError{code: int(sqlite3.SQLITE_CONSTRAINT)}, true},
+		{"SQLite PRIMARYKEY error", &sqliteError{code: int(sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)}, true},
+		{"SQLite UNIQUE error", &sqliteError{code: int(sqlite3.SQLITE_CONSTRAINT_UNIQUE)}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSQLiteConstraint(tt.err)
+			if result != tt.expected {
+				t.Errorf("isSQLiteConstraint() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+type sqliteError struct {
+	code int
+}
+
+func (e *sqliteError) Error() string { return "sqlite constraint" }
+func (e *sqliteError) Code() int     { return e.code }
+
+// TestIsQuotaExceeded tests the IsQuotaExceeded helper function.
+func TestIsQuotaExceeded(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"quota exceeded error", ErrJournalQuotaExceeded, true},
+		{"sqlite full error", &sqliteError{code: int(sqlite3.SQLITE_FULL)}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsQuotaExceeded(tt.err)
+			if result != tt.expected {
+				t.Errorf("IsQuotaExceeded(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDB_Options(t *testing.T) {
+	db := openTestDB(t)
+	opts := db.Options()
+	if opts.DataDir == "" {
+		t.Errorf("expected DataDir to be set, got empty string")
+	}
+	if opts.MaxBytes <= 0 {
+		t.Errorf("expected MaxBytes > 0, got %d", opts.MaxBytes)
 	}
 }

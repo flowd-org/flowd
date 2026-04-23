@@ -29,7 +29,7 @@ argspec:
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
-	o := NewOrchestrator(OrchestratorDeps{RunIDGen: staticRunIDGen("run-test")})
+	o := NewOrchestrator(OrchestratorDeps{RunIDGen: staticRunIDGen("run-test"), Secrets: stubSecretProvider{handles: map[string]string{"token": "/dev/fd/3"}}})
 	res, err := o.StartRun(context.Background(), types.StartRunRequest{
 		JobID:     "jobs.demo",
 		ScriptDir: tmp,
@@ -72,6 +72,21 @@ argspec:
 	if err := res.SecretCleanup(); err != nil {
 		t.Fatalf("cleanup secret handles: %v", err)
 	}
+}
+
+type stubSecretProvider struct {
+	handles map[string]string
+}
+
+func (s stubSecretProvider) Prepare(runID string, binding *Binding) (map[string]string, func() error, error) {
+	if s.handles == nil {
+		return map[string]string{}, func() error { return nil }, nil
+	}
+	copied := make(map[string]string, len(s.handles))
+	for k, v := range s.handles {
+		copied[k] = v
+	}
+	return copied, func() error { return nil }, nil
 }
 
 type staticRunIDGen string

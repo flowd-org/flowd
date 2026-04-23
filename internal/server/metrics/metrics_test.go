@@ -164,3 +164,267 @@ func TestKVAndArtifactFailureMetricsOutput(t *testing.T) {
 		t.Fatalf("expected artifact io error failure counter, got body:\n%s", body)
 	}
 }
+
+func TestNormalizeLabel(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"  HELLO  ", "hello"},
+		{"World", "world"},
+		{"  test  label  ", "test  label"},
+		{"", ""},
+		{"   ", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeLabel(tt.input)
+			if got != tt.expected {
+				t.Errorf("normalizeLabel(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEscapeHelp(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"simple help text", "simple help text"},
+		{"help with \\ backslash", "help with \\\\ backslash"},
+		{"line1\nline2", "line1\nline2"},
+		{"multiple \\ and more", "multiple \\\\ and more"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := escapeHelp(tt.input)
+			if got != tt.expected {
+				t.Errorf("escapeHelp(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSortedKeysUint(t *testing.T) {
+	m := map[string]uint64{
+		"zebra":  3,
+		"apple":  1,
+		"banana": 2,
+	}
+	keys := sortedKeysUint(m)
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	if keys[0] != "apple" || keys[1] != "banana" || keys[2] != "zebra" {
+		t.Errorf("keys not sorted: %v", keys)
+	}
+}
+
+func TestSortedKeysInt64(t *testing.T) {
+	m := map[string]int64{
+		"z": 3,
+		"a": 1,
+		"b": 2,
+	}
+	keys := sortedKeysInt64(m)
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	if keys[0] != "a" || keys[1] != "b" || keys[2] != "z" {
+		t.Errorf("keys not sorted: %v", keys)
+	}
+}
+
+func TestSortedKeysString(t *testing.T) {
+	m := map[string]string{
+		"z": "zebra",
+		"a": "apple",
+		"b": "banana",
+	}
+	keys := sortedKeys(m)
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	if keys[0] != "a" || keys[1] != "b" || keys[2] != "z" {
+		t.Errorf("keys not sorted: %v", keys)
+	}
+}
+
+func TestLabelsToString(t *testing.T) {
+	labels := map[string]string{
+		"b": "beta",
+		"a": "alpha",
+		"c": "gamma",
+	}
+	result := labelsToString(labels)
+	expected := "{a=\"alpha\",b=\"beta\",c=\"gamma\"}"
+	if result != expected {
+		t.Errorf("labelsToString = %q; want %q", result, expected)
+	}
+}
+
+func TestLabelsToStringEmpty(t *testing.T) {
+	result := labelsToString(map[string]string{})
+	if result != "" {
+		t.Errorf("labelsToString(empty) = %q; want empty string", result)
+	}
+}
+
+func TestSetBuildInfo(t *testing.T) {
+	reg := NewRegistry()
+	reg.SetBuildInfo(map[string]string{
+		"version": "test-version",
+		"commit":  "abc123",
+	})
+	if reg.buildInfoLabels["version"] != "test-version" || reg.buildInfoLabels["commit"] != "abc123" {
+		t.Errorf("build info not set correctly")
+	}
+}
+
+func TestRecordHTTP(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordHTTP("/api/test", http.MethodGet, 200, 5*time.Millisecond)
+	reg.RecordHTTP("/api/test", http.MethodPost, 404, 10*time.Millisecond)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `method="GET",route="/api/test",code="200"`) {
+		t.Fatalf("expected HTTP metrics for GET /api/test 200, got body:\n%s", body)
+	}
+}
+
+func TestRecordSecurityProfileGauge(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordSecurityProfileGauge("strict")
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `flwd_security_profile{profile="strict"} 1`) {
+		t.Errorf("expected security profile gauge, got body:\n%s", body)
+	}
+}
+
+func TestRecordPolicyDenial(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordPolicyDenial("unauthorized")
+	reg.RecordPolicyDenial("forbidden")
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `flwd_policy_denials_total{reason="unauthorized"} 1`) {
+		t.Errorf("expected policy denial counter, got body:\n%s", body)
+	}
+}
+
+func TestRecordContainerRun(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordContainerRun(250 * time.Millisecond)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "flwd_container_runs_total 1") {
+		t.Errorf("expected container run counter, got body:\n%s", body)
+	}
+}
+
+func TestRecordContainerPull(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordContainerPull(30 * time.Second)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "flwd_container_pulls_total 1") {
+		t.Errorf("expected container pull counter, got body:\n%s", body)
+	}
+}
+
+func TestRecordSourceAdded(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordSourceAdded("github")
+	reg.RecordSourceAdded("GITHUB")
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `flwd_sources_added_total{type="github"} 2`) {
+		t.Errorf("expected sources added counter, got body:\n%s", body)
+	}
+}
+
+func TestRecordAddonManifestInvalid(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordAddonManifestInvalid()
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "flwd_addon_manifest_invalid_total 1") {
+		t.Errorf("expected addon manifest invalid counter, got body:\n%s", body)
+	}
+}
+
+func TestSourceAddedTotals(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordSourceAdded("github")
+	reg.RecordSourceAdded("gitlab")
+
+	totals := reg.SourceAddedTotals()
+	if totals["github"] != 1 || totals["gitlab"] != 1 {
+		t.Errorf("expected source totals, got %v", totals)
+	}
+}
+
+func TestAddonManifestInvalidTotal(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordAddonManifestInvalid()
+
+	total := reg.AddonManifestInvalidTotal()
+	if total != 1 {
+		t.Errorf("expected invalid manifest total 1, got %d", total)
+	}
+}
+
+func TestContainerPullsTotal(t *testing.T) {
+	reg := NewRegistry()
+	reg.RecordContainerPull(10 * time.Second)
+
+	total := reg.ContainerPullsTotal()
+	if total != 1 {
+		t.Errorf("expected container pulls total 1, got %d", total)
+	}
+}
+
+func TestHandlerReturnsMetricsText(t *testing.T) {
+	reg := NewRegistry()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("expected text/plain content type, got %s", rr.Header().Get("Content-Type"))
+	}
+}

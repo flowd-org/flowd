@@ -1,0 +1,200 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run root tests
+        run: go test ./...
+
+      - name: Run conformance module tests
+        run: |
+          if [ -f conformance/go.mod ]; then
+            cd conformance
+            go test ./...
+          else
+            echo "conformance module not present; skipping"
+          fi
+
+  coverage:
+    name: coverage
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with race detector and coverage
+        run: |
+          go test -race -coverprofile=coverage.txt ./...
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: coverage.txt
+          retention-days: 7
+
+      - name: Summarize and enforce coverage threshold
+        run: |
+          python3 <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          COVERAGE_FILE = pathlib.Path("coverage.txt")
+          THRESHOLD = 85.0
+          GENERATED_MARKER = re.compile(r"^// Code generated .* DO NOT EDIT\.", re.MULTILINE)
+
+          if not COVERAGE_FILE.is_file():
+              print(f"::error::{COVERAGE_FILE} was not generated")
+              sys.exit(1)
+
+          module_path = subprocess.check_output(["go", "list", "-m"], text=True).strip()
+          package_list = sorted(
+              line.strip()
+              for line in subprocess.check_output(["go", "list", "./..."], text=True).splitlines()
+              if line.strip()
+          )
+
+          pkg_stmts = {pkg: 0 for pkg in package_list}
+          pkg_covered = {pkg: 0 for pkg in package_list}
+          generated_files = set()
+
+          def is_generated(repo_relative_path: str) -> bool:
+              source_path = pathlib.Path(repo_relative_path)
+              if not source_path.is_file():
+                  return False
+              try:
+                  content = source_path.read_text(encoding="utf-8", errors="ignore")
+              except OSError:
+                  return False
+              return bool(GENERATED_MARKER.search(content[:4096]))
+
+          with COVERAGE_FILE.open("r", encoding="utf-8") as handle:
+              for line_number, raw_line in enumerate(handle, start=1):
+                  line = raw_line.strip()
+                  if not line:
+                      continue
+                  if line_number == 1:
+                      if not line.startswith("mode:"):
+                          print("::error::coverage.txt is not a valid Go coverprofile (missing mode header)")
+                          sys.exit(1)
+                      continue
+
+                  try:
+                      location, statements_raw, count_raw = line.rsplit(" ", 2)
+                      file_path, _range = location.split(":", 1)
+                      statements = int(statements_raw)
+                      count = int(count_raw)
+                  except ValueError:
+                      print(f"::error::Unable to parse coverage profile line {line_number}: {line}")
+                      sys.exit(1)
+
+                  repo_relative = None
+                  if file_path == module_path:
+                      repo_relative = ""
+                  elif file_path.startswith(f"{module_path}/"):
+                      repo_relative = file_path[len(module_path) + 1 :]
+
+                  if repo_relative and is_generated(repo_relative):
+                      generated_files.add(repo_relative)
+                      continue
+
+                  package_path = file_path.rsplit("/", 1)[0]
+                  pkg_stmts.setdefault(package_path, 0)
+                  pkg_covered.setdefault(package_path, 0)
+                  pkg_stmts[package_path] += statements
+                  if count > 0:
+                      pkg_covered[package_path] += statements
+
+          measured_packages = sorted(pkg_stmts)
+          overall_stmts = sum(pkg_stmts.values())
+          overall_covered = sum(pkg_covered.values())
+          overall_pct = (overall_covered / overall_stmts * 100.0) if overall_stmts else 0.0
+
+          failing_packages = []
+          package_rows = []
+
+          for package_path in measured_packages:
+              statements = pkg_stmts[package_path]
+              if statements == 0:
+                  package_rows.append(f"- `{package_path}`: N/A (0 included statements)")
+                  continue
+
+              covered = pkg_covered[package_path]
+              pct = covered / statements * 100.0
+              package_rows.append(f"- `{package_path}`: {pct:.1f}% ({covered}/{statements} statements)")
+              if pct < THRESHOLD:
+                  failing_packages.append((package_path, pct, covered, statements))
+
+          summary_lines = [
+              "## Coverage summary",
+              "",
+              f"- Overall coverage: **{overall_pct:.1f}%** ({overall_covered}/{overall_stmts} statements)",
+              f"- Threshold: **{THRESHOLD:.1f}% overall** and **{THRESHOLD:.1f}% per package**",
+              "- Generated-code exclusion: Go files containing the standard `// Code generated ... DO NOT EDIT.` marker are excluded before computing coverage.",
+              "- Packages with 0 included statements are reported as **N/A** and do not fail the gate.",
+              "",
+              "### Packages below threshold",
+          ]
+
+          if failing_packages:
+              for package_path, pct, covered, statements in failing_packages:
+                  summary_lines.append(f"- `{package_path}`: {pct:.1f}% ({covered}/{statements} statements)")
+          else:
+              summary_lines.append("- None")
+
+          summary_lines.extend(["", "### Package coverage"])
+          summary_lines.extend(package_rows or ["- No package coverage data found"])
+
+          if generated_files:
+              summary_lines.extend(["", "### Excluded generated files"])
+              summary_lines.extend(f"- `{path}`" for path in sorted(generated_files))
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary_file:
+                  summary_file.write("\n".join(summary_lines) + "\n")
+
+          if overall_pct < THRESHOLD:
+              print(f"::error::Overall coverage {overall_pct:.1f}% is below threshold of {THRESHOLD:.1f}%")
+          if failing_packages:
+              failing_names = ", ".join(package_path for package_path, *_ in failing_packages)
+              print(f"::error::Packages below {THRESHOLD:.1f}% coverage threshold: {failing_names}")
+
+          if overall_pct < THRESHOLD or failing_packages:
+              sys.exit(1)
+
+          print(f"Overall coverage {overall_pct:.1f}% meets the {THRESHOLD:.1f}% threshold")
+          PY

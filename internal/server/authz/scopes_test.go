@@ -25,6 +25,11 @@ func TestRequiredScopes(t *testing.T) {
 		{method: "GET", path: "/health/storage", want: []string{ScopeJobsRead}},
 		{method: "GET", path: "/limits", want: []string{ScopeJobsRead}},
 		{method: "GET", path: "/capabilities", want: []string{ScopeJobsRead}},
+		// KV namespace paths
+		{method: "GET", path: "/kv/ns/key", want: []string{ScopeRuleYRead}},
+		{method: "POST", path: "/kv/ns/key", want: []string{ScopeRuleYWrite}},
+		{method: "PUT", path: "/kv/ns/key", want: []string{ScopeRuleYWrite}},
+		{method: "DELETE", path: "/kv/ns/key", want: []string{ScopeRuleYWrite}},
 	}
 
 	for _, tc := range tests {

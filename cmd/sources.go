@@ -51,11 +51,19 @@ func resolveSourcesClient(cmd *cobra.Command) (*sourcesClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := normalizeBaseURL(server)
+	base, err := normalizeBaseURL(server)
+	if err != nil {
+		return nil, err
+	}
 	return &sourcesClient{
-		base:       base,
-		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		base:  base,
+		token: strings.TrimSpace(token),
+		httpClient: &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 
@@ -265,15 +273,21 @@ func apiError(resp *http.Response) error {
 	return fmt.Errorf("API error %d: %s", resp.StatusCode, text)
 }
 
-func normalizeBaseURL(raw string) string {
+func normalizeBaseURL(raw string) (string, error) {
 	base := strings.TrimSpace(raw)
 	if base == "" {
-		return "http://127.0.0.1:8080"
+		return "http://127.0.0.1:8080", nil
 	}
-	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+	if strings.HasPrefix(base, "https://") {
+		return "", errors.New("https server URLs are not supported; use http")
+	}
+	if strings.Contains(base, "://") && !strings.HasPrefix(base, "http://") {
+		return "", fmt.Errorf("unsupported server URL scheme")
+	}
+	if !strings.HasPrefix(base, "http://") {
 		base = "http://" + base
 	}
-	return strings.TrimRight(base, "/")
+	return strings.TrimRight(base, "/"), nil
 }
 
 func urlEscape(value string) string {

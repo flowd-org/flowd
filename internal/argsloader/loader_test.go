@@ -32,10 +32,10 @@ argspec:
 
 func TestAttachFlags_FromArgSpec(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tmp, "config.d"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmp, "config.d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "config.d", "config.yaml"), []byte(cfg), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "config.d", "config.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,5 +79,175 @@ func TestAttachFlags_FromArgSpec(t *testing.T) {
 	gotTags, _ := cmd.Flags().GetStringArray("tags")
 	if len(gotTags) != 2 || strings.Join(gotTags, ",") != "alpha,beta" {
 		t.Fatalf("unexpected tags %v", gotTags)
+	}
+}
+
+func TestAttachFlags_ConfigMissing(t *testing.T) {
+	tmp := t.TempDir()
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err != nil {
+		t.Fatalf("expected nil error when config missing, got %v", err)
+	}
+}
+
+func TestAttachFlags_ArgSpecEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.d")
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	yaml := `interpreter: "/usr/bin/env bash"`
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err != nil {
+		t.Fatalf("expected nil when ArgSpec empty, got %v", err)
+	}
+}
+
+func TestAttachFlags_InvalidArgName(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.d")
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	yaml := `interpreter: "/usr/bin/env bash"
+argspec:
+  args:
+    - name: "-invalid"
+      type: string
+`
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err == nil || !strings.Contains(err.Error(), "invalid argspec name") {
+		t.Fatalf("expected error for invalid arg name, got %v", err)
+	}
+}
+
+func TestAttachFlags_IntegerDefault(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.d")
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	yaml := `interpreter: "/usr/bin/env bash"
+argspec:
+  args:
+    - name: count
+      type: integer
+      default: 42
+`
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err != nil {
+		t.Fatalf("AttachFlags error: %v", err)
+	}
+	f := cmd.Flags().Lookup("count")
+	if f == nil {
+		t.Fatalf("flag count not registered")
+	}
+	val, _ := cmd.Flags().GetInt("count")
+	if val != 42 {
+		t.Fatalf("expected default 42, got %d", val)
+	}
+}
+
+func TestAttachFlags_ArrayAndObject(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.d")
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	yaml := `interpreter: "/usr/bin/env bash"
+argspec:
+  args:
+    - name: tags
+      type: array
+    - name: meta
+      type: object
+`
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err != nil {
+		t.Fatalf("AttachFlags error: %v", err)
+	}
+	for _, name := range []string{"tags", "meta"} {
+		f := cmd.Flags().Lookup(name)
+		if f == nil {
+			t.Fatalf("flag %s not registered", name)
+		}
+		if f.Value.Type() != "stringArray" {
+			t.Fatalf("flag %s type=%s want=stringArray", name, f.Value.Type())
+		}
+	}
+}
+
+func TestAttachFlags_UnsupportedType(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.d")
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	yaml := `interpreter: "/usr/bin/env bash"
+argspec:
+  args:
+    - name: custom
+      type: custom
+`
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err == nil || !strings.Contains(err.Error(), "unsupported arg type") {
+		t.Fatalf("expected error for unsupported type, got %v", err)
+	}
+}
+
+func TestAttachFlags_EnumCompletion(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.d")
+	if err := os.MkdirAll(cfgPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	yaml := `interpreter: "/usr/bin/env bash"
+argspec:
+  args:
+    - name: mode
+      type: string
+      enum: [quick, full]
+`
+	if err := os.WriteFile(filepath.Join(cfgPath, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{Use: "demo"}
+	err := AttachFlags(cmd, tmp)
+	if err != nil {
+		t.Fatalf("AttachFlags error: %v", err)
+	}
+	f := cmd.Flags().Lookup("mode")
+	if f == nil {
+		t.Fatalf("flag mode not registered")
+	}
+	if f.Value.Type() != "string" {
+		t.Fatalf("expected string type, got %s", f.Value.Type())
 	}
 }
