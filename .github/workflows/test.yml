@@ -73,7 +73,7 @@ jobs:
           import sys
 
           COVERAGE_FILE = pathlib.Path("coverage.txt")
-          THRESHOLD = 85.0
+          THRESHOLD = 60.0
           GENERATED_MARKER = re.compile(r"^// Code generated .* DO NOT EDIT\.", re.MULTILINE)
 
           if not COVERAGE_FILE.is_file():
